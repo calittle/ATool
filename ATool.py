@@ -39,12 +39,20 @@ class AToolApp:
         self._fields_window_geometry_job: str | None = None
         self.condition_library_window: tk.Toplevel | None = None
         self.clause_trigger_update_window: tk.Toplevel | None = None
+        self.condition_usage_window: tk.Toplevel | None = None
         self._condition_library_window_geometry_job: str | None = None
         self._condition_library_entries: list[dict[str, str]] = []
         self._active_condition_library_index: int | None = None
         self._condition_library_node_to_index: dict[str, int] = {}
         self._clause_trigger_update_proposals: list[dict[str, object]] = []
         self._clause_trigger_update_index = 0
+        self._condition_usage_all_results: list[dict[str, object]] = []
+        self._condition_usage_results: list[dict[str, object]] = []
+        self._condition_usage_index = 0
+        self._condition_usage_summary_text = ""
+        self._condition_usage_type_filter = ""
+        self._condition_usage_sort_column = ""
+        self._condition_usage_sort_desc = False
         self._document_controls_layout_job: str | None = None
         self._document_controls_layout_signature: tuple[object, ...] | None = None
         self._tooltip_window: tk.Toplevel | None = None
@@ -110,7 +118,7 @@ class AToolApp:
         self.edit_field_mandatory_var = tk.BooleanVar(value=False)
         self.edit_field_path_var = tk.StringVar(value="")
         self.fields_filter_var = tk.StringVar(value="")
-        self.field_view_mode = "path"
+        self.field_view_mode = "name"
         self._loaded_documents: list[dict[str, object]] = []
         self._loaded_fields: list[dict[str, object]] = []
 
@@ -153,7 +161,7 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
-        window_menu.add_command(label="Show Fields Window", command=self._show_fields_window)
+        window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
         window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
@@ -905,7 +913,7 @@ class AToolApp:
         if self.fields_window is not None and self.fields_window.winfo_exists():
             return
         self.fields_window = tk.Toplevel(self.root)
-        self.fields_window.title("ATool - Fields")
+        self.fields_window.title("ATool - Field Manager")
         self.fields_window.minsize(480, 360)
         self.fields_window.protocol("WM_DELETE_WINDOW", self._hide_fields_window)
         self.fields_window.bind("<Configure>", self._on_fields_window_configure)
@@ -918,7 +926,7 @@ class AToolApp:
         fields_vertical_pane = ttk.Panedwindow(container, orient=tk.VERTICAL)
         fields_vertical_pane.grid(row=0, column=0, sticky="nsew")
 
-        self.fields_panel, self.fields_tree = self._create_tree_panel(fields_vertical_pane, "Fields")
+        self.fields_panel, self.fields_tree = self._create_tree_panel(fields_vertical_pane, "Field Manager")
         self.fields_tree.bind("<<TreeviewSelect>>", self._on_field_tree_select)
         self.field_details_panel = self._create_field_details_panel(fields_vertical_pane)
         fields_vertical_pane.add(self.fields_panel, weight=3)
@@ -1107,11 +1115,17 @@ class AToolApp:
         ttk.Button(actions, text="Add", command=self._add_condition_library_entry).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(actions, text="Delete", command=self._delete_condition_library_entry).grid(row=0, column=1, padx=(0, 6))
         ttk.Button(actions, text="Save", command=self._save_condition_library_entry).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(actions, text="Find Usage...", command=self._show_selected_clause_usage).grid(
+            row=0, column=3, padx=(0, 6)
+        )
+        ttk.Button(actions, text="Find Raw...", command=self._show_raw_condition_usage).grid(
+            row=0, column=4, padx=(0, 6)
+        )
         ttk.Button(
             actions,
             text="Update Triggers...",
             command=self._update_document_triggers_from_clause_entry,
-        ).grid(row=0, column=3)
+        ).grid(row=0, column=5)
 
         compose_group = ttk.LabelFrame(manager_vertical_pane, text="")
         compose_group.columnconfigure(0, weight=1)
@@ -1122,18 +1136,14 @@ class AToolApp:
             text="Compose Condition",
             font=("TkDefaultFont", 11, "bold"),
         ).grid(row=0, column=0, sticky="w", padx=8, pady=(6, 0))
-        ttk.Label(
-            compose_group,
-            text="Use clause names with + (AND), OR, and parentheses.",
-        ).grid(row=1, column=0, sticky="w", padx=8, pady=(2, 2))
         ttk.Button(
             compose_group,
             text="(i)",
             width=3,
             command=self._show_compose_help,
-        ).grid(row=0, column=1, rowspan=2, sticky="ne", padx=(0, 8), pady=(6, 2))
+        ).grid(row=0, column=1, sticky="ne", padx=(0, 8), pady=(6, 2))
         compose_text_frame = ttk.Frame(compose_group)
-        compose_text_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+        compose_text_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(6, 8))
         compose_text_frame.columnconfigure(0, weight=1)
         compose_text_frame.rowconfigure(0, weight=1)
         compose_entry = tk.Text(compose_text_frame, height=8, wrap="word", undo=True)
@@ -1150,7 +1160,7 @@ class AToolApp:
         compose_entry.bind("<Escape>", self._on_compose_entry_escape)
         compose_entry.bind("<FocusOut>", self._on_compose_entry_focus_out)
         picker_row = ttk.Frame(compose_group)
-        picker_row.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+        picker_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
         picker_row.columnconfigure(1, weight=1)
         ttk.Label(picker_row, text="Clause:").grid(row=0, column=0, sticky="w")
         self.condition_clause_name_var = tk.StringVar(value="")
@@ -1162,7 +1172,7 @@ class AToolApp:
         )
         self.condition_clause_name_combo.grid(row=0, column=1, sticky="ew", padx=(6, 0))
         compose_actions = ttk.Frame(compose_group)
-        compose_actions.grid(row=4, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 6))
+        compose_actions.grid(row=3, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 6))
         ttk.Button(compose_actions, text="Insert Name", command=self._insert_selected_clause_name).grid(
             row=0, column=0, padx=(0, 6)
         )
@@ -1170,14 +1180,14 @@ class AToolApp:
             row=0, column=1
         )
         ttk.Label(compose_group, textvariable=self.condition_compose_status_var).grid(
-            row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4)
+            row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4)
         )
         ttk.Label(
             compose_group,
             textvariable=self.condition_compose_target_var,
             font=("TkDefaultFont", 10, "bold"),
         ).grid(
-            row=6, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8)
+            row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8)
         )
 
         self._restore_condition_library_window_geometry()
@@ -1895,6 +1905,633 @@ class AToolApp:
         self._clause_trigger_update_proposals = []
         self._clause_trigger_update_index = 0
 
+    def _show_selected_clause_usage(self) -> None:
+        clause_name = self._active_clause_usage_name()
+        if not clause_name:
+            messagebox.showinfo("Clause Usage", "Select a clause first.")
+            return
+        self._sync_active_condition_forms_to_model()
+        results = self._build_condition_usage_results(clause_name=clause_name)
+        if not results:
+            messagebox.showinfo("Clause Usage", f"No condition usages found for '{clause_name}'.")
+            return
+        title = f"Clause Usage - {clause_name}"
+        summary = f"{len(results)} condition owner{'s' if len(results) != 1 else ''} use '{clause_name}'."
+        self._show_condition_usage_window(results, title, summary)
+
+    def _show_raw_condition_usage(self) -> None:
+        self._sync_active_condition_forms_to_model()
+        results = self._build_condition_usage_results(raw_only=True)
+        if not results:
+            messagebox.showinfo("Raw Condition Usage", "No conditions contain RAW fragments.")
+            return
+        title = "Raw Condition Usage"
+        summary = f"{len(results)} condition owner{'s' if len(results) != 1 else ''} contain RAW fragments."
+        self._show_condition_usage_window(results, title, summary)
+
+    def _active_clause_usage_name(self) -> str:
+        if self._active_condition_library_index is None:
+            return ""
+        index = self._active_condition_library_index
+        if not (0 <= index < len(self._condition_library_entries)):
+            return ""
+        name = str(self._condition_library_entries[index].get("name", "")).strip()
+        if name:
+            return name
+        if hasattr(self, "condition_library_name_var"):
+            return self.condition_library_name_var.get().strip()
+        return ""
+
+    def _sync_active_condition_forms_to_model(self) -> None:
+        self._sync_active_document_form_to_model()
+        if self._updating_layout_form or not self._active_layout_node_id:
+            return
+        if not hasattr(self, "layout_condition_edit_var"):
+            return
+        self._apply_layout_form_change(condition=self.layout_condition_edit_var.get())
+
+    def _build_condition_usage_results(
+        self,
+        *,
+        clause_name: str = "",
+        raw_only: bool = False,
+    ) -> list[dict[str, object]]:
+        clause_name = clause_name.strip()
+        usage_names = self._find_clause_usage_names(clause_name) if clause_name else set()
+        results: list[dict[str, object]] = []
+        for target in self._iter_condition_usage_targets():
+            condition = str(target.get("condition", "")).strip()
+            if not condition:
+                continue
+            try:
+                compose_text, exact, unmatched_count = self._compose_expression_from_raw_condition(condition)
+            except ValueError as error:
+                compose_text = ""
+                exact = False
+                unmatched_count = 0
+                parse_error = str(error)
+            else:
+                parse_error = ""
+
+            compose_clauses = sorted(self._clause_names_in_compose_text(compose_text), key=str.casefold)
+            raw_fragments = self._raw_fragments_in_compose_text(compose_text)
+            matched_clauses = sorted(set(compose_clauses) & usage_names, key=str.casefold)
+            if raw_only:
+                if not raw_fragments:
+                    continue
+                match_type = "Raw fragment"
+            else:
+                if not clause_name or not matched_clauses:
+                    continue
+                match_type = self._classify_clause_usage_match(compose_text, matched_clauses, clause_name)
+
+            result = dict(target)
+            result.update(
+                {
+                    "compose_text": compose_text,
+                    "compose_clauses": compose_clauses,
+                    "matched_clauses": matched_clauses,
+                    "raw_fragments": raw_fragments,
+                    "unmatched_count": unmatched_count,
+                    "exact": exact,
+                    "parse_error": parse_error,
+                    "match_type": match_type,
+                }
+            )
+            results.append(result)
+        return results
+
+    def _find_clause_usage_names(self, clause_name: str) -> set[str]:
+        target = clause_name.strip()
+        if not target:
+            return set()
+        usage_names = {target}
+        changed = True
+        while changed:
+            changed = False
+            for item in self._condition_library_entries:
+                name = str(item.get("name", "")).strip()
+                if not name or name in usage_names:
+                    continue
+                refs = set(self._extract_embedded_clause_references(str(item.get("expression", ""))))
+                if refs & usage_names:
+                    usage_names.add(name)
+                    changed = True
+        return usage_names
+
+    def _classify_clause_usage_match(self, compose_text: str, matched_clauses: list[str], clause_name: str) -> str:
+        matched = set(matched_clauses)
+        single_clause_name = self._single_compose_clause_name(compose_text)
+        if single_clause_name == clause_name:
+            return "Exact clause"
+        if single_clause_name and single_clause_name in matched:
+            return "Dependent clause"
+        if clause_name in matched:
+            return "Embedded clause"
+        return "Dependent clause"
+
+    def _iter_condition_usage_targets(self) -> list[dict[str, object]]:
+        targets: list[dict[str, object]] = []
+        for document in self._loaded_documents:
+            document_name = str(document.get("name", "")).strip() or "(unnamed document)"
+            document_source = document.get("source")
+            if not isinstance(document_source, dict):
+                continue
+            self._append_condition_usage_target(
+                targets,
+                document=document,
+                source_ref=document_source,
+                kind="document",
+                owner=document_name,
+                preferred_kind="document",
+            )
+            layouts = document_source.get("Layouts")
+            if not isinstance(layouts, list):
+                continue
+            for index, layout in enumerate(layouts, start=1):
+                if isinstance(layout, dict):
+                    self._collect_layout_condition_usage_targets(targets, document, document_name, layout, index)
+        return targets
+
+    def _collect_layout_condition_usage_targets(
+        self,
+        targets: list[dict[str, object]],
+        document: dict[str, object],
+        document_name: str,
+        layout: dict[str, object],
+        layout_index: int,
+    ) -> None:
+        layout_name = self._condition_owner_name(layout, f"Layout {layout_index}")
+        layout_owner = f"{document_name} > Layout: {layout_name}"
+        self._append_condition_usage_target(
+            targets,
+            document=document,
+            source_ref=layout,
+            kind="layout",
+            owner=layout_owner,
+            preferred_kind="layout",
+        )
+        for content_index, content in enumerate(self._extract_contents(layout), start=1):
+            content_name = self._condition_owner_name(content, f"Content {content_index}")
+            content_owner = f"{layout_owner} > Content: {content_name}"
+            self._append_condition_usage_target(
+                targets,
+                document=document,
+                source_ref=content,
+                kind="content",
+                owner=content_owner,
+                preferred_kind="condition",
+            )
+            iteration = self._extract_iteration(content)
+            if not isinstance(iteration, dict):
+                continue
+            iteration_name = self._condition_owner_name(iteration, "Iteration")
+            iteration_owner = f"{content_owner} > Iteration: {iteration_name}"
+            self._append_condition_usage_target(
+                targets,
+                document=document,
+                source_ref=iteration,
+                kind="iteration",
+                owner=iteration_owner,
+                preferred_kind="condition",
+            )
+            for field_index, field in enumerate(self._extract_iteration_fields(iteration), start=1):
+                field_name = self._condition_owner_name(field, f"Field {field_index}")
+                field_owner = f"{iteration_owner} > Field: {field_name}"
+                self._append_condition_usage_target(
+                    targets,
+                    document=document,
+                    source_ref=field,
+                    kind="field",
+                    owner=field_owner,
+                    preferred_kind="condition",
+                )
+
+    def _append_condition_usage_target(
+        self,
+        targets: list[dict[str, object]],
+        *,
+        document: dict[str, object],
+        source_ref: dict[str, object],
+        kind: str,
+        owner: str,
+        preferred_kind: str,
+    ) -> None:
+        condition = str(source_ref.get("Condition", "")).strip()
+        if not condition:
+            return
+        targets.append(
+            {
+                "document": document,
+                "source_ref": source_ref,
+                "kind": kind,
+                "kind_label": self._condition_usage_kind_label(kind),
+                "owner": owner,
+                "condition": condition,
+                "preferred_kind": preferred_kind,
+            }
+        )
+
+    @staticmethod
+    def _condition_owner_name(source_ref: dict[str, object], fallback: str) -> str:
+        name = str(source_ref.get("$$Id") or source_ref.get("Name") or source_ref.get("Id") or "").strip()
+        return name or fallback
+
+    @staticmethod
+    def _condition_usage_kind_label(kind: str) -> str:
+        labels = {
+            "document": "Document",
+            "layout": "Layout",
+            "content": "Content",
+            "iteration": "Iteration",
+            "field": "Field",
+        }
+        return labels.get(kind, "Condition")
+
+    def _raw_fragments_in_compose_text(self, compose_text: str) -> list[str]:
+        if not compose_text:
+            return []
+        try:
+            tokens = self._tokenize_clause_expression(compose_text)
+        except ValueError:
+            return []
+        return [token_value for token_type, token_value in tokens if token_type == "RAW"]
+
+    def _show_condition_usage_window(
+        self,
+        results: list[dict[str, object]],
+        title: str,
+        summary: str,
+    ) -> None:
+        if self.condition_usage_window is not None and self.condition_usage_window.winfo_exists():
+            self.condition_usage_window.destroy()
+        self._condition_usage_all_results = results
+        self._condition_usage_results = []
+        self._condition_usage_index = 0
+        self._condition_usage_summary_text = summary
+        self._condition_usage_type_filter = ""
+        self._condition_usage_sort_column = ""
+        self._condition_usage_sort_desc = False
+        self._create_condition_usage_window(title, summary)
+        self._refresh_condition_usage_view()
+        assert self.condition_usage_window is not None
+        self.condition_usage_window.deiconify()
+        self.condition_usage_window.lift()
+        self.condition_usage_window.focus_force()
+
+    def _create_condition_usage_window(self, title: str, summary: str) -> None:
+        parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
+        window = tk.Toplevel(parent)
+        window.title(f"ATool - {title}")
+        window.minsize(820, 520)
+        window.protocol("WM_DELETE_WINDOW", self._close_condition_usage_window)
+        self.condition_usage_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        heading = ttk.Label(container, text=title, font=("TkDefaultFont", 12, "bold"))
+        heading.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        body = ttk.Panedwindow(container, orient=tk.VERTICAL)
+        body.grid(row=1, column=0, sticky="nsew")
+
+        list_frame = ttk.Frame(body)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(1, weight=1)
+        self.condition_usage_summary_var = tk.StringVar(value=summary)
+        list_header = ttk.Frame(list_frame)
+        list_header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        list_header.columnconfigure(0, weight=1)
+        self.condition_usage_type_filter_button = ttk.Menubutton(
+            list_header,
+            text="Type: All",
+        )
+        self.condition_usage_type_filter_button.grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(8, 0),
+        )
+        self.condition_usage_type_filter_menu = tk.Menu(
+            self.condition_usage_type_filter_button,
+            tearoff=0,
+        )
+        self.condition_usage_type_filter_button.configure(menu=self.condition_usage_type_filter_menu)
+        ttk.Label(list_header, textvariable=self.condition_usage_summary_var).grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        tree = ttk.Treeview(
+            list_frame,
+            columns=("kind", "match", "clauses", "raw"),
+            show="tree headings",
+            height=9,
+        )
+        tree.heading("#0", text="Owner", command=lambda: self._set_condition_usage_sort("owner"))
+        tree.heading("kind", text="Type", command=lambda: self._set_condition_usage_sort("kind"))
+        tree.heading("match", text="Match", command=lambda: self._set_condition_usage_sort("match"))
+        tree.heading("clauses", text="Matched Clauses", command=lambda: self._set_condition_usage_sort("clauses"))
+        tree.heading("raw", text="Raw", command=lambda: self._set_condition_usage_sort("raw"))
+        tree.column("#0", width=340, anchor=tk.W)
+        tree.column("kind", width=90, anchor=tk.W)
+        tree.column("match", width=120, anchor=tk.W)
+        tree.column("clauses", width=190, anchor=tk.W)
+        tree.column("raw", width=70, anchor=tk.W)
+        tree.grid(row=1, column=0, sticky="nsew")
+        tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree_scroll.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=tree_scroll.set)
+        tree.bind("<<TreeviewSelect>>", self._on_condition_usage_select)
+        self.condition_usage_tree = tree
+
+        detail_frame = ttk.Frame(body)
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.columnconfigure(1, weight=1)
+        detail_frame.rowconfigure(2, weight=1)
+        self.condition_usage_current_var = tk.StringVar(value="")
+        ttk.Label(
+            detail_frame,
+            textvariable=self.condition_usage_current_var,
+            font=("TkDefaultFont", 10, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        ttk.Label(detail_frame, text="Condition").grid(row=1, column=0, sticky="w")
+        ttk.Label(detail_frame, text="Composer / Raw Fragments").grid(row=1, column=1, sticky="w", padx=(8, 0))
+        condition_text = tk.Text(detail_frame, height=9, wrap="word", undo=False)
+        compose_text = tk.Text(detail_frame, height=9, wrap="word", undo=False)
+        condition_text.grid(row=2, column=0, sticky="nsew", pady=(2, 0))
+        compose_text.grid(row=2, column=1, sticky="nsew", padx=(8, 0), pady=(2, 0))
+        self.condition_usage_condition_text = condition_text
+        self.condition_usage_compose_text = compose_text
+
+        actions = ttk.Frame(container)
+        actions.grid(row=2, column=0, sticky="e", pady=(10, 0))
+        self.condition_usage_select_button = ttk.Button(
+            actions,
+            text="Select Owner",
+            command=self._select_current_condition_usage_target,
+        )
+        self.condition_usage_select_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(actions, text="Close", command=self._close_condition_usage_window).grid(row=0, column=1)
+
+        body.add(list_frame, weight=2)
+        body.add(detail_frame, weight=3)
+
+    def _refresh_condition_usage_view(self, selected_result: dict[str, object] | None = None) -> None:
+        if selected_result is None and self._condition_usage_results:
+            selected_result = self._condition_usage_results[self._condition_usage_index]
+        available_types = self._condition_usage_available_types()
+        if self._condition_usage_type_filter and self._condition_usage_type_filter not in available_types:
+            self._condition_usage_type_filter = ""
+        results = [
+            result
+            for result in self._condition_usage_all_results
+            if not self._condition_usage_type_filter
+            or str(result.get("kind_label", "")) == self._condition_usage_type_filter
+        ]
+        if self._condition_usage_sort_column:
+            results.sort(
+                key=lambda result: self._condition_usage_sort_key(result, self._condition_usage_sort_column),
+                reverse=self._condition_usage_sort_desc,
+            )
+        self._condition_usage_results = results
+        self._condition_usage_index = 0
+        if selected_result is not None:
+            for index, result in enumerate(results):
+                if result is selected_result:
+                    self._condition_usage_index = index
+                    break
+        self._refresh_condition_usage_type_filter_menu()
+        self._refresh_condition_usage_summary()
+        self._render_condition_usage_rows()
+        self._update_condition_usage_display()
+
+    def _condition_usage_available_types(self) -> list[str]:
+        return sorted(
+            {
+                str(result.get("kind_label", "")).strip()
+                for result in self._condition_usage_all_results
+                if str(result.get("kind_label", "")).strip()
+            },
+            key=str.casefold,
+        )
+
+    def _refresh_condition_usage_type_filter_menu(self) -> None:
+        if not hasattr(self, "condition_usage_type_filter_menu"):
+            return
+        menu = self.condition_usage_type_filter_menu
+        menu.delete(0, tk.END)
+        menu.add_command(label="All Types", command=lambda: self._set_condition_usage_type_filter(""))
+        available_types = self._condition_usage_available_types()
+        if available_types:
+            menu.add_separator()
+        for type_label in available_types:
+            menu.add_command(
+                label=type_label,
+                command=lambda selected=type_label: self._set_condition_usage_type_filter(selected),
+            )
+        if hasattr(self, "condition_usage_type_filter_button"):
+            button_text = f"Type: {self._condition_usage_type_filter or 'All'}"
+            self.condition_usage_type_filter_button.configure(text=button_text)
+
+    def _set_condition_usage_type_filter(self, type_label: str) -> None:
+        self._condition_usage_type_filter = str(type_label or "").strip()
+        self._refresh_condition_usage_view()
+
+    def _set_condition_usage_sort(self, column: str) -> None:
+        if self._condition_usage_sort_column == column:
+            self._condition_usage_sort_desc = not self._condition_usage_sort_desc
+        else:
+            self._condition_usage_sort_column = column
+            self._condition_usage_sort_desc = False
+        self._refresh_condition_usage_view()
+
+    def _refresh_condition_usage_summary(self) -> None:
+        if not hasattr(self, "condition_usage_summary_var"):
+            return
+        total = len(self._condition_usage_all_results)
+        visible = len(self._condition_usage_results)
+        if self._condition_usage_type_filter:
+            summary = f"{visible} of {total} shown. Type: {self._condition_usage_type_filter}. {self._condition_usage_summary_text}"
+        else:
+            summary = self._condition_usage_summary_text
+        self.condition_usage_summary_var.set(summary)
+
+    def _condition_usage_sort_key(self, result: dict[str, object], column: str) -> tuple[object, str]:
+        owner = str(result.get("owner", ""))
+        if column == "owner":
+            return (owner.casefold(), "")
+        if column == "kind":
+            return (str(result.get("kind_label", "")).casefold(), owner.casefold())
+        if column == "match":
+            return (str(result.get("match_type", "")).casefold(), owner.casefold())
+        if column == "clauses":
+            return (self._condition_usage_result_clauses_text(result).casefold(), owner.casefold())
+        if column == "raw":
+            raw_fragments = result.get("raw_fragments", [])
+            raw_count = len(raw_fragments) if isinstance(raw_fragments, list) else 0
+            return (raw_count, owner.casefold())
+        return (owner.casefold(), "")
+
+    def _condition_usage_heading_text(self, column: str, label: str) -> str:
+        if self._condition_usage_sort_column != column:
+            return label
+        return f"{label} {'v' if self._condition_usage_sort_desc else '^'}"
+
+    def _configure_condition_usage_headings(self) -> None:
+        if not hasattr(self, "condition_usage_tree"):
+            return
+        tree = self.condition_usage_tree
+        tree.heading("#0", text=self._condition_usage_heading_text("owner", "Owner"), command=lambda: self._set_condition_usage_sort("owner"))
+        tree.heading("kind", text=self._condition_usage_heading_text("kind", "Type"), command=lambda: self._set_condition_usage_sort("kind"))
+        tree.heading("match", text=self._condition_usage_heading_text("match", "Match"), command=lambda: self._set_condition_usage_sort("match"))
+        tree.heading(
+            "clauses",
+            text=self._condition_usage_heading_text("clauses", "Matched Clauses"),
+            command=lambda: self._set_condition_usage_sort("clauses"),
+        )
+        tree.heading("raw", text=self._condition_usage_heading_text("raw", "Raw"), command=lambda: self._set_condition_usage_sort("raw"))
+
+    def _condition_usage_result_clauses_text(self, result: dict[str, object]) -> str:
+        matched_clauses = result.get("matched_clauses", [])
+        if isinstance(matched_clauses, list) and matched_clauses:
+            return ", ".join(str(name) for name in matched_clauses)
+        compose_clauses = result.get("compose_clauses", [])
+        if isinstance(compose_clauses, list):
+            return ", ".join(str(name) for name in compose_clauses)
+        return ""
+
+    def _render_condition_usage_rows(self) -> None:
+        if not hasattr(self, "condition_usage_tree"):
+            return
+        tree = self.condition_usage_tree
+        self._configure_condition_usage_headings()
+        tree.delete(*tree.get_children())
+        for index, result in enumerate(self._condition_usage_results):
+            raw_fragments = result.get("raw_fragments", [])
+            raw_count = len(raw_fragments) if isinstance(raw_fragments, list) else 0
+            clauses = self._condition_usage_result_clauses_text(result)
+            tree.insert(
+                "",
+                "end",
+                iid=f"condition-usage-{index}",
+                text=self._truncate_ui_text(str(result.get("owner", "")), 120),
+                values=(
+                    str(result.get("kind_label", "")),
+                    str(result.get("match_type", "")),
+                    self._truncate_ui_text(clauses, 90),
+                    str(raw_count) if raw_count else "",
+                ),
+            )
+
+    def _on_condition_usage_select(self, _event: tk.Event) -> None:
+        if not hasattr(self, "condition_usage_tree"):
+            return
+        selected = self.condition_usage_tree.selection()
+        if not selected:
+            return
+        node_id = selected[0]
+        prefix = "condition-usage-"
+        if not node_id.startswith(prefix):
+            return
+        try:
+            index = int(node_id[len(prefix):])
+        except ValueError:
+            return
+        if 0 <= index < len(self._condition_usage_results):
+            self._condition_usage_index = index
+            self._update_condition_usage_display(select_row=False)
+
+    def _update_condition_usage_display(self, *, select_row: bool = True) -> None:
+        if not self._condition_usage_results:
+            if hasattr(self, "condition_usage_current_var"):
+                self.condition_usage_current_var.set("No condition usages match the selected Type filter.")
+            if hasattr(self, "condition_usage_condition_text"):
+                self._set_readonly_text_widget_value(self.condition_usage_condition_text, "")
+            if hasattr(self, "condition_usage_compose_text"):
+                self._set_readonly_text_widget_value(self.condition_usage_compose_text, "")
+            if hasattr(self, "condition_usage_select_button"):
+                self.condition_usage_select_button.configure(state=tk.DISABLED)
+            return
+        total = len(self._condition_usage_results)
+        self._condition_usage_index = max(0, min(self._condition_usage_index, total - 1))
+        result = self._condition_usage_results[self._condition_usage_index]
+        owner = str(result.get("owner", ""))
+        match_type = str(result.get("match_type", ""))
+        self.condition_usage_current_var.set(f"{self._condition_usage_index + 1} of {total}: {owner} ({match_type})")
+        self._set_readonly_text_widget_value(
+            self.condition_usage_condition_text,
+            str(result.get("condition", "")),
+        )
+        self._set_readonly_text_widget_value(
+            self.condition_usage_compose_text,
+            self._format_condition_usage_detail(result),
+        )
+        if hasattr(self, "condition_usage_select_button"):
+            self.condition_usage_select_button.configure(state=tk.NORMAL)
+        if select_row and hasattr(self, "condition_usage_tree"):
+            node_id = f"condition-usage-{self._condition_usage_index}"
+            if self.condition_usage_tree.exists(node_id):
+                self.condition_usage_tree.selection_set(node_id)
+                self.condition_usage_tree.focus(node_id)
+                self.condition_usage_tree.see(node_id)
+
+    def _format_condition_usage_detail(self, result: dict[str, object]) -> str:
+        lines: list[str] = []
+        compose_text = str(result.get("compose_text", "")).strip()
+        if compose_text:
+            lines.append(f"Composer:\n{compose_text}")
+        compose_clauses = result.get("compose_clauses", [])
+        if isinstance(compose_clauses, list) and compose_clauses:
+            lines.append("Composer clauses:\n" + ", ".join(str(name) for name in compose_clauses))
+        raw_fragments = result.get("raw_fragments", [])
+        if isinstance(raw_fragments, list) and raw_fragments:
+            raw_lines = [f"RAW{{{fragment}}}" for fragment in raw_fragments]
+            lines.append("Raw fragments:\n" + "\n\n".join(raw_lines))
+        parse_error = str(result.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"Parse error:\n{parse_error}")
+        return "\n\n".join(lines)
+
+    def _select_current_condition_usage_target(self) -> None:
+        if not self._condition_usage_results:
+            return
+        result = self._condition_usage_results[self._condition_usage_index]
+        document = result.get("document")
+        if not isinstance(document, dict):
+            return
+        document_source = document.get("source")
+        if isinstance(document_source, dict):
+            self._select_document_node_for_source(document_source)
+        source_ref = result.get("source_ref")
+        if isinstance(source_ref, dict) and str(result.get("kind", "")) != "document":
+            self._select_layout_node_for_source(
+                source_ref,
+                preferred_kind=str(result.get("preferred_kind", "")),
+            )
+
+    def _close_condition_usage_window(self) -> None:
+        if self.condition_usage_window is not None and self.condition_usage_window.winfo_exists():
+            self.condition_usage_window.destroy()
+        self.condition_usage_window = None
+        self._condition_usage_all_results = []
+        self._condition_usage_results = []
+        self._condition_usage_index = 0
+        self._condition_usage_summary_text = ""
+        self._condition_usage_type_filter = ""
+        self._condition_usage_sort_column = ""
+        self._condition_usage_sort_desc = False
+
+    @staticmethod
+    def _truncate_ui_text(value: str, limit: int) -> str:
+        text = str(value or "")
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 3)] + "..."
+
     def _delete_condition_library_entry(self) -> None:
         if self._active_condition_library_index is None:
             return
@@ -1963,6 +2600,7 @@ class AToolApp:
         self._update_clause_manager_target_label()
         source_ref, kind = self._infer_conditions_target()
         if not isinstance(source_ref, dict):
+            self._set_compose_text("")
             self.condition_compose_status_var.set("No target selected. Select a Document or Layout condition target.")
             return
         raw_condition = str(source_ref.get("Condition", "")).strip()
@@ -1978,6 +2616,14 @@ class AToolApp:
         self.condition_compose_status_var.set(
             f"Auto-compose: partial match ({unmatched_count} raw fragment{'s' if unmatched_count != 1 else ''} as RAW{{...}})."
         )
+
+    def _refresh_condition_composer_for_current_target(self) -> None:
+        self._update_clause_manager_target_label()
+        if self.condition_library_window is None or not self.condition_library_window.winfo_exists():
+            return
+        if self.compose_entry_widget is None or not self.compose_entry_widget.winfo_exists():
+            return
+        self._autofill_compose_from_current_target()
 
     def _on_condition_library_filter_changed(self, *_args: object) -> None:
         self._render_condition_library_list()
@@ -3244,7 +3890,7 @@ class AToolApp:
             self._clear_document_details()
             self._set_empty_layouts_tree("No document selected")
             self._update_document_context_buttons()
-            self._update_clause_manager_target_label()
+            self._refresh_condition_composer_for_current_target()
             return
         node_id = selected[0]
         details = self._document_node_details.get(node_id)
@@ -3253,13 +3899,13 @@ class AToolApp:
             self._clear_document_details()
             self._set_empty_layouts_tree("No document selected")
             self._update_document_context_buttons()
-            self._update_clause_manager_target_label()
+            self._refresh_condition_composer_for_current_target()
             return
         self._active_document_node_id = node_id
         self._set_document_details(details)
         self._render_layouts_for_document(details)
         self._update_document_context_buttons()
-        self._update_clause_manager_target_label()
+        self._refresh_condition_composer_for_current_target()
 
     def _on_documents_filter_changed(self, *_args: object) -> None:
         self._render_documents_tree()
@@ -3283,6 +3929,7 @@ class AToolApp:
 
         self.layouts_tree.delete(*self.layouts_tree.get_children())
         self._layout_node_details = {}
+        self._active_layout_node_id = None
         self._clear_layout_details()
         for layout in layouts:
             if not isinstance(layout, dict):
@@ -3396,7 +4043,7 @@ class AToolApp:
             self._active_layout_node_id = None
             self._clear_layout_details()
             self._update_layout_context_buttons()
-            self._update_clause_manager_target_label()
+            self._refresh_condition_composer_for_current_target()
             return
         node_id = selected[0]
         details = self._layout_node_details.get(node_id)
@@ -3404,12 +4051,12 @@ class AToolApp:
             self._active_layout_node_id = None
             self._clear_layout_details()
             self._update_layout_context_buttons()
-            self._update_clause_manager_target_label()
+            self._refresh_condition_composer_for_current_target()
             return
         self._active_layout_node_id = node_id
         self._set_layout_details(details)
         self._update_layout_context_buttons()
-        self._update_clause_manager_target_label()
+        self._refresh_condition_composer_for_current_target()
 
     def _set_layout_details(self, details: dict[str, object]) -> None:
         self._updating_layout_form = True
@@ -5843,6 +6490,8 @@ class AToolApp:
         self._persist_condition_library_window_geometry()
         if self.fields_window is not None and self.fields_window.winfo_exists():
             self.fields_window.destroy()
+        if self.condition_usage_window is not None and self.condition_usage_window.winfo_exists():
+            self.condition_usage_window.destroy()
         if self.condition_library_window is not None and self.condition_library_window.winfo_exists():
             self.condition_library_window.destroy()
         self.root.destroy()
@@ -5948,7 +6597,7 @@ class AToolApp:
                 key = (parent, segment)
                 node_id = path_nodes.get(key)
                 if node_id is None:
-                    node_id = self.fields_tree.insert(parent, "end", text=segment, open=False)
+                    node_id = self.fields_tree.insert(parent, "end", text=segment, open=True)
                     path_nodes[key] = node_id
                 parent = node_id
             self._insert_field_leaf(parent, field)
@@ -6032,8 +6681,10 @@ class AToolApp:
         self._render_fields_tree(selected_field=new_field)
 
     def _update_view_toggle_label(self) -> None:
-        mode_label = "Path" if self.field_view_mode == "path" else "Name"
-        self.view_toggle_button.config(text=f"View: {mode_label}")
+        if not hasattr(self, "view_toggle_button"):
+            return
+        next_mode_label = "Name" if self.field_view_mode == "path" else "Path"
+        self.view_toggle_button.config(text=f"View: {next_mode_label}")
 
     def _expand_all_fields(self) -> None:
         self._set_all_tree_nodes_open(True)
