@@ -1,0 +1,2 @@
+# ATool currently uses Python standard library modules only.
+# Keep this file for reproducible setup and future dependencies.
