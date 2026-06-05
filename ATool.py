@@ -14,7 +14,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
 
 
@@ -37,6 +37,7 @@ class AToolApp:
             "last_config_id": "",
             "shared_workspace_dir": "",
             "user_name": "",
+            "package_mru": [],
         },
     }
 
@@ -4111,6 +4112,105 @@ class AToolApp:
             return ""
         return str(section.get("user_name", "")).strip()
 
+    def _get_occs_package_mru(self) -> list[dict[str, str]]:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return []
+        return self._normalize_occs_package_mru(section.get("package_mru"))
+
+    def _record_occs_package_mru(self, package_name: str, version_name: str) -> None:
+        package_text = str(package_name or "").strip()
+        version_text = str(version_name or "").strip()
+        if not package_text or not version_text:
+            return
+        existing = self._get_occs_package_mru()
+        normalized_package = package_text.lower()
+        normalized_version = version_text.lower()
+        filtered = [
+            item
+            for item in existing
+            if not (
+                item.get("package", "").lower() == normalized_package
+                and item.get("version", "").lower() == normalized_version
+            )
+        ]
+        next_entries = [
+            {
+                "package": package_text,
+                "version": version_text,
+                "lastOpenedAt": self._current_timestamp(),
+            },
+            *filtered,
+        ][:5]
+        section = self._occs_settings_section()
+        section["package_mru"] = next_entries
+        self._save_user_settings()
+
+    def _record_occs_package_mru_from_manifest(self, manifest: dict[str, object] | None) -> None:
+        self._record_occs_package_mru(
+            self._occs_manifest_package_short_name(manifest),
+            self._occs_manifest_version_short_name(manifest),
+        )
+
+    def _occs_mru_package_names(self) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for item in self._get_occs_package_mru():
+            package_name = item.get("package", "").strip()
+            key = package_name.lower()
+            if package_name and key not in seen:
+                names.append(package_name)
+                seen.add(key)
+        return names
+
+    def _occs_mru_versions_for_package(self, package_name: str) -> list[str]:
+        normalized_package = str(package_name or "").strip().lower()
+        versions: list[str] = []
+        seen: set[str] = set()
+        for item in self._get_occs_package_mru():
+            if item.get("package", "").strip().lower() != normalized_package:
+                continue
+            version_name = item.get("version", "").strip()
+            key = version_name.lower()
+            if version_name and key not in seen:
+                versions.append(version_name)
+                seen.add(key)
+        return versions
+
+    def _occs_mru_version_choices(self, package_name: str) -> list[str]:
+        versions = self._occs_mru_versions_for_package(package_name)
+        if not any(version.lower() == "latest" for version in versions):
+            versions.append("latest")
+        return versions or ["latest"]
+
+    @staticmethod
+    def _normalize_occs_package_mru(raw_entries: object) -> list[dict[str, str]]:
+        if not isinstance(raw_entries, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            package_name = str(raw_entry.get("package", "")).strip()
+            version_name = str(raw_entry.get("version", "")).strip()
+            if not package_name or not version_name:
+                continue
+            key = (package_name.lower(), version_name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "package": package_name,
+                    "version": version_name,
+                    "lastOpenedAt": str(raw_entry.get("lastOpenedAt", "")).strip(),
+                }
+            )
+            if len(normalized) >= 5:
+                break
+        return normalized
+
     def _get_last_occs_config_id(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -4186,6 +4286,7 @@ class AToolApp:
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
+            settings["occs"]["package_mru"] = self._normalize_occs_package_mru(occs.get("package_mru"))
         return settings
 
     def _save_user_settings(self) -> None:
@@ -5970,39 +6071,93 @@ class AToolApp:
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(1, weight=1)
 
-        package_var = tk.StringVar(value="")
-        version_var = tk.StringVar(value="latest")
-        work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+        mru_package_names = self._occs_mru_package_names()
+        initial_package = mru_package_names[0] if mru_package_names else ""
+        initial_versions = self._occs_mru_versions_for_package(initial_package)
+        initial_version = initial_versions[0] if initial_versions else "latest"
+        package_var = tk.StringVar(value=initial_package)
+        version_var = tk.StringVar(value=initial_version)
+        search_status_var = tk.StringVar(value="")
 
         ttk.Label(container, text="Package:").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        package_entry = ttk.Entry(container, textvariable=package_var, width=44)
-        package_entry.grid(row=0, column=1, columnspan=2, sticky="ew")
+        package_combo = ttk.Combobox(
+            container,
+            textvariable=package_var,
+            values=mru_package_names,
+            state="normal",
+            width=44,
+        )
+        package_combo.grid(row=0, column=1, sticky="ew")
 
-        ttk.Label(container, text="Version:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        version_entry = ttk.Entry(container, textvariable=version_var, width=44)
-        version_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
-
-        ttk.Label(container, text="Local Package Folder:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        work_dir_entry = ttk.Entry(container, textvariable=work_dir_var, width=44)
-        work_dir_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
-
-        def _browse_work_dir() -> None:
-            current_path = os.path.expanduser(work_dir_var.get().strip() or self._get_occs_work_dir())
-            selected_dir = filedialog.askdirectory(
+        def _search_packages() -> None:
+            query = simpledialog.askstring(
+                "Search Packages",
+                "Package search text:",
+                initialvalue=package_var.get().strip(),
                 parent=dialog,
-                title="Select Local Package Folder",
-                initialdir=current_path or None,
             )
-            if selected_dir:
-                work_dir_var.set(selected_dir)
+            if query is None:
+                return
+            args = [
+                "package",
+                "list",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ]
+            query_text = query.strip()
+            if query_text:
+                args.insert(2, query_text)
+            self._run_occs_json_command_async(
+                args,
+                "Searching Comms packages...",
+                lambda result, target_var=package_var: self._open_occs_package_search_results(
+                    self._normalize_occs_packages(result),
+                    target_var,
+                    dialog,
+                    on_select=lambda: _refresh_version_choices(select_first=True),
+                    on_status=search_status_var.set,
+                ),
+                on_failure=lambda error: (
+                    search_status_var.set("Package search failed."),
+                    messagebox.showerror("Search Packages", str(error), parent=dialog),
+                ),
+            )
 
-        ttk.Button(container, text="Browse...", command=_browse_work_dir).grid(
-            row=2,
+        ttk.Button(container, text="Search...", command=_search_packages).grid(
+            row=0,
             column=2,
             sticky="e",
             padx=(6, 0),
-            pady=(8, 0),
         )
+
+        ttk.Label(container, text="Version:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        version_combo = ttk.Combobox(
+            container,
+            textvariable=version_var,
+            values=self._occs_mru_version_choices(initial_package),
+            state="normal",
+            width=44,
+        )
+        version_combo.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        def _refresh_version_choices(select_first: bool = False) -> None:
+            choices = self._occs_mru_version_choices(package_var.get().strip())
+            version_combo.configure(values=choices)
+            current_version = version_var.get().strip()
+            if select_first or not current_version:
+                version_var.set(choices[0] if choices else "latest")
+
+        package_var.trace_add("write", lambda *_args: _refresh_version_choices(select_first=False))
+        package_combo.bind("<<ComboboxSelected>>", lambda _event: _refresh_version_choices(select_first=True))
+
+        search_status_label = ttk.Label(
+            container,
+            textvariable=search_status_var,
+            foreground="#2f6f3e",
+            wraplength=520,
+            justify=tk.LEFT,
+        )
+        search_status_label.grid(row=2, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
         buttons = ttk.Frame(container)
         buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=(14, 0))
@@ -6011,24 +6166,24 @@ class AToolApp:
         def _submit() -> None:
             package_name = package_var.get().strip()
             version_name = version_var.get().strip() or "latest"
-            work_dir_text = work_dir_var.get().strip() or self._get_occs_work_dir()
             if not package_name:
                 messagebox.showerror("Get Package Version from Comms", "Package is required.", parent=dialog)
                 return
 
-            work_dir = Path(os.path.expanduser(work_dir_text))
+            work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
             try:
                 work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as error:
                 messagebox.showerror(
                     "Get Package Version from Comms",
-                    f"Could not create work directory:\n{work_dir}\n\nDetails: {error}",
+                    "Could not create the configured Local Package Folder.\n\n"
+                    f"Folder:\n{work_dir}\n\n"
+                    "Update it in Settings > User Settings.\n\n"
+                    f"Details: {error}",
                     parent=dialog,
                 )
                 return
 
-            self._set_occs_work_dir(str(work_dir))
-            self._save_user_settings()
             bundle_dir = self._build_occs_bundle_output_path(work_dir, package_name, version_name)
             if publish_to_shared_after_get:
                 completion = lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_for_shared_complete(
@@ -6059,7 +6214,7 @@ class AToolApp:
 
         ttk.Button(buttons, text="Get", command=_submit).grid(row=0, column=1)
 
-        package_entry.focus_set()
+        package_combo.focus_set()
         dialog.update_idletasks()
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
@@ -6271,6 +6426,10 @@ class AToolApp:
                 release_lock = False
 
         self._show_temporary_status("Updated shared package version", duration_ms=5000)
+        self._record_occs_package_mru(
+            str(context.get("package_name", "")),
+            str(context.get("version_name", "")),
+        )
         if show_message:
             lock_text = "released" if release_lock else "still held"
             messagebox.showinfo(
@@ -6765,6 +6924,7 @@ class AToolApp:
                 self.current_occs_manifest = self._read_occs_manifest(self.current_occs_bundle_dir)
             except ValueError:
                 pass
+        self._record_occs_package_mru_from_manifest(self.current_occs_manifest)
         summary = self._format_occs_save_result(result)
         messagebox.showinfo("Publish Package to Comms", f"Package published to Comms.\n\n{summary}")
         self._show_temporary_status("Package published to Comms", duration_ms=5000)
@@ -6974,6 +7134,7 @@ class AToolApp:
             )
             return
 
+        self._record_occs_package_mru_from_manifest(manifest)
         self._show_temporary_status("Retrieved package version into shared folder", duration_ms=5000)
         workspace_dir = self._ensure_occs_shared_workspace_dir()
         if workspace_dir is None:
@@ -7008,7 +7169,9 @@ class AToolApp:
             self.current_occs_shared_package_dir = shared_package_dir
             self.current_occs_shared_mode = shared_mode
             self._restore_default_status_text()
-        return True
+            self._record_occs_package_mru_from_manifest(self.current_occs_manifest)
+            return True
+        return False
 
     def _read_occs_manifest(self, bundle_dir: str) -> dict[str, object]:
         manifest_path = Path(os.path.expanduser(bundle_dir)) / "occs-package.json"
@@ -7426,6 +7589,131 @@ class AToolApp:
     def _safe_occs_path_segment(value: str) -> str:
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
         return safe or "unnamed"
+
+    def _open_occs_package_search_results(
+        self,
+        packages: list[dict[str, str]],
+        package_var: tk.StringVar,
+        parent: tk.Toplevel,
+        on_select: object | None = None,
+        on_status: object | None = None,
+    ) -> None:
+        if not parent.winfo_exists():
+            return
+        if not packages:
+            if callable(on_status):
+                on_status("No matching packages found.")
+            messagebox.showinfo("Search Packages", "No matching packages were found.", parent=parent)
+            return
+        if len(packages) == 1:
+            short_name = packages[0].get("shortName", "")
+            package_var.set(short_name)
+            if callable(on_select):
+                on_select()
+            if callable(on_status):
+                on_status(f"Selected exact package match: {short_name}")
+            return
+
+        dialog = tk.Toplevel(parent)
+        dialog.title("Search Packages")
+        dialog.transient(parent)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        tree = ttk.Treeview(
+            container,
+            columns=("name", "description"),
+            show="tree headings",
+            height=min(max(len(packages), 6), 14),
+        )
+        tree.heading("#0", text="Short Name")
+        tree.heading("name", text="Name")
+        tree.heading("description", text="Description")
+        tree.column("#0", width=180, stretch=False)
+        tree.column("name", width=220, stretch=True)
+        tree.column("description", width=360, stretch=True)
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        package_by_id: dict[str, dict[str, str]] = {}
+        for package in packages:
+            item_id = tree.insert(
+                "",
+                tk.END,
+                text=package.get("shortName", ""),
+                values=(
+                    package.get("name", ""),
+                    package.get("description", ""),
+                ),
+            )
+            package_by_id[item_id] = package
+
+        first_item = next(iter(package_by_id))
+        tree.selection_set(first_item)
+        tree.focus(first_item)
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(14, 0))
+
+        def _close() -> None:
+            dialog.destroy()
+            if parent.winfo_exists():
+                parent.grab_set()
+
+        ttk.Button(buttons, text="Cancel", command=_close).grid(row=0, column=0, padx=(0, 8))
+
+        def _select() -> None:
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo("Search Packages", "Select a package first.", parent=dialog)
+                return
+            package = package_by_id.get(selection[0])
+            if not package:
+                return
+            short_name = package.get("shortName", "")
+            package_var.set(short_name)
+            if callable(on_select):
+                on_select()
+            if callable(on_status):
+                on_status(f"Selected package: {short_name}")
+            _close()
+
+        ttk.Button(buttons, text="Select", command=_select).grid(row=0, column=1)
+        tree.bind("<Double-1>", lambda _event: _select())
+
+        dialog.update_idletasks()
+        width = max(dialog.winfo_width(), 820)
+        height = max(dialog.winfo_height(), 360)
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - width) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - height) // 2, 0)
+        dialog.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    @staticmethod
+    def _normalize_occs_packages(result: dict[str, object]) -> list[dict[str, str]]:
+        packages = result.get("packages")
+        if not isinstance(packages, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for package in packages:
+            if not isinstance(package, dict):
+                continue
+            item = {
+                "shortName": str(package.get("shortName", "")).strip(),
+                "name": str(package.get("name", "")).strip(),
+                "description": str(package.get("description", "")).strip(),
+                "packageUuid": str(package.get("packageUuid", "")).strip(),
+            }
+            if item["shortName"]:
+                normalized.append(item)
+        return normalized
 
     @staticmethod
     def _normalize_occs_configs(result: dict[str, object]) -> list[dict[str, str]]:
