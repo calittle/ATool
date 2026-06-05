@@ -24,6 +24,16 @@ class AToolApp:
     OCCS_SPECIFIC_VERSION_TIMEOUT_MS = 60000
     OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
     OCCS_CONVERT_XML_TIMEOUT_MS = 180000
+    OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
+    OCCS_PREVIEW_TIMEOUT_SECONDS = {
+        "PDF": 60,
+        "HTML": 30,
+        "TEXT": 20,
+        "CSV": 20,
+        "JSON": 20,
+        "METADATA": 20,
+    }
+    OCCS_PREVIEW_MAX_TIMEOUT_SECONDS = 180
     DEFAULT_SETTINGS = {
         "document_display": {
             "collapse": False,
@@ -38,6 +48,14 @@ class AToolApp:
             "shared_workspace_dir": "",
             "user_name": "",
             "package_mru": [],
+            "preview_open_programs": {
+                "PDF": "",
+                "HTML": "",
+                "TEXT": "",
+                "CSV": "",
+                "JSON": "",
+                "METADATA": "",
+            },
         },
     }
 
@@ -188,6 +206,7 @@ class AToolApp:
             accelerator=open_accelerator,
             command=self.open_occs_package,
         )
+        package_menu.add_command(label="Preview...", command=self.preview_occs_package)
         package_menu.add_command(label="Update Package", command=self.update_shared_occs_package)
         package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
         package_menu.add_command(label="Release Package Version Lock", command=self.release_shared_occs_lock)
@@ -3929,6 +3948,10 @@ class AToolApp:
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
+        preview_program_vars = {
+            render_type: tk.StringVar(value=self._get_occs_preview_open_program(render_type))
+            for render_type in self.OCCS_PREVIEW_RENDER_TYPES
+        }
 
         ttk.Label(occs_group, text="CLI Path:").grid(row=0, column=0, sticky="w", padx=(0, 6))
         cli_path_entry = ttk.Entry(occs_group, textvariable=cli_path_var, width=54)
@@ -4007,6 +4030,51 @@ class AToolApp:
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
         user_name_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
+        preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
+        preview_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        preview_group.columnconfigure(1, weight=1)
+
+        def _browse_preview_program(render_type: str) -> None:
+            current_path = preview_program_vars[render_type].get().strip()
+            initial_dir = os.path.dirname(current_path) if current_path else str(Path.home())
+            selected_path = filedialog.askopenfilename(
+                parent=dialog,
+                title=f"Select {render_type} Open Program",
+                initialdir=initial_dir or None,
+                filetypes=[
+                    ("Applications", "*.app"),
+                    ("All Files", "*.*"),
+                ],
+            )
+            if selected_path:
+                preview_program_vars[render_type].set(selected_path)
+
+        for row_index, render_type in enumerate(self.OCCS_PREVIEW_RENDER_TYPES):
+            ttk.Label(preview_group, text=f"{render_type}:").grid(
+                row=row_index,
+                column=0,
+                sticky="w",
+                padx=(0, 6),
+                pady=(0 if row_index == 0 else 8, 0),
+            )
+            ttk.Entry(preview_group, textvariable=preview_program_vars[render_type], width=54).grid(
+                row=row_index,
+                column=1,
+                sticky="ew",
+                pady=(0 if row_index == 0 else 8, 0),
+            )
+            ttk.Button(
+                preview_group,
+                text="Browse...",
+                command=lambda selected_render_type=render_type: _browse_preview_program(selected_render_type),
+            ).grid(
+                row=row_index,
+                column=2,
+                sticky="e",
+                padx=(6, 0),
+                pady=(0 if row_index == 0 else 8, 0),
+            )
+
         settings_path = self._settings_file()
         path_label = ttk.Label(
             container,
@@ -4014,10 +4082,10 @@ class AToolApp:
             wraplength=520,
             justify=tk.LEFT,
         )
-        path_label.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        path_label.grid(row=4, column=0, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=4, column=0, sticky="e", pady=(14, 0))
+        buttons.grid(row=5, column=0, sticky="e", pady=(14, 0))
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
@@ -4029,6 +4097,8 @@ class AToolApp:
             self._set_occs_work_dir(work_dir_var.get())
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
+            for render_type, variable in preview_program_vars.items():
+                self._set_occs_preview_open_program(render_type, variable.get())
             self._save_user_settings()
             preferred_mode = "hierarchy" if collapse_var.get() else "flat"
             self._set_document_view_mode(preferred_mode)
@@ -4073,6 +4143,16 @@ class AToolApp:
         section = self._occs_settings_section()
         section["user_name"] = str(user_name or "").strip()
 
+    def _set_occs_preview_open_program(self, render_type: str, program: str) -> None:
+        section = self._occs_settings_section()
+        programs = section.setdefault("preview_open_programs", {})
+        if not isinstance(programs, dict):
+            programs = {}
+            section["preview_open_programs"] = programs
+        normalized = self._normalize_preview_render_type(render_type)
+        if normalized:
+            programs[normalized] = str(program or "").strip()
+
     def _set_last_occs_config_id(self, config_id: str) -> None:
         section = self._occs_settings_section()
         section["last_config_id"] = str(config_id or "").strip()
@@ -4111,6 +4191,15 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("user_name", "")).strip()
+
+    def _get_occs_preview_open_program(self, render_type: str) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        programs = section.get("preview_open_programs")
+        if not isinstance(programs, dict):
+            return ""
+        return str(programs.get(self._normalize_preview_render_type(render_type), "")).strip()
 
     def _get_occs_package_mru(self) -> list[dict[str, str]]:
         section = self.user_settings.get("occs")
@@ -4211,6 +4300,23 @@ class AToolApp:
                 break
         return normalized
 
+    def _normalize_occs_preview_open_programs(self, raw_programs: object) -> dict[str, str]:
+        defaults = {
+            render_type: ""
+            for render_type in self.OCCS_PREVIEW_RENDER_TYPES
+        }
+        if not isinstance(raw_programs, dict):
+            return defaults
+        for render_type in self.OCCS_PREVIEW_RENDER_TYPES:
+            value = raw_programs.get(render_type)
+            if isinstance(value, str):
+                defaults[render_type] = value
+        return defaults
+
+    def _normalize_preview_render_type(self, render_type: str) -> str:
+        normalized = str(render_type or "").strip().upper()
+        return normalized if normalized in self.OCCS_PREVIEW_RENDER_TYPES else ""
+
     def _get_last_occs_config_id(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -4287,6 +4393,9 @@ class AToolApp:
                 if isinstance(value, str):
                     settings["occs"][key] = value
             settings["occs"]["package_mru"] = self._normalize_occs_package_mru(occs.get("package_mru"))
+            settings["occs"]["preview_open_programs"] = self._normalize_occs_preview_open_programs(
+                occs.get("preview_open_programs")
+            )
         return settings
 
     def _save_user_settings(self) -> None:
@@ -6231,6 +6340,212 @@ class AToolApp:
             return
         self._load_occs_bundle(selected_dir)
 
+    def preview_occs_package(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+            return
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            messagebox.showinfo("Preview Package", "Open a package version first.")
+            return
+
+        package_name = self._occs_manifest_package_short_name(self.current_occs_manifest)
+        if not package_name:
+            messagebox.showerror("Preview Package", "The current package version is missing a package short name.")
+            return
+
+        data_file_text = self.current_data_file_path or ""
+        mapped_data_file = bool(data_file_text)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Preview Package")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        ttk.Label(container, text="Package:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(container, text=package_name).grid(row=0, column=1, columnspan=2, sticky="w")
+
+        data_file_var = tk.StringVar(value=data_file_text)
+        data_label_text = "Mapped Data:" if mapped_data_file else "JSON File:"
+        ttk.Label(container, text=data_label_text).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        data_file_entry = ttk.Entry(
+            container,
+            textvariable=data_file_var,
+            width=58,
+            state="readonly" if mapped_data_file else "normal",
+        )
+        data_file_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_json_file() -> None:
+            selected_path = filedialog.askopenfilename(
+                parent=dialog,
+                title="Select JSON File",
+                filetypes=[
+                    ("JSON Files", "*.json"),
+                    ("All Files", "*.*"),
+                ],
+            )
+            if selected_path:
+                data_file_var.set(selected_path)
+
+        if not mapped_data_file:
+            ttk.Button(container, text="Browse...", command=_browse_json_file).grid(
+                row=1,
+                column=2,
+                sticky="e",
+                padx=(6, 0),
+                pady=(8, 0),
+            )
+
+        render_group = ttk.LabelFrame(container, text="Render Types", padding=10)
+        render_group.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+
+        render_vars = {
+            render_type: tk.BooleanVar(value=(render_type == "PDF"))
+            for render_type in self.OCCS_PREVIEW_RENDER_TYPES
+        }
+        for index, render_type in enumerate(self.OCCS_PREVIEW_RENDER_TYPES):
+            ttk.Checkbutton(
+                render_group,
+                text=render_type,
+                variable=render_vars[render_type],
+            ).grid(
+                row=index // 3,
+                column=index % 3,
+                sticky="w",
+                padx=(0 if index % 3 == 0 else 16, 0),
+                pady=(0 if index < 3 else 6, 0),
+            )
+
+        timeout_var = tk.StringVar(value=str(self._default_preview_timeout_seconds(["PDF"])))
+        timeout_user_modified = False
+        updating_timeout_default = False
+
+        def _selected_render_types() -> list[str]:
+            return [
+                render_type
+                for render_type in self.OCCS_PREVIEW_RENDER_TYPES
+                if render_vars[render_type].get()
+            ]
+
+        def _on_timeout_changed(*_args: object) -> None:
+            nonlocal timeout_user_modified
+            if updating_timeout_default:
+                return
+            timeout_user_modified = True
+
+        def _refresh_timeout_default(*_args: object) -> None:
+            nonlocal updating_timeout_default
+            selected = _selected_render_types()
+            if timeout_user_modified or not selected:
+                return
+            updating_timeout_default = True
+            try:
+                timeout_var.set(str(self._default_preview_timeout_seconds(selected)))
+            finally:
+                updating_timeout_default = False
+
+        for variable in render_vars.values():
+            variable.trace_add("write", _refresh_timeout_default)
+
+        ttk.Label(container, text="Timeout (seconds):").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
+        timeout_entry = ttk.Entry(container, textvariable=timeout_var, width=12)
+        timeout_entry.grid(row=3, column=1, sticky="w", pady=(10, 0))
+        timeout_var.trace_add("write", _on_timeout_changed)
+
+        open_after_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            container,
+            text="Open after generation",
+            variable=open_after_var,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            data_file_path = Path(os.path.expanduser(data_file_var.get().strip()))
+            if not data_file_var.get().strip():
+                messagebox.showerror("Preview Package", "JSON file is required.", parent=dialog)
+                return
+            if not data_file_path.exists() or not data_file_path.is_file():
+                messagebox.showerror(
+                    "Preview Package",
+                    f"JSON file not found:\n{data_file_path}",
+                    parent=dialog,
+                )
+                return
+
+            render_types = _selected_render_types()
+            if not render_types:
+                messagebox.showerror("Preview Package", "Select at least one render type.", parent=dialog)
+                return
+
+            timeout_seconds = self._safe_int(timeout_var.get().strip())
+            if timeout_seconds is None or timeout_seconds <= 0:
+                messagebox.showerror("Preview Package", "Timeout must be a positive number of seconds.", parent=dialog)
+                return
+            if timeout_seconds > self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS:
+                messagebox.showerror(
+                    "Preview Package",
+                    f"Timeout cannot exceed {self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS} seconds.",
+                    parent=dialog,
+                )
+                return
+
+            unpublished_reasons = self._occs_preview_unpublished_change_reasons()
+            if unpublished_reasons:
+                detail = "\n".join(f"- {reason}" for reason in unpublished_reasons)
+                if not messagebox.askyesno(
+                    "Preview Package",
+                    "Local and/or Shared Changes have not been published to Comms; preview anyway?\n\n"
+                    f"{detail}",
+                    parent=dialog,
+                ):
+                    return
+
+            output_base = self._build_occs_preview_output_base(data_file_path, package_name)
+            args = [
+                "preview",
+                "--package",
+                package_name,
+                "--input",
+                str(data_file_path),
+                "--output",
+                str(output_base),
+                "--timeout",
+                str(timeout_seconds * 1000),
+                "--render-type",
+                *render_types,
+            ]
+            dialog.destroy()
+            self._run_occs_command_async(
+                args,
+                f"Previewing package {package_name}...",
+                lambda result, selected_render_types=render_types, should_open=open_after_var.get(): self._on_occs_preview_complete(
+                    result,
+                    selected_render_types,
+                    should_open,
+                ),
+                on_failure=lambda error: messagebox.showerror("Preview Package", str(error)),
+            )
+
+        ttk.Button(buttons, text="Preview", command=_submit).grid(row=0, column=1)
+
+        if mapped_data_file:
+            timeout_entry.focus_set()
+        else:
+            data_file_entry.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
     def save_occs_package(self) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
@@ -6925,9 +7240,51 @@ class AToolApp:
             except ValueError:
                 pass
         self._record_occs_package_mru_from_manifest(self.current_occs_manifest)
+        shared_sync_warning = self._sync_shared_package_after_comms_publish()
         summary = self._format_occs_save_result(result)
-        messagebox.showinfo("Publish Package to Comms", f"Package published to Comms.\n\n{summary}")
+        message = f"Package published to Comms.\n\n{summary}"
+        if shared_sync_warning:
+            message = f"{message}\n\nShared package folder warning:\n{shared_sync_warning}"
+            messagebox.showwarning("Publish Package to Comms", message)
+        else:
+            messagebox.showinfo("Publish Package to Comms", message)
         self._show_temporary_status("Package published to Comms", duration_ms=5000)
+
+    def _sync_shared_package_after_comms_publish(self) -> str:
+        if (
+            self.current_occs_shared_package_dir is None
+            or not self.current_occs_bundle_dir
+            or not self.current_occs_manifest
+        ):
+            return ""
+
+        package_dir = self.current_occs_shared_package_dir
+        bundle_dir = Path(self.current_occs_bundle_dir)
+        published_dir = package_dir / "published" / "current"
+        try:
+            if bundle_dir.resolve() == published_dir.resolve():
+                return ""
+        except OSError:
+            pass
+
+        package_name = self._occs_manifest_package_short_name(self.current_occs_manifest)
+        version_name = self._occs_manifest_version_short_name(self.current_occs_manifest)
+        context = {
+            "package_dir": package_dir,
+            "package_name": package_name,
+            "version_name": version_name,
+            "bundle_dir": bundle_dir,
+            "manifest": self.current_occs_manifest,
+            "publicationReason": "publishedToComms",
+        }
+        owner = self._current_shared_user_identity()
+        history_dir = package_dir / "published" / "history" / self._shared_publication_folder_name(owner)
+        try:
+            self._copy_occs_bundle_to_shared(context, published_dir)
+            self._copy_occs_bundle_to_shared(context, history_dir)
+        except OSError as error:
+            return str(error)
+        return ""
 
     def _run_occs_command_async(
         self,
@@ -7805,6 +8162,173 @@ class AToolApp:
             lines.append(f"Config ID: {config_text}")
         lines.append(f"Changed: {', '.join(changes) if changes else 'none'}")
         return "\n".join(lines)
+
+    def _default_preview_timeout_seconds(self, render_types: list[str]) -> int:
+        total = sum(
+            self.OCCS_PREVIEW_TIMEOUT_SECONDS.get(render_type, 20)
+            for render_type in render_types
+        )
+        return min(max(total, 1), self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS)
+
+    def _build_occs_preview_output_base(self, data_file_path: Path, package_name: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        package_segment = self._safe_occs_path_segment(package_name)
+        return data_file_path.parent / f"{data_file_path.stem}-{package_segment}-preview-{timestamp}"
+
+    def _on_occs_preview_complete(
+        self,
+        result: dict[str, object],
+        render_types: list[str],
+        open_after_generation: bool,
+    ) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        outputs = self._preview_output_paths_from_stdout(stdout)
+        if outputs:
+            output_text = "\n".join(
+                f"{item.get('renderType', '')}: {item.get('path', '')}"
+                for item in outputs
+            )
+        else:
+            output_text = stdout or ", ".join(render_types)
+        messagebox.showinfo("Preview Package", f"Preview complete.\n\nOutput:\n{output_text}")
+        self._show_temporary_status("Package preview complete", duration_ms=5000)
+
+        if not open_after_generation or not outputs:
+            return
+        open_errors: list[str] = []
+        for output in outputs:
+            render_type = str(output.get("renderType", ""))
+            output_path = Path(str(output.get("path", "")))
+            try:
+                self._open_occs_preview_output(render_type, output_path)
+            except OSError as error:
+                open_errors.append(f"{render_type or output_path.name}: {error}")
+        if open_errors:
+            messagebox.showwarning(
+                "Open Preview",
+                "Preview files were generated, but one or more files could not be opened.\n\n"
+                + "\n".join(open_errors),
+            )
+
+    @classmethod
+    def _preview_output_paths_from_stdout(cls, stdout: str) -> list[dict[str, str]]:
+        outputs: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_line in stdout.splitlines():
+            line = cls._strip_ansi_sequences(raw_line).strip()
+            match = re.search(r"Preview written \[([A-Z]+)\](?:\s+\[[^\]]+\])?\s+to\s+(.+)$", line)
+            if not match:
+                continue
+            render_type = match.group(1).strip()
+            output_path = match.group(2).strip()
+            key = (render_type, output_path)
+            if not output_path or key in seen:
+                continue
+            seen.add(key)
+            outputs.append({"renderType": render_type, "path": output_path})
+        return outputs
+
+    @staticmethod
+    def _strip_ansi_sequences(text: str) -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    def _open_occs_preview_output(self, render_type: str, output_path: Path) -> None:
+        if not output_path.exists():
+            raise OSError(f"File not found: {output_path}")
+        program = self._get_occs_preview_open_program(render_type)
+        system = platform.system()
+        if program:
+            if system == "Darwin":
+                command = ["open", "-a", program, str(output_path)]
+            else:
+                command = [program, str(output_path)]
+        elif system == "Darwin":
+            command = ["open", str(output_path)]
+        elif system == "Windows":
+            startfile = getattr(os, "startfile", None)
+            if not callable(startfile):
+                raise OSError("System default opener is unavailable.")
+            startfile(str(output_path))
+            return
+        else:
+            command = ["xdg-open", str(output_path)]
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _occs_preview_unpublished_change_reasons(self) -> list[str]:
+        reasons: list[str] = []
+        if self.is_dirty:
+            reasons.append("Current package has unsaved local edits.")
+
+        if self.current_occs_bundle_dir and self.current_occs_manifest:
+            try:
+                if self._occs_bundle_differs_from_source_hashes(
+                    Path(self.current_occs_bundle_dir),
+                    self.current_occs_manifest,
+                ):
+                    reasons.append("Local package copy differs from the last Comms publish.")
+            except ValueError as error:
+                reasons.append(f"Could not verify local package copy: {error}")
+
+        if self.current_occs_shared_package_dir:
+            published_dir = self.current_occs_shared_package_dir / "published" / "current"
+            manifest_path = published_dir / "occs-package.json"
+            if manifest_path.exists():
+                try:
+                    shared_manifest = self._read_occs_manifest(str(published_dir))
+                    if self._occs_bundle_differs_from_source_hashes(published_dir, shared_manifest):
+                        reasons.append("Shared package folder differs from the last Comms publish.")
+                except (ValueError, OSError) as error:
+                    reasons.append(f"Could not verify shared package folder: {error}")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for reason in reasons:
+            if reason in seen:
+                continue
+            deduped.append(reason)
+            seen.add(reason)
+        return deduped
+
+    def _occs_bundle_differs_from_source_hashes(self, bundle_dir: Path, manifest: dict[str, object]) -> bool:
+        source_hashes = manifest.get("sourceHashes")
+        if not isinstance(source_hashes, dict) or not source_hashes:
+            return False
+        current_hashes = self._occs_bundle_current_hashes(bundle_dir, manifest)
+        for key, source_hash in source_hashes.items():
+            current_hash = current_hashes.get(str(key))
+            if current_hash is not None and current_hash != str(source_hash):
+                return True
+        return False
+
+    def _occs_bundle_current_hashes(self, bundle_dir: Path, manifest: dict[str, object]) -> dict[str, str]:
+        assembly_template_path = Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest))
+        version_master_path = Path(self._occs_bundle_version_master_path(str(bundle_dir), manifest))
+        return {
+            "assemblyTemplate": self._semantic_json_hash_for_file(assembly_template_path),
+            "versionMaster": self._semantic_json_hash_for_file(version_master_path),
+        }
+
+    @classmethod
+    def _semantic_json_hash_for_file(cls, path: Path) -> str:
+        try:
+            with open(path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"{path} ({error})") from error
+        stable_text = cls._stable_json_string(payload)
+        return hashlib.sha256(stable_text.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _stable_json_string(cls, value: object) -> str:
+        if isinstance(value, list):
+            return "[" + ",".join(cls._stable_json_string(item) for item in value) + "]"
+        if isinstance(value, dict):
+            parts = []
+            for key in sorted(value.keys(), key=str):
+                key_text = json.dumps(str(key), ensure_ascii=False, separators=(",", ":"))
+                parts.append(f"{key_text}:{cls._stable_json_string(value[key])}")
+            return "{" + ",".join(parts) + "}"
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _occs_manifest_package_short_name(manifest: dict[str, object] | None) -> str:
