@@ -1,8 +1,10 @@
+import hashlib
 import json
 import os
 import platform
 import re
 import copy
+import subprocess
 import threading
 import time
 import traceback
@@ -21,6 +23,11 @@ class AToolApp:
         },
         "diagnostics": {
             "debug_logging": False,
+        },
+        "occs": {
+            "cli_path": "",
+            "work_dir": "",
+            "last_config_id": "",
         },
     }
 
@@ -65,6 +72,9 @@ class AToolApp:
         self.current_file_path: str | None = None
         self.current_source_file_path: str | None = None
         self.current_package_name: str = "(none)"
+        self.current_occs_bundle_dir: str | None = None
+        self.current_occs_manifest: dict[str, object] | None = None
+        self._occs_operation_in_progress = False
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -160,11 +170,18 @@ class AToolApp:
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
+        occs_menu = tk.Menu(menu_bar, tearoff=0)
+        occs_menu.add_command(label="Get Package...", command=self.get_occs_package)
+        occs_menu.add_command(label="Open Package Bundle...", command=self.open_occs_package_bundle)
+        occs_menu.add_separator()
+        occs_menu.add_command(label="Save Package to OCCS...", command=self.save_occs_package)
+
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
         window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
+        menu_bar.add_cascade(label="OCCS", menu=occs_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
         menu_bar.add_cascade(label="Window", menu=window_menu)
         self.root.config(menu=menu_bar)
@@ -1339,6 +1356,7 @@ class AToolApp:
             "name": candidate,
             "description": "",
             "expression": "",
+            "updated_at": self._current_timestamp(),
         }
         self._condition_library_entries.append(item)
         self._sort_condition_library_entries(active_name=item["name"])
@@ -1355,6 +1373,12 @@ class AToolApp:
         item = self._condition_library_form_item()
         if item is None:
             return False
+        previous_item = copy.deepcopy(self._condition_library_entries[index])
+        if self._clause_entry_base_signature(previous_item) == self._clause_entry_base_signature(item):
+            item["updated_at"] = str(previous_item.get("updated_at", "")).strip()
+            item["expression_hash"] = str(previous_item.get("expression_hash", "")).strip()
+        else:
+            item["updated_at"] = self._current_timestamp()
         self._condition_library_entries[index] = item
         self._sort_condition_library_entries(active_name=item["name"])
         self._render_condition_library_list()
@@ -2697,9 +2721,15 @@ class AToolApp:
         return True
 
     def _persist_condition_library(self) -> None:
+        self._sort_condition_library_entries()
+        before = self._payload_clause_library_snapshot()
+        self._sync_condition_library_to_payload()
+        after = self._payload_clause_library_snapshot()
+        if before != after:
+            self._set_dirty(True)
+
         if not self.current_package_name or self.current_package_name == "(none)":
             return
-        self._sort_condition_library_entries()
         metadata_file = self._metadata_file_for_package(self.current_package_name)
         payload: dict[str, object] = {}
         if metadata_file.exists():
@@ -2714,7 +2744,7 @@ class AToolApp:
         payload["clause_library"] = serialized_entries
         payload.pop("condition_library", None)
         payload.pop("condition_library_updated_at", None)
-        payload["clause_library_updated_at"] = datetime.now().isoformat(timespec="seconds")
+        payload["clause_library_updated_at"] = self._current_timestamp()
         payload["package_name"] = self.current_package_name
         try:
             metadata_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2723,7 +2753,34 @@ class AToolApp:
         except OSError:
             return
 
-    def _load_condition_library(self, package_name: str) -> list[dict[str, str]]:
+    def _sync_condition_library_to_payload(self) -> None:
+        if self.current_payload is None:
+            return
+        has_embedded_library = self._embedded_condition_library_entries(self.current_payload) is not None
+        serialized_entries = self._serialize_condition_library_entries(self._condition_library_entries)
+        self._condition_library_entries = serialized_entries
+        if not serialized_entries and not has_embedded_library:
+            return
+        meta = self.current_payload.get("Meta")
+        if not isinstance(meta, dict):
+            meta = {}
+            self.current_payload["Meta"] = meta
+        meta["clause_library"] = copy.deepcopy(serialized_entries)
+        meta.pop("condition_library", None)
+        meta.pop("condition_library_updated_at", None)
+        meta.pop("clause_library_updated_at", None)
+
+    def _payload_clause_library_snapshot(self) -> str:
+        entries = self._embedded_condition_library_entries(self.current_payload)
+        if entries is None:
+            return ""
+        return json.dumps(entries, ensure_ascii=False, sort_keys=True)
+
+    def _load_condition_library(self, package_name: str, payload: dict[str, object] | None = None) -> list[dict[str, str]]:
+        embedded_entries = self._embedded_condition_library_entries(payload)
+        if embedded_entries is not None:
+            return self._serialize_condition_library_entries(embedded_entries)
+
         metadata_file = self._metadata_file_for_package(package_name)
         if not metadata_file.exists():
             return []
@@ -2739,9 +2796,30 @@ class AToolApp:
             return []
         return self._serialize_condition_library_entries(entries)
 
+    @staticmethod
+    def _embedded_condition_library_entries(payload: object) -> list[object] | None:
+        if not isinstance(payload, dict):
+            return None
+        meta = payload.get("Meta")
+        if not isinstance(meta, dict):
+            return None
+        entries = meta.get("clause_library")
+        if isinstance(entries, list):
+            return entries
+        atool_meta = meta.get("ATool")
+        if isinstance(atool_meta, dict):
+            namespaced_entries = atool_meta.get("clause_library")
+            if isinstance(namespaced_entries, list):
+                return namespaced_entries
+        legacy_entries = meta.get("condition_library")
+        if isinstance(legacy_entries, list):
+            return legacy_entries
+        return None
+
     @classmethod
     def _serialize_condition_library_entries(cls, entries: list[object]) -> list[dict[str, str]]:
         serialized: list[dict[str, str]] = []
+        now = cls._current_timestamp()
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -2758,10 +2836,53 @@ class AToolApp:
                         name,
                     ),
                     "expression": expression,
+                    "updated_at": str(entry.get("updated_at", "")).strip(),
+                    "expression_hash": str(entry.get("expression_hash", "")).strip(),
                 }
             )
+        for item in serialized:
+            expression_hash = cls._clause_expression_hash_for_entry(item, serialized)
+            stored_hash = str(item.get("expression_hash", "")).strip()
+            updated_at = str(item.get("updated_at", "")).strip()
+            if not updated_at or (stored_hash and stored_hash != expression_hash):
+                updated_at = now
+            item["updated_at"] = updated_at
+            item["expression_hash"] = expression_hash
         serialized.sort(key=lambda item: str(item.get("name", "")).casefold())
         return serialized
+
+    @classmethod
+    def _clause_expression_hash_for_entry(
+        cls,
+        entry: dict[str, str],
+        entries: list[dict[str, str]],
+    ) -> str:
+        expression = str(entry.get("expression", "")).strip()
+        name = str(entry.get("name", "")).strip()
+        if name:
+            try:
+                expression = cls._resolve_clause_expression_by_name_from_entries(entries, name)
+            except ValueError:
+                pass
+        return cls._clause_expression_hash(expression)
+
+    @classmethod
+    def _clause_expression_hash(cls, expression: str) -> str:
+        canonical = cls._canonical_condition_expression(expression)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return f"sha256:{digest}"
+
+    @staticmethod
+    def _clause_entry_base_signature(entry: dict[str, object]) -> tuple[str, str, str]:
+        return (
+            str(entry.get("name", "")).strip(),
+            str(entry.get("description", "")).strip(),
+            str(entry.get("expression", "")).strip(),
+        )
+
+    @staticmethod
+    def _current_timestamp() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     @classmethod
     def _infer_clause_description(cls, expression: str, clause_name: str) -> str:
@@ -3308,8 +3429,9 @@ class AToolApp:
             stack=stack,
         )
 
+    @classmethod
     def _resolve_clause_expression_by_name_from_entries(
-        self,
+        cls,
         entries: list[dict[str, str]],
         clause_name: str,
         *,
@@ -3321,10 +3443,10 @@ class AToolApp:
         if name in stack:
             chain = " -> ".join((*stack, name))
             raise ValueError(f"Embedded clause cycle detected: {chain}")
-        expression = self._get_clause_expression_by_name_from_entries(entries, name)
+        expression = cls._get_clause_expression_by_name_from_entries(entries, name)
         if not expression:
             raise ValueError(f"Unknown clause '{name}'.")
-        return self._resolve_clause_expression_text_from_entries(entries, expression, stack=(*stack, name))
+        return cls._resolve_clause_expression_text_from_entries(entries, expression, stack=(*stack, name))
 
     def _resolve_clause_expression_text(
         self,
@@ -3338,8 +3460,9 @@ class AToolApp:
             stack=stack,
         )
 
+    @classmethod
     def _resolve_clause_expression_text_from_entries(
-        self,
+        cls,
         entries: list[dict[str, str]],
         expression: str,
         *,
@@ -3348,15 +3471,15 @@ class AToolApp:
         text = str(expression or "").strip()
         if not text:
             return ""
-        if not self._extract_embedded_clause_references(text):
+        if not cls._extract_embedded_clause_references(text):
             return text
 
         def replace_match(match: re.Match[str]) -> str:
             ref_name = str(match.group(1) or "").strip()
             if not ref_name:
                 raise ValueError("Embedded clause name is empty.")
-            resolved = self._resolve_clause_expression_by_name_from_entries(entries, ref_name, stack=stack)
-            resolved_body = self._extract_condition_body(resolved).strip()
+            resolved = cls._resolve_clause_expression_by_name_from_entries(entries, ref_name, stack=stack)
+            resolved_body = cls._extract_condition_body(resolved).strip()
             if not resolved_body:
                 raise ValueError(f"Embedded clause '{ref_name}' has no expression.")
             return f"({resolved_body})"
@@ -3775,6 +3898,63 @@ class AToolApp:
         )
         debug_check.grid(row=0, column=0, sticky="w")
 
+        occs_group = ttk.LabelFrame(container, text="OCCS CLI", padding=10)
+        occs_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        occs_group.columnconfigure(1, weight=1)
+
+        cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
+        work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+
+        ttk.Label(occs_group, text="CLI Path:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        cli_path_entry = ttk.Entry(occs_group, textvariable=cli_path_var, width=54)
+        cli_path_entry.grid(row=0, column=1, sticky="ew")
+
+        def _browse_cli_path() -> None:
+            current_path = cli_path_var.get().strip()
+            initial_dir = os.path.dirname(current_path) if current_path else str(Path.home())
+            selected_path = filedialog.askopenfilename(
+                parent=dialog,
+                title="Select OCCS CLI",
+                initialdir=initial_dir or None,
+                filetypes=[
+                    ("OCCS CLI", "occs.js"),
+                    ("JavaScript Files", "*.js"),
+                    ("All Files", "*.*"),
+                ],
+            )
+            if selected_path:
+                cli_path_var.set(selected_path)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_cli_path).grid(
+            row=0,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+        )
+
+        ttk.Label(occs_group, text="Work Dir:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        work_dir_entry = ttk.Entry(occs_group, textvariable=work_dir_var, width=54)
+        work_dir_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_work_dir() -> None:
+            current_path = work_dir_var.get().strip()
+            initial_dir = current_path if current_path else str(Path.home())
+            selected_dir = filedialog.askdirectory(
+                parent=dialog,
+                title="Select OCCS Bundle Work Directory",
+                initialdir=initial_dir or None,
+            )
+            if selected_dir:
+                work_dir_var.set(selected_dir)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_work_dir).grid(
+            row=1,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
         settings_path = self._settings_file()
         path_label = ttk.Label(
             container,
@@ -3782,10 +3962,10 @@ class AToolApp:
             wraplength=520,
             justify=tk.LEFT,
         )
-        path_label.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        path_label.grid(row=3, column=0, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=3, column=0, sticky="e", pady=(14, 0))
+        buttons.grid(row=4, column=0, sticky="e", pady=(14, 0))
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
@@ -3793,6 +3973,8 @@ class AToolApp:
         def _save_settings() -> None:
             self._set_document_collapse_enabled(bool(collapse_var.get()))
             self._set_debug_logging_enabled(bool(debug_var.get()))
+            self._set_occs_cli_path(cli_path_var.get())
+            self._set_occs_work_dir(work_dir_var.get())
             self._save_user_settings()
             preferred_mode = "hierarchy" if collapse_var.get() else "flat"
             self._set_document_view_mode(preferred_mode)
@@ -3820,6 +4002,57 @@ class AToolApp:
             section = {}
             self.user_settings["diagnostics"] = section
         section["debug_logging"] = enabled
+
+    def _set_occs_cli_path(self, cli_path: str) -> None:
+        section = self._occs_settings_section()
+        section["cli_path"] = str(cli_path or "").strip()
+
+    def _set_occs_work_dir(self, work_dir: str) -> None:
+        section = self._occs_settings_section()
+        section["work_dir"] = str(work_dir or "").strip()
+
+    def _set_last_occs_config_id(self, config_id: str) -> None:
+        section = self._occs_settings_section()
+        section["last_config_id"] = str(config_id or "").strip()
+        self._save_user_settings()
+
+    def _occs_settings_section(self) -> dict[str, object]:
+        section = self.user_settings.setdefault("occs", {})
+        if not isinstance(section, dict):
+            section = {}
+            self.user_settings["occs"] = section
+        return section
+
+    def _get_occs_cli_path(self) -> str:
+        section = self.user_settings.get("occs")
+        configured = ""
+        if isinstance(section, dict):
+            configured = str(section.get("cli_path", "")).strip()
+        return os.path.expanduser(configured or self._default_occs_cli_path())
+
+    def _get_occs_work_dir(self) -> str:
+        section = self.user_settings.get("occs")
+        configured = ""
+        if isinstance(section, dict):
+            configured = str(section.get("work_dir", "")).strip()
+        return os.path.expanduser(configured or self._default_occs_work_dir())
+
+    def _get_last_occs_config_id(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return str(section.get("last_config_id", "")).strip()
+
+    @staticmethod
+    def _default_occs_cli_path() -> str:
+        sibling_cli = Path(__file__).resolve().parent.parent / "ccs-tools" / "OCCS-CLI" / "bin" / "occs.js"
+        if sibling_cli.exists():
+            return str(sibling_cli)
+        return "occs"
+
+    @staticmethod
+    def _default_occs_work_dir() -> str:
+        return str(Path.home() / ".atool" / "occs-bundles")
 
     def _get_document_collapse_setting(self) -> bool:
         document_display = self.user_settings.get("document_display")
@@ -3865,6 +4098,13 @@ class AToolApp:
             debug_value = diagnostics.get("debug_logging")
             if isinstance(debug_value, bool):
                 settings["diagnostics"]["debug_logging"] = debug_value
+
+        occs = parsed.get("occs")
+        if isinstance(occs, dict):
+            for key in ("cli_path", "work_dir", "last_config_id"):
+                value = occs.get(key)
+                if isinstance(value, str):
+                    settings["occs"][key] = value
         return settings
 
     def _save_user_settings(self) -> None:
@@ -5610,6 +5850,612 @@ class AToolApp:
         if file_path:
             self._load_assembly_template(file_path)
 
+    def get_occs_package(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
+            return
+        if not self._prompt_save_if_dirty():
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Get OCCS Package")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        package_var = tk.StringVar(value="")
+        version_var = tk.StringVar(value="latest")
+        work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+
+        ttk.Label(container, text="Package:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        package_entry = ttk.Entry(container, textvariable=package_var, width=44)
+        package_entry.grid(row=0, column=1, columnspan=2, sticky="ew")
+
+        ttk.Label(container, text="Version:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        version_entry = ttk.Entry(container, textvariable=version_var, width=44)
+        version_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(container, text="Work Dir:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        work_dir_entry = ttk.Entry(container, textvariable=work_dir_var, width=44)
+        work_dir_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_work_dir() -> None:
+            current_path = os.path.expanduser(work_dir_var.get().strip() or self._get_occs_work_dir())
+            selected_dir = filedialog.askdirectory(
+                parent=dialog,
+                title="Select OCCS Bundle Work Directory",
+                initialdir=current_path or None,
+            )
+            if selected_dir:
+                work_dir_var.set(selected_dir)
+
+        ttk.Button(container, text="Browse...", command=_browse_work_dir).grid(
+            row=2,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            package_name = package_var.get().strip()
+            version_name = version_var.get().strip() or "latest"
+            work_dir_text = work_dir_var.get().strip() or self._get_occs_work_dir()
+            if not package_name:
+                messagebox.showerror("Get OCCS Package", "Package is required.", parent=dialog)
+                return
+
+            work_dir = Path(os.path.expanduser(work_dir_text))
+            try:
+                work_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                messagebox.showerror(
+                    "Get OCCS Package",
+                    f"Could not create work directory:\n{work_dir}\n\nDetails: {error}",
+                    parent=dialog,
+                )
+                return
+
+            self._set_occs_work_dir(str(work_dir))
+            self._save_user_settings()
+            bundle_dir = self._build_occs_bundle_output_path(work_dir, package_name, version_name)
+            dialog.destroy()
+            self._run_occs_json_command_async(
+                [
+                    "package",
+                    "get",
+                    package_name,
+                    "--package-version",
+                    version_name,
+                    "--output",
+                    str(bundle_dir),
+                ],
+                f"Getting OCCS package {package_name} {version_name}...",
+                lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_complete(
+                    result,
+                    requested_bundle_dir,
+                ),
+            )
+
+        ttk.Button(buttons, text="Get", command=_submit).grid(row=0, column=1)
+
+        package_entry.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def open_occs_package_bundle(self) -> None:
+        if not self._prompt_save_if_dirty():
+            return
+        selected_dir = filedialog.askdirectory(
+            title="Open OCCS Package Bundle",
+            initialdir=self._get_occs_work_dir() or None,
+        )
+        if not selected_dir:
+            return
+        self._load_occs_bundle(selected_dir)
+
+    def save_occs_package(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
+            return
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            return
+        if self.is_dirty and not self.save_assembly_template():
+            return
+
+        self._run_occs_json_command_async(
+            ["list-configs"],
+            "Loading OCCS Config IDs...",
+            lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
+            on_failure=self._on_occs_config_list_failed,
+        )
+
+    def _on_occs_config_list_failed(self, error: Exception) -> None:
+        if not messagebox.askyesno(
+            "Save Package to OCCS",
+            "Could not load open Config IDs from OCCS.\n\n"
+            f"Details: {error}\n\n"
+            "Continue with manual Config ID entry?",
+        ):
+            return
+        self._open_occs_save_dialog([])
+
+    def _open_occs_save_dialog(self, configs: list[dict[str, str]]) -> None:
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Save Package to OCCS")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        package_name = self._occs_manifest_package_short_name(self.current_occs_manifest)
+        version_name = self._occs_manifest_version_short_name(self.current_occs_manifest)
+        ttk.Label(container, text="Package:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(container, text=f"{package_name} {version_name}".strip() or "(unknown)").grid(
+            row=0,
+            column=1,
+            sticky="w",
+        )
+
+        ttk.Label(container, text="Bundle:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(
+            container,
+            text=str(self.current_occs_bundle_dir),
+            wraplength=520,
+            justify=tk.LEFT,
+        ).grid(row=1, column=1, sticky="w", pady=(8, 0))
+
+        labels = [self._format_occs_config_label(config) for config in configs]
+        config_by_label = {
+            label: config
+            for label, config in zip(labels, configs)
+            if label
+        }
+        config_var = tk.StringVar(value=self._initial_occs_config_selection(labels, configs))
+
+        ttk.Label(container, text="Config ID:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_combo = ttk.Combobox(
+            container,
+            textvariable=config_var,
+            values=labels,
+            state="normal",
+            width=54,
+        )
+        config_combo.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            raw_value = config_var.get().strip()
+            config_id = self._occs_config_id_from_selection(raw_value, config_by_label)
+            if not config_id:
+                messagebox.showerror("Save Package to OCCS", "Config ID is required.", parent=dialog)
+                return
+            self._set_last_occs_config_id(config_id)
+            dialog.destroy()
+            self._run_occs_save_dry_run(config_id)
+
+        ttk.Button(buttons, text="Dry Run", command=_submit).grid(row=0, column=1)
+        config_combo.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _run_occs_save_dry_run(self, config_id: str) -> None:
+        if not self.current_occs_bundle_dir:
+            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            return
+        self._run_occs_json_command_async(
+            [
+                "package",
+                "save",
+                self.current_occs_bundle_dir,
+                "--config-id",
+                config_id,
+                "--dry-run",
+            ],
+            "Running OCCS package save dry run...",
+            lambda result, selected_config_id=config_id: self._on_occs_save_dry_run_complete(
+                result,
+                selected_config_id,
+            ),
+        )
+
+    def _on_occs_save_dry_run_complete(self, result: dict[str, object], config_id: str) -> None:
+        changes = result.get("changes")
+        changed_surfaces = [
+            str(name)
+            for name, changed in (changes.items() if isinstance(changes, dict) else [])
+            if changed
+        ]
+        if not changed_surfaces:
+            messagebox.showinfo(
+                "Save Package to OCCS",
+                "Dry run complete. No package bundle changes were detected.",
+            )
+            self._show_temporary_status("OCCS dry run complete: no changes", duration_ms=5000)
+            return
+
+        summary = self._format_occs_save_result(result, changed_surfaces)
+        if not messagebox.askyesno(
+            "Confirm OCCS Package Save",
+            f"{summary}\n\nUpload these changes to OCCS?",
+        ):
+            return
+        self._run_occs_package_save(config_id)
+
+    def _run_occs_package_save(self, config_id: str) -> None:
+        if not self.current_occs_bundle_dir:
+            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            return
+        self._run_occs_json_command_async(
+            [
+                "package",
+                "save",
+                self.current_occs_bundle_dir,
+                "--config-id",
+                config_id,
+            ],
+            "Saving OCCS package...",
+            self._on_occs_package_save_complete,
+        )
+
+    def _on_occs_package_save_complete(self, result: dict[str, object]) -> None:
+        if self.current_occs_bundle_dir:
+            try:
+                self.current_occs_manifest = self._read_occs_manifest(self.current_occs_bundle_dir)
+            except ValueError:
+                pass
+        summary = self._format_occs_save_result(result)
+        messagebox.showinfo("Save Package to OCCS", f"Package saved to OCCS.\n\n{summary}")
+        self._show_temporary_status("OCCS package saved", duration_ms=5000)
+
+    def _run_occs_json_command_async(
+        self,
+        args: list[str],
+        status_message: str,
+        on_success: object,
+        on_failure: object | None = None,
+    ) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
+            return
+
+        self._occs_operation_in_progress = True
+        if self._status_note_job:
+            self.root.after_cancel(self._status_note_job)
+            self._status_note_job = None
+        self.status_text.set(status_message)
+        self._debug_log(f"OCCS command started: {' '.join(args)}")
+
+        def _worker() -> None:
+            try:
+                result = self._run_occs_json_command(args)
+                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+                self.root.after(
+                    0,
+                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure),
+                )
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+    def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
+        self._occs_operation_in_progress = False
+        self._restore_default_status_text()
+        if callable(on_success):
+            on_success(result)
+
+    def _on_occs_command_failure(
+        self,
+        error: Exception,
+        stack: str,
+        on_failure: object | None,
+    ) -> None:
+        self._occs_operation_in_progress = False
+        self._restore_default_status_text()
+        self._debug_log(f"OCCS command failed:\n{stack}")
+        if callable(on_failure):
+            on_failure(error)
+            return
+        messagebox.showerror("OCCS Error", str(error))
+
+    def _run_occs_json_command(self, args: list[str]) -> dict[str, object]:
+        command_args = [str(arg) for arg in args]
+        if "--json" not in command_args:
+            command_args.append("--json")
+        command = self._build_occs_command(command_args)
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self._occs_cli_cwd(),
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+        except OSError as error:
+            raise RuntimeError(f"Could not run OCCS CLI: {error}") from error
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("OCCS CLI command timed out.") from error
+
+        stdout = (completed.stdout or "").strip()
+        stderr = (completed.stderr or "").strip()
+        parsed = self._parse_occs_json_stdout(stdout)
+
+        if completed.returncode != 0:
+            message = self._occs_error_message(parsed, stderr, completed.returncode)
+            raise RuntimeError(message)
+        if parsed is None:
+            detail = f"\n\nSTDERR:\n{stderr}" if stderr else ""
+            raise RuntimeError(f"OCCS CLI did not return JSON on stdout.{detail}")
+        if parsed.get("ok") is False:
+            raise RuntimeError(self._occs_error_message(parsed, stderr, completed.returncode))
+        return parsed
+
+    def _build_occs_command(self, args: list[str]) -> list[str]:
+        cli_path = os.path.expanduser(self._get_occs_cli_path())
+        if cli_path.endswith(".js") or os.path.basename(cli_path) == "occs.js":
+            return ["node", cli_path, *args]
+        return [cli_path, *args]
+
+    def _occs_cli_cwd(self) -> str | None:
+        cli_path = Path(os.path.expanduser(self._get_occs_cli_path()))
+        if not cli_path.exists():
+            return None
+        if cli_path.parent.name == "bin":
+            return str(cli_path.parent.parent)
+        return str(cli_path.parent)
+
+    @staticmethod
+    def _parse_occs_json_stdout(stdout: str) -> dict[str, object] | None:
+        if not stdout:
+            return None
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+
+    @staticmethod
+    def _occs_error_message(
+        parsed: dict[str, object] | None,
+        stderr: str,
+        return_code: int,
+    ) -> str:
+        if parsed:
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message", "")).strip()
+                if message:
+                    return message
+            message = str(parsed.get("message", "")).strip()
+            if message:
+                return message
+        if stderr:
+            return stderr
+        return f"OCCS CLI exited with status {return_code}."
+
+    def _on_occs_package_get_complete(self, result: dict[str, object], requested_bundle_dir: str) -> None:
+        bundle_path = str(result.get("bundlePath") or requested_bundle_dir)
+        if self._load_occs_bundle(bundle_path):
+            self._show_temporary_status(f"Loaded OCCS bundle: {os.path.basename(bundle_path)}", duration_ms=5000)
+
+    def _load_occs_bundle(self, bundle_dir: str) -> bool:
+        try:
+            manifest = self._read_occs_manifest(bundle_dir)
+            assembly_template_path = self._occs_bundle_assembly_template_path(bundle_dir, manifest)
+        except ValueError as error:
+            messagebox.showerror("Open OCCS Package Bundle", str(error))
+            return False
+
+        if not os.path.exists(assembly_template_path):
+            messagebox.showerror(
+                "Open OCCS Package Bundle",
+                f"Assembly template file not found:\n{assembly_template_path}",
+            )
+            return False
+
+        self._load_assembly_template(assembly_template_path)
+        return True
+
+    def _read_occs_manifest(self, bundle_dir: str) -> dict[str, object]:
+        manifest_path = Path(os.path.expanduser(bundle_dir)) / "occs-package.json"
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as source:
+                manifest = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"Could not read OCCS bundle manifest:\n{manifest_path}\n\nDetails: {error}") from error
+        if not isinstance(manifest, dict):
+            raise ValueError(f"OCCS bundle manifest must be a JSON object:\n{manifest_path}")
+        if str(manifest.get("schemaVersion", "")) != "occs-package-bundle/v1":
+            raise ValueError(f"Unsupported OCCS bundle manifest:\n{manifest_path}")
+        return manifest
+
+    def _occs_bundle_assembly_template_path(self, bundle_dir: str, manifest: dict[str, object]) -> str:
+        files = manifest.get("files")
+        relative_path = "assembly-template.json"
+        if isinstance(files, dict):
+            relative_path = str(files.get("assemblyTemplate") or relative_path)
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            return str(candidate)
+        return str(Path(os.path.expanduser(bundle_dir)) / candidate)
+
+    def _detect_occs_bundle_for_file(self, loaded_path: str, source_path: str) -> None:
+        self.current_occs_bundle_dir = None
+        self.current_occs_manifest = None
+        candidates = []
+        for candidate_path in (loaded_path, source_path):
+            if not candidate_path:
+                continue
+            parent = Path(candidate_path).resolve().parent
+            if parent not in candidates:
+                candidates.append(parent)
+
+        source_candidates = {
+            Path(path).resolve()
+            for path in (loaded_path, source_path)
+            if path
+        }
+
+        for bundle_dir in candidates:
+            manifest_path = bundle_dir / "occs-package.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = self._read_occs_manifest(str(bundle_dir))
+                assembly_template_path = Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest)).resolve()
+            except ValueError:
+                continue
+            if assembly_template_path not in source_candidates:
+                continue
+            self.current_occs_bundle_dir = str(bundle_dir)
+            self.current_occs_manifest = manifest
+            self._update_app_state({"last_occs_bundle": str(bundle_dir)})
+            return
+
+    def _build_occs_bundle_output_path(self, work_dir: Path, package_name: str, version_name: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        package_segment = self._safe_occs_path_segment(package_name)
+        version_segment = self._safe_occs_path_segment(version_name or "latest")
+        return work_dir / f"{package_segment}-{version_segment}-{timestamp}"
+
+    @staticmethod
+    def _safe_occs_path_segment(value: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
+        return safe or "unnamed"
+
+    @staticmethod
+    def _normalize_occs_configs(result: dict[str, object]) -> list[dict[str, str]]:
+        configs = result.get("configs")
+        if not isinstance(configs, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for config in configs:
+            if not isinstance(config, dict):
+                continue
+            item = {
+                "id": str(config.get("id", "")).strip(),
+                "shortName": str(config.get("shortName", "")).strip(),
+                "name": str(config.get("name", "")).strip(),
+                "description": str(config.get("description", "")).strip(),
+                "status": str(config.get("status", "")).strip(),
+                "effectiveAt": str(config.get("effectiveAt", "")).strip(),
+            }
+            if item["id"]:
+                normalized.append(item)
+        return normalized
+
+    @staticmethod
+    def _format_occs_config_label(config: dict[str, str]) -> str:
+        parts = [
+            config.get("shortName", ""),
+            config.get("name", ""),
+            config.get("id", ""),
+        ]
+        return " - ".join([part for part in parts if part])
+
+    def _initial_occs_config_selection(
+        self,
+        labels: list[str],
+        configs: list[dict[str, str]],
+    ) -> str:
+        last_config_id = self._get_last_occs_config_id()
+        if not last_config_id:
+            return labels[0] if labels else ""
+        lowered = last_config_id.lower()
+        for label, config in zip(labels, configs):
+            if lowered in {
+                config.get("id", "").lower(),
+                config.get("shortName", "").lower(),
+                config.get("name", "").lower(),
+            }:
+                return label
+        return last_config_id
+
+    @staticmethod
+    def _occs_config_id_from_selection(
+        selection: str,
+        config_by_label: dict[str, dict[str, str]],
+    ) -> str:
+        config = config_by_label.get(selection)
+        if config:
+            return config.get("id") or config.get("shortName") or selection
+        return selection.strip()
+
+    def _format_occs_save_result(
+        self,
+        result: dict[str, object],
+        changed_surfaces: list[str] | None = None,
+    ) -> str:
+        config = result.get("configId")
+        config_text = ""
+        if isinstance(config, dict):
+            config_bits = [
+                str(config.get("shortName", "")).strip(),
+                str(config.get("name", "")).strip(),
+                str(config.get("resolved", "")).strip(),
+            ]
+            config_text = " - ".join([bit for bit in config_bits if bit])
+
+        changes = changed_surfaces
+        if changes is None:
+            raw_changes = result.get("changes")
+            changes = [
+                str(name)
+                for name, changed in (raw_changes.items() if isinstance(raw_changes, dict) else [])
+                if changed
+            ]
+
+        lines = [
+            f"Package: {result.get('package', self._occs_manifest_package_short_name(self.current_occs_manifest))}",
+            f"Version: {result.get('version', self._occs_manifest_version_short_name(self.current_occs_manifest))}",
+        ]
+        if config_text:
+            lines.append(f"Config ID: {config_text}")
+        lines.append(f"Changed: {', '.join(changes) if changes else 'none'}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _occs_manifest_package_short_name(manifest: dict[str, object] | None) -> str:
+        package_info = manifest.get("package") if isinstance(manifest, dict) else None
+        if not isinstance(package_info, dict):
+            return ""
+        return str(package_info.get("shortName") or package_info.get("name") or "").strip()
+
+    @staticmethod
+    def _occs_manifest_version_short_name(manifest: dict[str, object] | None) -> str:
+        version_info = manifest.get("version") if isinstance(manifest, dict) else None
+        if not isinstance(version_info, dict):
+            return ""
+        return str(version_info.get("shortName") or "").strip()
+
     def map_data_file(self) -> None:
         if self.current_payload is None:
             messagebox.showinfo("Map", "Open an assembly template first.")
@@ -5680,6 +6526,7 @@ class AToolApp:
         self._sync_active_document_form_to_model()
         self._sync_active_layout_form_to_model()
         self._sync_all_fields_to_payload()
+        self._sync_condition_library_to_payload()
         backup_path = self._build_backup_path(self.current_file_path)
         source_backup_path: str | None = None
         wrote_source_file = False
@@ -5809,7 +6656,8 @@ class AToolApp:
         self.current_file_path = loaded_path
         self.current_source_file_path = file_path
         self.current_package_name = package_name
-        self._condition_library_entries = self._load_condition_library(package_name)
+        self._detect_occs_bundle_for_file(loaded_path=loaded_path, source_path=file_path)
+        self._condition_library_entries = self._load_condition_library(package_name, payload)
         self._active_condition_library_index = None
         self._render_condition_library_list()
         self._populate_condition_library_form(None)
@@ -6063,8 +6911,8 @@ class AToolApp:
             "documents": documents,
             "fields": self._serialize_fields_for_metadata(fields),
             "clause_library": serialized_clauses,
-            "clause_library_updated_at": datetime.now().isoformat(timespec="seconds"),
-            "loaded_at": datetime.now().isoformat(timespec="seconds"),
+            "clause_library_updated_at": self._current_timestamp(),
+            "loaded_at": self._current_timestamp(),
         }
 
         try:
@@ -6465,7 +7313,13 @@ class AToolApp:
     def _default_status_text(self) -> str:
         file_name = os.path.basename(self.current_file_path) if self.current_file_path else "(none)"
         package_name = self.current_package_name if self.current_package_name else "(none)"
-        return f"File: {file_name} | Package: {package_name}"
+        occs_suffix = ""
+        if self.current_occs_manifest:
+            occs_package = self._occs_manifest_package_short_name(self.current_occs_manifest)
+            occs_version = self._occs_manifest_version_short_name(self.current_occs_manifest)
+            if occs_package or occs_version:
+                occs_suffix = f" | OCCS: {occs_package} {occs_version}".rstrip()
+        return f"File: {file_name} | Package: {package_name}{occs_suffix}"
 
     def _restore_default_status_text(self) -> None:
         self._status_note_job = None
