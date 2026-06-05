@@ -7466,13 +7466,40 @@ class AToolApp:
             if isinstance(error, dict):
                 message = str(error.get("message", "")).strip()
                 if message:
-                    return message
+                    details = AToolApp._format_occs_error_details(error.get("details"))
+                    return f"{message}{details}"
             message = str(parsed.get("message", "")).strip()
             if message:
                 return message
         if stderr:
             return stderr
         return f"OCCS CLI exited with status {return_code}."
+
+    @staticmethod
+    def _format_occs_error_details(details: object) -> str:
+        if not isinstance(details, dict) or not details:
+            return ""
+
+        lines: list[str] = []
+        surface = str(details.get("surface", "")).strip()
+        method = str(details.get("method", "")).strip()
+        url = str(details.get("url", "")).strip()
+        status = str(details.get("status", "")).strip()
+        status_text = str(details.get("statusText", "")).strip()
+        response = details.get("response")
+
+        if surface:
+            lines.append(f"Surface: {surface}")
+        if method or url:
+            lines.append(f"Request: {' '.join([method, url]).strip()}")
+        if status or status_text:
+            lines.append(f"Status: {' '.join([status, status_text]).strip()}")
+        if response:
+            response_text = str(response).strip()
+            if len(response_text) > 2000:
+                response_text = response_text[:2000] + "..."
+            lines.append(f"Response: {response_text}")
+        return "\n\n" + "\n".join(lines) if lines else ""
 
     def _on_occs_package_get_complete(self, result: dict[str, object], requested_bundle_dir: str) -> None:
         bundle_path = str(result.get("bundlePath") or requested_bundle_dir)
