@@ -1,9 +1,12 @@
 import hashlib
+import getpass
 import json
 import os
 import platform
 import re
 import copy
+import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -12,11 +15,15 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from xml.etree import ElementTree
 
 
 class AToolApp:
     DEFAULT_WIDTH = 1000
     DEFAULT_HEIGHT = 640
+    OCCS_SPECIFIC_VERSION_TIMEOUT_MS = 60000
+    OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
+    OCCS_CONVERT_XML_TIMEOUT_MS = 180000
     DEFAULT_SETTINGS = {
         "document_display": {
             "collapse": False,
@@ -28,6 +35,8 @@ class AToolApp:
             "cli_path": "",
             "work_dir": "",
             "last_config_id": "",
+            "shared_workspace_dir": "",
+            "user_name": "",
         },
     }
 
@@ -74,6 +83,8 @@ class AToolApp:
         self.current_package_name: str = "(none)"
         self.current_occs_bundle_dir: str | None = None
         self.current_occs_manifest: dict[str, object] | None = None
+        self.current_occs_shared_package_dir: Path | None = None
+        self.current_occs_shared_mode = "local"
         self._occs_operation_in_progress = False
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
@@ -140,48 +151,59 @@ class AToolApp:
         self._bind_shortcuts()
         self.root.bind("<Configure>", self._on_window_configure)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.after(0, self._open_last_assembly_template)
 
     def _create_menu(self) -> None:
         menu_bar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
-        accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
-        file_menu.add_command(
-            label="Open...",
-            accelerator=accelerator,
-            command=self.open_assembly_template,
-        )
         save_accelerator = "Cmd+S" if self._is_macos() else "Alt+S"
         file_menu.add_command(
             label="Save",
             accelerator=save_accelerator,
             command=self.save_assembly_template,
         )
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+
+        data_menu = tk.Menu(menu_bar, tearoff=0)
         map_accelerator = "Cmd+M" if self._is_macos() else "Alt+M"
-        file_menu.add_command(
+        data_menu.add_command(
             label="Map...",
             accelerator=map_accelerator,
             command=self.map_data_file,
         )
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._on_close)
+        data_menu.add_command(
+            label="Convert...",
+            command=self.convert_xml_data_file,
+        )
 
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
-        occs_menu = tk.Menu(menu_bar, tearoff=0)
-        occs_menu.add_command(label="Get Package...", command=self.get_occs_package)
-        occs_menu.add_command(label="Open Package Bundle...", command=self.open_occs_package_bundle)
-        occs_menu.add_separator()
-        occs_menu.add_command(label="Save Package to OCCS...", command=self.save_occs_package)
+        package_menu = tk.Menu(menu_bar, tearoff=0)
+        open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
+        package_menu.add_command(
+            label="Open Package...",
+            accelerator=open_accelerator,
+            command=self.open_occs_package,
+        )
+        package_menu.add_command(label="Update Package", command=self.update_shared_occs_package)
+        package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
+        package_menu.add_command(label="Release Package Version Lock", command=self.release_shared_occs_lock)
+        package_menu.add_separator()
+        package_menu.add_command(
+            label="Get Package Version from Comms...",
+            command=self.get_occs_package,
+        )
+        package_menu.add_command(label="Open Local Package Version...", command=self.open_occs_package_bundle)
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
         window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
-        menu_bar.add_cascade(label="OCCS", menu=occs_menu)
+        menu_bar.add_cascade(label="Package", menu=package_menu)
+        menu_bar.add_cascade(label="Data", menu=data_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
         menu_bar.add_cascade(label="Window", menu=window_menu)
         self.root.config(menu=menu_bar)
@@ -3904,6 +3926,8 @@ class AToolApp:
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+        shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
+        occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
 
         ttk.Label(occs_group, text="CLI Path:").grid(row=0, column=0, sticky="w", padx=(0, 6))
         cli_path_entry = ttk.Entry(occs_group, textvariable=cli_path_var, width=54)
@@ -3932,7 +3956,7 @@ class AToolApp:
             padx=(6, 0),
         )
 
-        ttk.Label(occs_group, text="Work Dir:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Local Package Folder:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         work_dir_entry = ttk.Entry(occs_group, textvariable=work_dir_var, width=54)
         work_dir_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
 
@@ -3941,7 +3965,7 @@ class AToolApp:
             initial_dir = current_path if current_path else str(Path.home())
             selected_dir = filedialog.askdirectory(
                 parent=dialog,
-                title="Select OCCS Bundle Work Directory",
+                title="Select Local Package Folder",
                 initialdir=initial_dir or None,
             )
             if selected_dir:
@@ -3954,6 +3978,33 @@ class AToolApp:
             padx=(6, 0),
             pady=(8, 0),
         )
+
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
+        shared_workspace_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_shared_workspace() -> None:
+            current_path = shared_workspace_var.get().strip()
+            initial_dir = current_path if current_path else str(Path.home())
+            selected_dir = filedialog.askdirectory(
+                parent=dialog,
+                title="Select Shared Package Folder",
+                initialdir=initial_dir or None,
+            )
+            if selected_dir:
+                shared_workspace_var.set(selected_dir)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
+            row=2,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
+        ttk.Label(occs_group, text="User Name:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
+        user_name_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         settings_path = self._settings_file()
         path_label = ttk.Label(
@@ -3975,6 +4026,8 @@ class AToolApp:
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
+            self._set_occs_shared_workspace_dir(shared_workspace_var.get())
+            self._set_occs_user_name(occs_user_name_var.get())
             self._save_user_settings()
             preferred_mode = "hierarchy" if collapse_var.get() else "flat"
             self._set_document_view_mode(preferred_mode)
@@ -4011,6 +4064,14 @@ class AToolApp:
         section = self._occs_settings_section()
         section["work_dir"] = str(work_dir or "").strip()
 
+    def _set_occs_shared_workspace_dir(self, shared_workspace_dir: str) -> None:
+        section = self._occs_settings_section()
+        section["shared_workspace_dir"] = str(shared_workspace_dir or "").strip()
+
+    def _set_occs_user_name(self, user_name: str) -> None:
+        section = self._occs_settings_section()
+        section["user_name"] = str(user_name or "").strip()
+
     def _set_last_occs_config_id(self, config_id: str) -> None:
         section = self._occs_settings_section()
         section["last_config_id"] = str(config_id or "").strip()
@@ -4037,6 +4098,19 @@ class AToolApp:
             configured = str(section.get("work_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_work_dir())
 
+    def _get_occs_shared_workspace_dir(self) -> str:
+        section = self.user_settings.get("occs")
+        configured = ""
+        if isinstance(section, dict):
+            configured = str(section.get("shared_workspace_dir", "")).strip()
+        return os.path.expanduser(configured or self._default_occs_shared_workspace_dir())
+
+    def _get_occs_user_name(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return str(section.get("user_name", "")).strip()
+
     def _get_last_occs_config_id(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -4053,6 +4127,13 @@ class AToolApp:
     @staticmethod
     def _default_occs_work_dir() -> str:
         return str(Path.home() / ".atool" / "occs-bundles")
+
+    @staticmethod
+    def _default_occs_shared_workspace_dir() -> str:
+        clp_working = Path.home() / "clp-working"
+        if clp_working.exists():
+            return str(clp_working / "ATool")
+        return str(Path.home() / ".atool" / "shared-workspace")
 
     def _get_document_collapse_setting(self) -> bool:
         document_display = self.user_settings.get("document_display")
@@ -4101,7 +4182,7 @@ class AToolApp:
 
         occs = parsed.get("occs")
         if isinstance(occs, dict):
-            for key in ("cli_path", "work_dir", "last_config_id"):
+            for key in ("cli_path", "work_dir", "last_config_id", "shared_workspace_dir", "user_name"):
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
@@ -5822,7 +5903,7 @@ class AToolApp:
             self.root.bind_all("<Alt-M>", self._map_event)
 
     def _open_event(self, event: tk.Event) -> str:
-        self.open_assembly_template()
+        self.open_occs_package()
         return "break"
 
     def _save_event(self, event: tk.Event) -> str:
@@ -5850,7 +5931,29 @@ class AToolApp:
         if file_path:
             self._load_assembly_template(file_path)
 
-    def get_occs_package(self) -> None:
+    def open_occs_package(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Package", "A package operation is already in progress.")
+            return
+        if not self._prompt_save_if_dirty():
+            return
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            return
+
+        entries = self._list_shared_package_versions(workspace_dir)
+        if not entries:
+            if messagebox.askyesno(
+                "Open Package",
+                "No package versions were found in the shared package folder.\n\n"
+                "Retrieve a package version from Comms now?",
+            ):
+                self.get_occs_package(publish_to_shared_after_get=True)
+            return
+
+        self._open_shared_package_selection_dialog(entries)
+
+    def get_occs_package(self, publish_to_shared_after_get: bool = False) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
@@ -5858,7 +5961,7 @@ class AToolApp:
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("Get OCCS Package")
+        dialog.title("Get Package Version from Comms")
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -5879,7 +5982,7 @@ class AToolApp:
         version_entry = ttk.Entry(container, textvariable=version_var, width=44)
         version_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(container, text="Work Dir:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Local Package Folder:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         work_dir_entry = ttk.Entry(container, textvariable=work_dir_var, width=44)
         work_dir_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
 
@@ -5887,7 +5990,7 @@ class AToolApp:
             current_path = os.path.expanduser(work_dir_var.get().strip() or self._get_occs_work_dir())
             selected_dir = filedialog.askdirectory(
                 parent=dialog,
-                title="Select OCCS Bundle Work Directory",
+                title="Select Local Package Folder",
                 initialdir=current_path or None,
             )
             if selected_dir:
@@ -5910,7 +6013,7 @@ class AToolApp:
             version_name = version_var.get().strip() or "latest"
             work_dir_text = work_dir_var.get().strip() or self._get_occs_work_dir()
             if not package_name:
-                messagebox.showerror("Get OCCS Package", "Package is required.", parent=dialog)
+                messagebox.showerror("Get Package Version from Comms", "Package is required.", parent=dialog)
                 return
 
             work_dir = Path(os.path.expanduser(work_dir_text))
@@ -5918,7 +6021,7 @@ class AToolApp:
                 work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as error:
                 messagebox.showerror(
-                    "Get OCCS Package",
+                    "Get Package Version from Comms",
                     f"Could not create work directory:\n{work_dir}\n\nDetails: {error}",
                     parent=dialog,
                 )
@@ -5927,6 +6030,16 @@ class AToolApp:
             self._set_occs_work_dir(str(work_dir))
             self._save_user_settings()
             bundle_dir = self._build_occs_bundle_output_path(work_dir, package_name, version_name)
+            if publish_to_shared_after_get:
+                completion = lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_for_shared_complete(
+                    result,
+                    requested_bundle_dir,
+                )
+            else:
+                completion = lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_complete(
+                    result,
+                    requested_bundle_dir,
+                )
             dialog.destroy()
             self._run_occs_json_command_async(
                 [
@@ -5937,12 +6050,11 @@ class AToolApp:
                     version_name,
                     "--output",
                     str(bundle_dir),
+                    "--timeout",
+                    str(self._occs_package_get_timeout_ms(version_name)),
                 ],
-                f"Getting OCCS package {package_name} {version_name}...",
-                lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_complete(
-                    result,
-                    requested_bundle_dir,
-                ),
+                f"Getting Comms package {package_name} {version_name}...",
+                completion,
             )
 
         ttk.Button(buttons, text="Get", command=_submit).grid(row=0, column=1)
@@ -5957,7 +6069,7 @@ class AToolApp:
         if not self._prompt_save_if_dirty():
             return
         selected_dir = filedialog.askdirectory(
-            title="Open OCCS Package Bundle",
+            title="Open Local Package Version",
             initialdir=self._get_occs_work_dir() or None,
         )
         if not selected_dir:
@@ -5969,22 +6081,544 @@ class AToolApp:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
-            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
         if self.is_dirty and not self.save_assembly_template():
             return
 
         self._run_occs_json_command_async(
-            ["list-configs"],
-            "Loading OCCS Config IDs...",
+            [
+                "list-configs",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ],
+            "Loading Comms Config IDs...",
             lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
             on_failure=self._on_occs_config_list_failed,
         )
 
+    def check_out_shared_occs_bundle(self) -> None:
+        context = self._current_occs_shared_context()
+        if context is None:
+            return
+        lock_path = self._shared_lock_path(context["package_dir"])
+        existing_lock = self._read_shared_lock(lock_path)
+        owner = self._current_shared_user_identity()
+        if existing_lock and not self._is_shared_lock_owner(existing_lock, owner):
+            if not messagebox.askyesno(
+                "Check Out Package Version",
+                "This package/version is already locked.\n\n"
+                f"{self._format_shared_lock(existing_lock)}\n\n"
+                "Replace this lock?",
+            ):
+                return
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock_path, "w", encoding="utf-8") as target:
+                json.dump(self._build_shared_lock_payload(context, owner), target, indent=2)
+        except OSError as error:
+            messagebox.showerror(
+                "Check Out Package Version",
+                f"Could not write shared lock:\n{lock_path}\n\nDetails: {error}",
+            )
+            return
+        self._show_temporary_status("Package version checked out", duration_ms=5000)
+        messagebox.showinfo("Check Out Package Version", f"Lock created:\n{lock_path}")
+
+    def release_shared_occs_lock(self) -> None:
+        context = self._current_occs_shared_context()
+        if context is None:
+            return
+        lock_path = self._shared_lock_path(context["package_dir"])
+        existing_lock = self._read_shared_lock(lock_path)
+        if not existing_lock:
+            messagebox.showinfo("Release Package Version Lock", "No lock exists for this package version.")
+            return
+        owner = self._current_shared_user_identity()
+        if not self._is_shared_lock_owner(existing_lock, owner):
+            if not messagebox.askyesno(
+                "Release Package Version Lock",
+                "This lock belongs to another user.\n\n"
+                f"{self._format_shared_lock(existing_lock)}\n\n"
+                "Release it anyway?",
+            ):
+                return
+        try:
+            lock_path.unlink()
+        except OSError as error:
+            messagebox.showerror(
+                "Release Package Version Lock",
+                f"Could not remove shared lock:\n{lock_path}\n\nDetails: {error}",
+            )
+            return
+        if self.current_occs_shared_package_dir == context["package_dir"]:
+            self.current_occs_shared_mode = "testing"
+        self._show_temporary_status("Package version lock released", duration_ms=5000)
+
+    def update_shared_occs_package(self) -> None:
+        if self.current_occs_shared_mode != "edit":
+            messagebox.showinfo(
+                "Update Package",
+                "Open the package version for edit before updating the shared package folder.",
+            )
+            return
+        self._update_shared_from_current(release_lock_after=None, show_message=True)
+
+    def publish_shared_occs_bundle(self) -> None:
+        self.update_shared_occs_package()
+
+    def publish_occs_package_to_comms(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Publish Package to Comms", "A package operation is already in progress.")
+            return
+        if not self._prompt_save_if_dirty():
+            return
+
+        if self.current_occs_shared_package_dir is not None:
+            if self.current_occs_shared_mode == "edit":
+                if messagebox.askyesno(
+                    "Publish Package to Comms",
+                    "You are editing this package version locally.\n\n"
+                    "Update the shared package folder before publishing to Comms?",
+                ):
+                    if not self._update_shared_from_current(release_lock_after=False, show_message=False):
+                        return
+                else:
+                    messagebox.showinfo(
+                        "Publish Package to Comms",
+                        "Publishing uses the shared package folder, not unsynced local edits.",
+                    )
+            entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
+            if entry is None:
+                messagebox.showerror(
+                    "Publish Package to Comms",
+                    "Could not find the shared package version for the currently open package.",
+                )
+                return
+            self._publish_shared_entry_to_comms(entry)
+            return
+
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            return
+        entries = self._list_shared_package_versions(workspace_dir)
+        if not entries:
+            messagebox.showinfo(
+                "Publish Package to Comms",
+                "No package versions were found in the shared package folder.",
+            )
+            return
+        self._open_shared_package_selection_dialog(
+            entries,
+            title="Publish Package to Comms",
+            on_select=self._publish_shared_entry_to_comms,
+        )
+
+    def _update_shared_from_current(
+        self,
+        release_lock_after: bool | None,
+        show_message: bool,
+    ) -> bool:
+        context = self._current_occs_shared_context()
+        if context is None:
+            return False
+        if self.is_dirty and not self.save_assembly_template():
+            return False
+        owner = self._current_shared_user_identity()
+        lock_path = self._shared_lock_path(context["package_dir"])
+        existing_lock = self._read_shared_lock(lock_path)
+        if not existing_lock:
+            messagebox.showerror(
+                "Update Package",
+                "Cannot update the shared package folder because no edit lock exists.",
+            )
+            return False
+        if not self._is_shared_lock_owner(existing_lock, owner):
+            messagebox.showerror(
+                "Update Package",
+                "Cannot update because this package version is locked by another user.\n\n"
+                f"{self._format_shared_lock(existing_lock)}",
+            )
+            return False
+
+        published_dir = context["package_dir"] / "published" / "current"
+        history_dir = context["package_dir"] / "published" / "history" / self._shared_publication_folder_name(owner)
+        try:
+            self._copy_occs_bundle_to_shared(context, published_dir)
+            self._copy_occs_bundle_to_shared(context, history_dir)
+        except OSError as error:
+            messagebox.showerror(
+                "Update Package",
+                f"Could not update the shared package folder.\n\nDetails: {error}",
+            )
+            return False
+
+        release_lock = release_lock_after
+        if release_lock is None:
+            release_lock = messagebox.askyesno(
+                "Update Package",
+                "Shared package folder updated.\n\nRelease the edit lock now?",
+            )
+        if release_lock:
+            try:
+                lock_path.unlink()
+                self.current_occs_shared_mode = "testing"
+            except OSError as error:
+                messagebox.showwarning(
+                    "Update Package",
+                    f"Shared package folder was updated, but the lock could not be released.\n\nDetails: {error}",
+                )
+                release_lock = False
+
+        self._show_temporary_status("Updated shared package version", duration_ms=5000)
+        if show_message:
+            lock_text = "released" if release_lock else "still held"
+            messagebox.showinfo(
+                "Update Package",
+                f"Updated shared package version:\n{published_dir}\n\nLock: {lock_text}",
+            )
+        return True
+
+    def open_shared_published_bundle(self) -> None:
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            return
+        initial_dir = workspace_dir
+        if self.current_occs_manifest:
+            context = self._current_occs_shared_context(show_errors=False)
+            if context is not None:
+                candidate = context["package_dir"] / "published" / "current"
+                if (candidate / "occs-package.json").exists():
+                    if not self._prompt_save_if_dirty():
+                        return
+                    self._load_occs_bundle(str(candidate))
+                    return
+                initial_dir = context["package_dir"]
+
+        selected_dir = filedialog.askdirectory(
+            title="Open Published Package Version",
+            initialdir=str(initial_dir),
+        )
+        if not selected_dir:
+            return
+        candidate = Path(selected_dir)
+        if not (candidate / "occs-package.json").exists():
+            published_candidate = candidate / "published" / "current"
+            if (published_candidate / "occs-package.json").exists():
+                candidate = published_candidate
+        if not self._prompt_save_if_dirty():
+            return
+        self._load_occs_bundle(str(candidate))
+
+    def _open_shared_package_selection_dialog(
+        self,
+        entries: list[dict[str, object]],
+        title: str = "Open Package",
+        on_select: object | None = None,
+    ) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        tree = ttk.Treeview(
+            container,
+            columns=("version", "status", "updated"),
+            show="tree headings",
+            height=min(max(len(entries), 6), 14),
+        )
+        tree.heading("#0", text="Package")
+        tree.heading("version", text="Version")
+        tree.heading("status", text="Status")
+        tree.heading("updated", text="Updated")
+        tree.column("#0", width=180, stretch=True)
+        tree.column("version", width=100, stretch=False)
+        tree.column("status", width=220, stretch=True)
+        tree.column("updated", width=170, stretch=False)
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        entry_by_id: dict[str, dict[str, object]] = {}
+        current_shared_dir = self.current_occs_shared_package_dir
+        selected_item = ""
+        for entry in entries:
+            package_dir = entry.get("package_dir")
+            lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir)) if isinstance(package_dir, Path) else None
+            entry["lock"] = lock_payload
+            status = "Available"
+            if lock_payload:
+                status = f"Locked by {self._shared_lock_owner_text(lock_payload)}"
+            item_id = tree.insert(
+                "",
+                tk.END,
+                text=str(entry.get("package_name", "")),
+                values=(
+                    str(entry.get("version_name", "")),
+                    status,
+                    self._shared_entry_updated_at(entry),
+                ),
+            )
+            entry_by_id[item_id] = entry
+            if isinstance(package_dir, Path) and current_shared_dir == package_dir:
+                selected_item = item_id
+
+        if selected_item:
+            tree.selection_set(selected_item)
+            tree.focus(selected_item)
+            tree.see(selected_item)
+        elif entry_by_id:
+            first_item = next(iter(entry_by_id))
+            tree.selection_set(first_item)
+            tree.focus(first_item)
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _retrieve_from_comms() -> None:
+            dialog.destroy()
+            self.get_occs_package(publish_to_shared_after_get=True)
+
+        ttk.Button(buttons, text="Retrieve from Comms...", command=_retrieve_from_comms).grid(
+            row=0,
+            column=1,
+            padx=(0, 8),
+        )
+
+        def _open_selected() -> None:
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo(title, "Select a package version first.", parent=dialog)
+                return
+            entry = entry_by_id.get(selection[0])
+            if not entry:
+                return
+            dialog.destroy()
+            if callable(on_select):
+                on_select(entry)
+            else:
+                self._handle_shared_package_selection(entry)
+
+        action_label = "Publish" if callable(on_select) else "Open"
+        ttk.Button(buttons, text=action_label, command=_open_selected).grid(row=0, column=2)
+        tree.bind("<Double-1>", lambda _event: _open_selected())
+
+        dialog.update_idletasks()
+        width = max(dialog.winfo_width(), 760)
+        height = max(dialog.winfo_height(), 360)
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - width) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - height) // 2, 0)
+        dialog.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    def _handle_shared_package_selection(self, entry: dict[str, object]) -> None:
+        entry = self._refresh_shared_package_entry(entry) or entry
+        lock_payload = entry.get("lock")
+        owner = self._current_shared_user_identity()
+        if isinstance(lock_payload, dict) and not self._is_shared_lock_owner(lock_payload, owner):
+            if messagebox.askyesno(
+                "Open Package",
+                "This package version is locked for edit.\n\n"
+                f"{self._format_shared_lock(lock_payload)}\n\n"
+                "Open a local testing copy? You will not be able to update the shared package folder.",
+            ):
+                self._open_shared_entry_local_copy(entry, mode="testing")
+            return
+
+        if messagebox.askyesno(
+            "Open Package",
+            "Check Comms for an updated copy before opening this package version?",
+        ):
+            self._download_shared_entry_from_comms(entry)
+            return
+
+        self._prompt_lock_and_open_shared_entry(entry)
+
+    def _download_shared_entry_from_comms(self, entry: dict[str, object]) -> None:
+        package_name = str(entry.get("package_name", "")).strip()
+        version_name = str(entry.get("version_name", "")).strip()
+        if not package_name or not version_name:
+            messagebox.showerror("Open Package", "The selected package version is missing package metadata.")
+            return
+        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
+        try:
+            work_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            messagebox.showerror(
+                "Open Package",
+                f"Could not create local package folder:\n{work_dir}\n\nDetails: {error}",
+            )
+            return
+        bundle_dir = self._build_occs_bundle_output_path(work_dir, package_name, version_name)
+        self._run_occs_json_command_async(
+            [
+                "package",
+                "get",
+                package_name,
+                "--package-version",
+                version_name,
+                "--output",
+                str(bundle_dir),
+                "--timeout",
+                str(self._occs_package_get_timeout_ms(version_name)),
+            ],
+            f"Checking Comms package {package_name} {version_name}...",
+            lambda result, requested_bundle_dir=str(bundle_dir), selected_entry=entry: self._on_shared_refresh_get_complete(
+                result,
+                requested_bundle_dir,
+                selected_entry,
+            ),
+        )
+
+    def _on_shared_refresh_get_complete(
+        self,
+        result: dict[str, object],
+        requested_bundle_dir: str,
+        entry: dict[str, object],
+    ) -> None:
+        bundle_path = Path(str(result.get("bundlePath") or requested_bundle_dir))
+        try:
+            fresh_manifest = self._read_occs_manifest(str(bundle_path))
+        except ValueError as error:
+            messagebox.showerror("Open Package", str(error))
+            return
+
+        shared_manifest = entry.get("manifest")
+        if isinstance(shared_manifest, dict) and self._occs_source_hashes_match(shared_manifest, fresh_manifest):
+            self._show_temporary_status("Shared package version matches Comms", duration_ms=5000)
+            self._prompt_lock_and_open_shared_entry(entry)
+            return
+
+        shared_updated = self._shared_entry_updated_at(entry) or "(unknown time)"
+        shared_owner = self._shared_publication_owner_text(entry)
+        if messagebox.askyesno(
+            "Open Package",
+            "Comms returned package content that differs from the shared package folder.\n\n"
+            f"Shared package folder last update: {shared_updated}\n"
+            f"Shared update owner: {shared_owner}\n\n"
+            "If the shared package folder contains local team updates, use the shared copy.\n\n"
+            "Update the shared package folder from Comms before opening?",
+        ):
+            try:
+                entry = self._publish_bundle_path_to_shared(bundle_path, fresh_manifest, reason="refreshFromComms")
+            except OSError as error:
+                messagebox.showerror(
+                    "Open Package",
+                    f"Could not update the shared package folder from Comms.\n\nDetails: {error}",
+                )
+                return
+            self._show_temporary_status("Updated shared package version from Comms", duration_ms=5000)
+        else:
+            messagebox.showinfo(
+                "Open Package",
+                "Using the shared package folder. If local changes were already updated there, this is the correct version to edit.",
+            )
+
+        self._prompt_lock_and_open_shared_entry(entry)
+
+    def _prompt_lock_and_open_shared_entry(self, entry: dict[str, object]) -> None:
+        entry = self._refresh_shared_package_entry(entry) or entry
+        package_dir = entry.get("package_dir")
+        if not isinstance(package_dir, Path):
+            messagebox.showerror("Open Package", "The selected package version is missing shared folder metadata.")
+            return
+
+        lock_path = self._shared_lock_path(package_dir)
+        lock_payload = self._read_shared_lock(lock_path)
+        owner = self._current_shared_user_identity()
+        if lock_payload and not self._is_shared_lock_owner(lock_payload, owner):
+            if messagebox.askyesno(
+                "Open Package",
+                "This package version was locked before it could be opened.\n\n"
+                f"{self._format_shared_lock(lock_payload)}\n\n"
+                "Open a local testing copy?",
+            ):
+                self._open_shared_entry_local_copy(entry, mode="testing")
+            return
+
+        lock_for_edit = messagebox.askyesno(
+            "Open Package",
+            "Lock this package version for edit?\n\n"
+            "Choose No to open a local testing copy only.",
+        )
+        mode = "edit" if lock_for_edit else "testing"
+        if lock_for_edit:
+            context = self._shared_context_from_entry(entry)
+            try:
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                lock_write_mode = "w" if lock_payload else "x"
+                with open(lock_path, lock_write_mode, encoding="utf-8") as target:
+                    json.dump(self._build_shared_lock_payload(context, owner), target, indent=2)
+            except FileExistsError:
+                fresh_lock = self._read_shared_lock(lock_path)
+                if fresh_lock and messagebox.askyesno(
+                    "Open Package",
+                    "This package version was locked by another user before the edit lock could be created.\n\n"
+                    f"{self._format_shared_lock(fresh_lock)}\n\n"
+                    "Open a local testing copy?",
+                ):
+                    self._open_shared_entry_local_copy(entry, mode="testing")
+                return
+            except OSError as error:
+                messagebox.showerror(
+                    "Open Package",
+                    f"Could not write shared lock:\n{lock_path}\n\nDetails: {error}",
+                )
+                return
+
+        self._open_shared_entry_local_copy(entry, mode=mode)
+
+    def _open_shared_entry_local_copy(self, entry: dict[str, object], mode: str) -> bool:
+        published_dir = entry.get("published_dir")
+        package_dir = entry.get("package_dir")
+        if not isinstance(published_dir, Path) or not isinstance(package_dir, Path):
+            messagebox.showerror("Open Package", "The selected package version is missing shared folder metadata.")
+            return False
+        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
+        try:
+            work_dir.mkdir(parents=True, exist_ok=True)
+            local_dir = self._build_occs_local_copy_path(
+                work_dir,
+                str(entry.get("package_name", "")),
+                str(entry.get("version_name", "")),
+                mode,
+            )
+            shutil.copytree(published_dir, local_dir)
+        except OSError as error:
+            messagebox.showerror(
+                "Open Package",
+                f"Could not create local package copy.\n\nDetails: {error}",
+            )
+            return False
+
+        if not self._load_occs_bundle(str(local_dir), shared_package_dir=package_dir, shared_mode=mode):
+            return False
+        if mode == "edit":
+            self._show_temporary_status("Package version locked for edit", duration_ms=5000)
+        elif mode == "publish":
+            self._show_temporary_status("Loaded shared package version for Comms publish", duration_ms=5000)
+        else:
+            self._show_temporary_status("Opened local testing copy", duration_ms=5000)
+        return True
+
+    def _publish_shared_entry_to_comms(self, entry: dict[str, object]) -> None:
+        if not self._prompt_save_if_dirty():
+            return
+        if self._open_shared_entry_local_copy(entry, mode="publish"):
+            self.save_occs_package()
+
     def _on_occs_config_list_failed(self, error: Exception) -> None:
         if not messagebox.askyesno(
-            "Save Package to OCCS",
-            "Could not load open Config IDs from OCCS.\n\n"
+            "Publish Package to Comms",
+            "Could not load open Config IDs from Comms.\n\n"
             f"Details: {error}\n\n"
             "Continue with manual Config ID entry?",
         ):
@@ -5993,11 +6627,11 @@ class AToolApp:
 
     def _open_occs_save_dialog(self, configs: list[dict[str, str]]) -> None:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
-            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("Save Package to OCCS")
+        dialog.title("Publish Package to Comms")
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -6015,7 +6649,7 @@ class AToolApp:
             sticky="w",
         )
 
-        ttk.Label(container, text="Bundle:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Local Folder:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         ttk.Label(
             container,
             text=str(self.current_occs_bundle_dir),
@@ -6049,7 +6683,7 @@ class AToolApp:
             raw_value = config_var.get().strip()
             config_id = self._occs_config_id_from_selection(raw_value, config_by_label)
             if not config_id:
-                messagebox.showerror("Save Package to OCCS", "Config ID is required.", parent=dialog)
+                messagebox.showerror("Publish Package to Comms", "Config ID is required.", parent=dialog)
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
@@ -6064,7 +6698,7 @@ class AToolApp:
 
     def _run_occs_save_dry_run(self, config_id: str) -> None:
         if not self.current_occs_bundle_dir:
-            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
         self._run_occs_json_command_async(
             [
@@ -6074,8 +6708,10 @@ class AToolApp:
                 "--config-id",
                 config_id,
                 "--dry-run",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
             ],
-            "Running OCCS package save dry run...",
+            "Running Comms publish dry run...",
             lambda result, selected_config_id=config_id: self._on_occs_save_dry_run_complete(
                 result,
                 selected_config_id,
@@ -6091,23 +6727,23 @@ class AToolApp:
         ]
         if not changed_surfaces:
             messagebox.showinfo(
-                "Save Package to OCCS",
-                "Dry run complete. No package bundle changes were detected.",
+                "Publish Package to Comms",
+                "Dry run complete. No package version changes were detected.",
             )
-            self._show_temporary_status("OCCS dry run complete: no changes", duration_ms=5000)
+            self._show_temporary_status("Comms dry run complete: no changes", duration_ms=5000)
             return
 
         summary = self._format_occs_save_result(result, changed_surfaces)
         if not messagebox.askyesno(
-            "Confirm OCCS Package Save",
-            f"{summary}\n\nUpload these changes to OCCS?",
+            "Confirm Comms Publish",
+            f"{summary}\n\nPublish these changes to Comms?",
         ):
             return
         self._run_occs_package_save(config_id)
 
     def _run_occs_package_save(self, config_id: str) -> None:
         if not self.current_occs_bundle_dir:
-            messagebox.showinfo("Save Package to OCCS", "Open an OCCS package bundle first.")
+            messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
         self._run_occs_json_command_async(
             [
@@ -6116,8 +6752,10 @@ class AToolApp:
                 self.current_occs_bundle_dir,
                 "--config-id",
                 config_id,
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
             ],
-            "Saving OCCS package...",
+            "Publishing package to Comms...",
             self._on_occs_package_save_complete,
         )
 
@@ -6128,8 +6766,40 @@ class AToolApp:
             except ValueError:
                 pass
         summary = self._format_occs_save_result(result)
-        messagebox.showinfo("Save Package to OCCS", f"Package saved to OCCS.\n\n{summary}")
-        self._show_temporary_status("OCCS package saved", duration_ms=5000)
+        messagebox.showinfo("Publish Package to Comms", f"Package published to Comms.\n\n{summary}")
+        self._show_temporary_status("Package published to Comms", duration_ms=5000)
+
+    def _run_occs_command_async(
+        self,
+        args: list[str],
+        status_message: str,
+        on_success: object,
+        on_failure: object | None = None,
+    ) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
+            return
+
+        self._occs_operation_in_progress = True
+        if self._status_note_job:
+            self.root.after_cancel(self._status_note_job)
+            self._status_note_job = None
+        self.status_text.set(status_message)
+        self._debug_log(f"OCCS command started: {' '.join(args)}")
+
+        def _worker() -> None:
+            try:
+                result = self._run_occs_command(args)
+                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+                self.root.after(
+                    0,
+                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure),
+                )
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
 
     def _run_occs_json_command_async(
         self,
@@ -6216,6 +6886,32 @@ class AToolApp:
             raise RuntimeError(self._occs_error_message(parsed, stderr, completed.returncode))
         return parsed
 
+    def _run_occs_command(self, args: list[str]) -> dict[str, object]:
+        command = self._build_occs_command([str(arg) for arg in args])
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self._occs_cli_cwd(),
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+        except OSError as error:
+            raise RuntimeError(f"Could not run OCCS CLI: {error}") from error
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("OCCS CLI command timed out.") from error
+
+        stdout = (completed.stdout or "").strip()
+        stderr = (completed.stderr or "").strip()
+        if completed.returncode != 0:
+            raise RuntimeError(stderr or stdout or f"OCCS CLI exited with status {completed.returncode}.")
+        return {
+            "stdout": stdout,
+            "stderr": stderr,
+            "returnCode": completed.returncode,
+        }
+
     def _build_occs_command(self, args: list[str]) -> list[str]:
         cli_path = os.path.expanduser(self._get_occs_cli_path())
         if cli_path.endswith(".js") or os.path.basename(cli_path) == "occs.js":
@@ -6264,24 +6960,54 @@ class AToolApp:
     def _on_occs_package_get_complete(self, result: dict[str, object], requested_bundle_dir: str) -> None:
         bundle_path = str(result.get("bundlePath") or requested_bundle_dir)
         if self._load_occs_bundle(bundle_path):
-            self._show_temporary_status(f"Loaded OCCS bundle: {os.path.basename(bundle_path)}", duration_ms=5000)
+            self._show_temporary_status(f"Loaded package version: {os.path.basename(bundle_path)}", duration_ms=5000)
 
-    def _load_occs_bundle(self, bundle_dir: str) -> bool:
+    def _on_occs_package_get_for_shared_complete(self, result: dict[str, object], requested_bundle_dir: str) -> None:
+        bundle_path = Path(str(result.get("bundlePath") or requested_bundle_dir))
+        try:
+            manifest = self._read_occs_manifest(str(bundle_path))
+            self._publish_bundle_path_to_shared(bundle_path, manifest, reason="retrievedFromComms")
+        except (OSError, ValueError) as error:
+            messagebox.showerror(
+                "Get Package Version from Comms",
+                f"Retrieved the package version, but could not update the shared package folder.\n\nDetails: {error}",
+            )
+            return
+
+        self._show_temporary_status("Retrieved package version into shared folder", duration_ms=5000)
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            return
+        entries = self._list_shared_package_versions(workspace_dir)
+        if entries:
+            self._open_shared_package_selection_dialog(entries)
+
+    def _load_occs_bundle(
+        self,
+        bundle_dir: str,
+        shared_package_dir: Path | None = None,
+        shared_mode: str = "local",
+    ) -> bool:
         try:
             manifest = self._read_occs_manifest(bundle_dir)
             assembly_template_path = self._occs_bundle_assembly_template_path(bundle_dir, manifest)
         except ValueError as error:
-            messagebox.showerror("Open OCCS Package Bundle", str(error))
+            messagebox.showerror("Open Local Package Version", str(error))
             return False
 
         if not os.path.exists(assembly_template_path):
             messagebox.showerror(
-                "Open OCCS Package Bundle",
+                "Open Local Package Version",
                 f"Assembly template file not found:\n{assembly_template_path}",
             )
             return False
 
         self._load_assembly_template(assembly_template_path)
+        loaded_bundle_dir = Path(os.path.expanduser(bundle_dir)).resolve()
+        if self.current_occs_bundle_dir and Path(self.current_occs_bundle_dir).resolve() == loaded_bundle_dir:
+            self.current_occs_shared_package_dir = shared_package_dir
+            self.current_occs_shared_mode = shared_mode
+            self._restore_default_status_text()
         return True
 
     def _read_occs_manifest(self, bundle_dir: str) -> dict[str, object]:
@@ -6307,9 +7033,21 @@ class AToolApp:
             return str(candidate)
         return str(Path(os.path.expanduser(bundle_dir)) / candidate)
 
+    def _occs_bundle_version_master_path(self, bundle_dir: str, manifest: dict[str, object]) -> str:
+        files = manifest.get("files")
+        relative_path = "version-master.json"
+        if isinstance(files, dict):
+            relative_path = str(files.get("versionMaster") or relative_path)
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            return str(candidate)
+        return str(Path(os.path.expanduser(bundle_dir)) / candidate)
+
     def _detect_occs_bundle_for_file(self, loaded_path: str, source_path: str) -> None:
         self.current_occs_bundle_dir = None
         self.current_occs_manifest = None
+        self.current_occs_shared_package_dir = None
+        self.current_occs_shared_mode = "local"
         candidates = []
         for candidate_path in (loaded_path, source_path):
             if not candidate_path:
@@ -6345,6 +7083,344 @@ class AToolApp:
         package_segment = self._safe_occs_path_segment(package_name)
         version_segment = self._safe_occs_path_segment(version_name or "latest")
         return work_dir / f"{package_segment}-{version_segment}-{timestamp}"
+
+    def _occs_package_get_timeout_ms(self, version_name: str) -> int:
+        normalized = str(version_name or "").strip().lower()
+        if not normalized or normalized == "latest":
+            return self.OCCS_LATEST_VERSION_TIMEOUT_MS
+        return self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS
+
+    def _build_occs_local_copy_path(
+        self,
+        work_dir: Path,
+        package_name: str,
+        version_name: str,
+        mode: str,
+    ) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        package_segment = self._safe_occs_path_segment(package_name)
+        version_segment = self._safe_occs_path_segment(version_name)
+        mode_segment = self._safe_occs_path_segment(mode)
+        return work_dir / f"{package_segment}-{version_segment}-{mode_segment}-{timestamp}"
+
+    def _list_shared_package_versions(self, workspace_dir: Path) -> list[dict[str, object]]:
+        packages_dir = workspace_dir / "packages"
+        if not packages_dir.exists():
+            return []
+        entries: list[dict[str, object]] = []
+        for package_dir in sorted(packages_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not package_dir.is_dir():
+                continue
+            for version_dir in sorted(package_dir.iterdir(), key=lambda item: item.name.lower()):
+                if not version_dir.is_dir():
+                    continue
+                entry = self._shared_package_entry_from_package_dir(version_dir)
+                if entry is not None:
+                    entries.append(entry)
+        return entries
+
+    def _shared_package_entry_from_package_dir(self, package_dir: Path) -> dict[str, object] | None:
+        published_dir = package_dir / "published" / "current"
+        manifest_path = published_dir / "occs-package.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            manifest = self._read_occs_manifest(str(published_dir))
+        except ValueError:
+            return None
+        publication = self._read_json_object(published_dir / "publication.json")
+        package_name = self._occs_manifest_package_short_name(manifest) or package_dir.parent.name
+        version_name = self._occs_manifest_version_short_name(manifest) or package_dir.name
+        lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir))
+        return {
+            "workspace_dir": package_dir.parent.parent.parent,
+            "package_dir": package_dir,
+            "published_dir": published_dir,
+            "package_name": package_name,
+            "version_name": version_name,
+            "manifest": manifest,
+            "publication": publication,
+            "lock": lock_payload,
+        }
+
+    def _refresh_shared_package_entry(self, entry: dict[str, object]) -> dict[str, object] | None:
+        package_dir = entry.get("package_dir")
+        if not isinstance(package_dir, Path):
+            return None
+        return self._shared_package_entry_from_package_dir(package_dir)
+
+    @staticmethod
+    def _read_json_object(path: Path) -> dict[str, object]:
+        try:
+            with open(path, "r", encoding="utf-8") as source:
+                parsed = json.load(source)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _shared_context_from_entry(self, entry: dict[str, object]) -> dict[str, object]:
+        return {
+            "workspace_dir": entry.get("workspace_dir"),
+            "package_dir": entry.get("package_dir"),
+            "package_name": str(entry.get("package_name", "")),
+            "version_name": str(entry.get("version_name", "")),
+            "bundle_dir": entry.get("published_dir"),
+            "manifest": entry.get("manifest"),
+        }
+
+    def _publish_bundle_path_to_shared(
+        self,
+        bundle_path: Path,
+        manifest: dict[str, object],
+        reason: str,
+    ) -> dict[str, object]:
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            raise OSError("Shared package folder is not configured.")
+        package_name = self._occs_manifest_package_short_name(manifest)
+        version_name = self._occs_manifest_version_short_name(manifest)
+        if not package_name or not version_name:
+            raise OSError("Package manifest is missing package or version metadata.")
+        package_dir = (
+            workspace_dir
+            / "packages"
+            / self._safe_occs_path_segment(package_name)
+            / self._safe_occs_path_segment(version_name)
+        )
+        context = {
+            "workspace_dir": workspace_dir,
+            "package_dir": package_dir,
+            "package_name": package_name,
+            "version_name": version_name,
+            "bundle_dir": bundle_path,
+            "manifest": manifest,
+            "publicationReason": reason,
+        }
+        owner = self._current_shared_user_identity()
+        published_dir = package_dir / "published" / "current"
+        history_dir = package_dir / "published" / "history" / self._shared_publication_folder_name(owner)
+        self._copy_occs_bundle_to_shared(context, published_dir)
+        self._copy_occs_bundle_to_shared(context, history_dir)
+        entry = self._shared_package_entry_from_package_dir(package_dir)
+        if entry is None:
+            raise OSError("Shared package folder was updated but could not be reloaded.")
+        return entry
+
+    @staticmethod
+    def _occs_source_hashes_match(
+        first_manifest: dict[str, object],
+        second_manifest: dict[str, object],
+    ) -> bool:
+        first_hashes = first_manifest.get("sourceHashes")
+        second_hashes = second_manifest.get("sourceHashes")
+        return isinstance(first_hashes, dict) and isinstance(second_hashes, dict) and first_hashes == second_hashes
+
+    def _shared_entry_updated_at(self, entry: dict[str, object]) -> str:
+        publication = entry.get("publication")
+        if isinstance(publication, dict):
+            published_at = str(publication.get("publishedAt", "")).strip()
+            if published_at:
+                return published_at
+        manifest = entry.get("manifest")
+        if isinstance(manifest, dict):
+            created_at = str(manifest.get("createdAt", "")).strip()
+            if created_at:
+                return created_at
+        return ""
+
+    @staticmethod
+    def _shared_publication_owner_text(entry: dict[str, object]) -> str:
+        publication = entry.get("publication")
+        owner = publication.get("owner") if isinstance(publication, dict) else None
+        if isinstance(owner, dict):
+            display_name = str(owner.get("displayName", "")).strip()
+            user = str(owner.get("user", "")).strip()
+            host = str(owner.get("host", "")).strip()
+            if display_name:
+                return display_name
+            return f"{user}@{host}".strip("@") or "(unknown)"
+        return "(unknown)"
+
+    def _ensure_occs_shared_workspace_dir(self) -> Path | None:
+        workspace_text = self._get_occs_shared_workspace_dir()
+        if not workspace_text:
+            messagebox.showinfo(
+                "Shared Package Folder",
+                "Set a shared package folder in User Settings first.",
+            )
+            return None
+        workspace_dir = Path(os.path.expanduser(workspace_text))
+        try:
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            messagebox.showerror(
+                "Shared Package Folder",
+                f"Could not create shared package folder:\n{workspace_dir}\n\nDetails: {error}",
+            )
+            return None
+        return workspace_dir
+
+    def _current_occs_shared_context(self, show_errors: bool = True) -> dict[str, object] | None:
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            if show_errors:
+                messagebox.showinfo("Shared Package Folder", "Open a package version first.")
+            return None
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            return None
+        package_name = self._occs_manifest_package_short_name(self.current_occs_manifest) or self.current_package_name
+        version_name = self._occs_manifest_version_short_name(self.current_occs_manifest) or "unknown"
+        package_dir = self.current_occs_shared_package_dir
+        if package_dir is None:
+            package_dir = (
+                workspace_dir
+                / "packages"
+                / self._safe_occs_path_segment(package_name)
+                / self._safe_occs_path_segment(version_name)
+            )
+        return {
+            "workspace_dir": workspace_dir,
+            "package_dir": package_dir,
+            "package_name": package_name,
+            "version_name": version_name,
+            "bundle_dir": Path(self.current_occs_bundle_dir),
+            "manifest": self.current_occs_manifest,
+        }
+
+    @staticmethod
+    def _shared_lock_path(package_dir: Path) -> Path:
+        return package_dir / "locks" / "package.lock.json"
+
+    def _current_shared_user_identity(self) -> dict[str, str]:
+        display_name = self._get_occs_user_name() or getpass.getuser()
+        return {
+            "user": getpass.getuser(),
+            "displayName": display_name,
+            "host": socket.gethostname(),
+        }
+
+    def _build_shared_lock_payload(
+        self,
+        context: dict[str, object],
+        owner: dict[str, str],
+    ) -> dict[str, object]:
+        manifest = context.get("manifest")
+        source_hashes = manifest.get("sourceHashes") if isinstance(manifest, dict) else {}
+        package_name = str(context.get("package_name", ""))
+        version_name = str(context.get("version_name", ""))
+        now = self._current_timestamp()
+        return {
+            "schemaVersion": "atool-shared-lock/v1",
+            "createdAt": now,
+            "updatedAt": now,
+            "scope": {
+                "type": "package-version",
+                "package": package_name,
+                "version": version_name,
+            },
+            "lock": {
+                "mode": "edit",
+                "supportsFutureScopes": True,
+            },
+            "package": package_name,
+            "version": version_name,
+            "owner": owner,
+            "bundleDir": str(context.get("bundle_dir", "")),
+            "sourceHashes": source_hashes if isinstance(source_hashes, dict) else {},
+        }
+
+    @staticmethod
+    def _read_shared_lock(lock_path: Path) -> dict[str, object] | None:
+        if not lock_path.exists():
+            return None
+        try:
+            with open(lock_path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _is_shared_lock_owner(lock_payload: dict[str, object], owner: dict[str, str]) -> bool:
+        lock_owner = lock_payload.get("owner")
+        if not isinstance(lock_owner, dict):
+            return False
+        return (
+            str(lock_owner.get("user", "")) == owner.get("user", "")
+            and str(lock_owner.get("host", "")) == owner.get("host", "")
+        )
+
+    @staticmethod
+    def _shared_lock_owner_text(lock_payload: dict[str, object]) -> str:
+        owner = lock_payload.get("owner")
+        if isinstance(owner, dict):
+            display_name = str(owner.get("displayName", "")).strip()
+            user = str(owner.get("user", "")).strip()
+            host = str(owner.get("host", "")).strip()
+            if display_name and host:
+                return f"{display_name} ({user}@{host})" if user and user != display_name else f"{display_name}@{host}"
+            return f"{user}@{host}".strip("@") or display_name or "(unknown)"
+        return "(unknown)"
+
+    @classmethod
+    def _format_shared_lock(cls, lock_payload: dict[str, object]) -> str:
+        owner_text = cls._shared_lock_owner_text(lock_payload)
+        created_at = str(lock_payload.get("createdAt", "")).strip() or "(unknown time)"
+        bundle_dir = str(lock_payload.get("bundleDir", "")).strip()
+        lines = [f"Owner: {owner_text}", f"Created: {created_at}"]
+        if bundle_dir:
+            lines.append(f"Local Folder: {bundle_dir}")
+        return "\n".join(lines)
+
+    def _copy_occs_bundle_to_shared(self, context: dict[str, object], target_dir: Path) -> None:
+        manifest = context.get("manifest")
+        bundle_dir = context.get("bundle_dir")
+        if not isinstance(manifest, dict) or not isinstance(bundle_dir, Path):
+            raise OSError("Invalid package version context.")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        source_files = {
+            "occs-package.json": bundle_dir / "occs-package.json",
+            "assembly-template.json": Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest)),
+            "version-master.json": Path(self._occs_bundle_version_master_path(str(bundle_dir), manifest)),
+        }
+        for target_name, source_path in source_files.items():
+            if not source_path.exists():
+                raise OSError(f"Missing package version file: {source_path}")
+            shutil.copy2(source_path, target_dir / target_name)
+        source_hashes = manifest.get("sourceHashes") if isinstance(manifest, dict) else {}
+        source_info = manifest.get("source") if isinstance(manifest, dict) else {}
+        package_name = str(context.get("package_name", ""))
+        version_name = str(context.get("version_name", ""))
+        publication = {
+            "schemaVersion": "atool-publication/v1",
+            "publishedAt": self._current_timestamp(),
+            "scope": {
+                "type": "package-version",
+                "package": package_name,
+                "version": version_name,
+            },
+            "operation": {
+                "reason": str(context.get("publicationReason", "updateFromLocal")),
+                "supportsFutureScopes": True,
+            },
+            "package": package_name,
+            "version": version_name,
+            "owner": self._current_shared_user_identity(),
+            "sourceBundleDir": str(bundle_dir),
+            "sourceManifest": {
+                "createdAt": str(manifest.get("createdAt", "")),
+                "bundlePath": str(manifest.get("bundlePath", "")),
+                "source": source_info if isinstance(source_info, dict) else {},
+                "sourceHashes": source_hashes if isinstance(source_hashes, dict) else {},
+            },
+        }
+        with open(target_dir / "publication.json", "w", encoding="utf-8") as target:
+            json.dump(publication, target, indent=2)
+
+    def _shared_publication_folder_name(self, owner: dict[str, str]) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        user = self._safe_occs_path_segment(owner.get("user", "user"))
+        return f"{timestamp}-{user}"
 
     @staticmethod
     def _safe_occs_path_segment(value: str) -> str:
@@ -6455,6 +7531,206 @@ class AToolApp:
         if not isinstance(version_info, dict):
             return ""
         return str(version_info.get("shortName") or "").strip()
+
+    def convert_xml_data_file(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Convert", "An OCCS operation is already in progress.")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Convert XML")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        xml_file_var = tk.StringVar(value="")
+        reroot_var = tk.StringVar(value="billPrint")
+        bill_id_var = tk.StringVar(value="All")
+        bill_id_values: list[str] = []
+
+        ttk.Label(container, text="XML File:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        xml_file_entry = ttk.Entry(container, textvariable=xml_file_var, width=58)
+        xml_file_entry.grid(row=0, column=1, sticky="ew")
+
+        def _browse_xml_file() -> None:
+            selected_path = filedialog.askopenfilename(
+                parent=dialog,
+                title="Select XML File",
+                filetypes=[
+                    ("XML Files", "*.xml *.XML"),
+                    ("All Files", "*.*"),
+                ],
+            )
+            if selected_path:
+                xml_file_var.set(selected_path)
+                _refresh_bill_id_picker(selected_path)
+
+        ttk.Button(container, text="Browse...", command=_browse_xml_file).grid(
+            row=0,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+        )
+
+        ttk.Label(container, text="Reroot:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        reroot_entry = ttk.Entry(container, textvariable=reroot_var, width=58)
+        reroot_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(container, text="Bill ID:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        bill_id_combo = ttk.Combobox(
+            container,
+            textvariable=bill_id_var,
+            values=["All"],
+            state="normal",
+            width=56,
+        )
+        bill_id_combo.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        def _refresh_bill_id_picker(xml_file_text: str) -> None:
+            nonlocal bill_id_values
+            bill_id_values = []
+            xml_path = Path(os.path.expanduser(str(xml_file_text or "").strip()))
+            if not xml_path.exists() or not xml_path.is_file():
+                bill_id_combo.configure(values=["All"])
+                bill_id_var.set("All")
+                return
+            bill_id_values = self._extract_xml_bill_ids(xml_path)
+            values = ["All", *bill_id_values] if bill_id_values else ["All"]
+            bill_id_combo.configure(values=values)
+            if len(bill_id_values) == 1:
+                bill_id_var.set(bill_id_values[0])
+            else:
+                bill_id_var.set("All")
+
+        def _on_xml_file_changed(*_args: object) -> None:
+            _refresh_bill_id_picker(xml_file_var.get())
+
+        xml_file_var.trace_add("write", _on_xml_file_changed)
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            xml_file_text = xml_file_var.get().strip()
+            reroot = reroot_var.get().strip()
+            bill_id = bill_id_var.get().strip()
+            if bill_id.lower() == "all":
+                bill_id = ""
+
+            if not xml_file_text:
+                messagebox.showerror("Convert XML", "XML file is required.", parent=dialog)
+                return
+            xml_path = Path(os.path.expanduser(xml_file_text))
+            if not xml_path.exists() or not xml_path.is_file():
+                messagebox.showerror(
+                    "Convert XML",
+                    f"XML file not found:\n{xml_path}",
+                    parent=dialog,
+                )
+                return
+
+            if not bill_id and len(bill_id_values) > 1:
+                preview_values = ", ".join(bill_id_values[:8])
+                if len(bill_id_values) > 8:
+                    preview_values = f"{preview_values}, ..."
+                if not messagebox.askokcancel(
+                    "Convert XML",
+                    f"File contains multiple Bill IDs ({len(bill_id_values)}):\n{preview_values}\n\nConvert all?",
+                    parent=dialog,
+                ):
+                    return
+
+            output_path = self._build_convert_xml_output_path(xml_path)
+            if output_path.exists() and not messagebox.askyesno(
+                "Convert XML",
+                f"Output file already exists:\n{output_path}\n\nOverwrite it?",
+                parent=dialog,
+            ):
+                return
+
+            args = [
+                "convertxml",
+                "--input",
+                str(xml_path),
+                "--output",
+                str(output_path),
+                "--timeout",
+                str(self.OCCS_CONVERT_XML_TIMEOUT_MS),
+            ]
+            if reroot:
+                args.extend(["--reroot", reroot])
+            if bill_id:
+                extract_expression = bill_id if "=" in bill_id else f"billId={bill_id}"
+                args.extend(["--extract", extract_expression])
+
+            dialog.destroy()
+            self._run_occs_command_async(
+                args,
+                f"Converting XML: {xml_path.name}...",
+                lambda result, selected_output_path=output_path: self._on_convert_xml_complete(
+                    result,
+                    selected_output_path,
+                ),
+                on_failure=lambda error: messagebox.showerror("Convert XML", str(error)),
+            )
+
+        ttk.Button(buttons, text="Convert", command=_submit).grid(row=0, column=1)
+
+        xml_file_entry.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    @staticmethod
+    def _build_convert_xml_output_path(xml_path: Path) -> Path:
+        return xml_path.with_suffix(".json")
+
+    @staticmethod
+    def _extract_xml_bill_ids(xml_path: Path) -> list[str]:
+        bill_ids: list[str] = []
+        seen: set[str] = set()
+        try:
+            for _event, element in ElementTree.iterparse(xml_path, events=("end",)):
+                if AToolApp._xml_local_name(element.tag) == "billId":
+                    value = (element.text or "").strip()
+                    if value and value not in seen:
+                        bill_ids.append(value)
+                        seen.add(value)
+                element.clear()
+        except ElementTree.ParseError:
+            return []
+        return bill_ids
+
+    @staticmethod
+    def _xml_local_name(tag: object) -> str:
+        text = str(tag or "")
+        if "}" in text:
+            return text.rsplit("}", 1)[1]
+        return text
+
+    def _on_convert_xml_complete(self, result: dict[str, object], output_path: Path) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        converted_paths = self._converted_json_paths_from_stdout(stdout)
+        if not converted_paths and output_path.exists():
+            converted_paths = [str(output_path)]
+        output_text = "\n".join(converted_paths) if converted_paths else str(output_path.parent)
+        messagebox.showinfo("Convert XML", f"XML conversion complete.\n\nOutput:\n{output_text}")
+        self._show_temporary_status("XML conversion complete", duration_ms=5000)
+
+    @staticmethod
+    def _converted_json_paths_from_stdout(stdout: str) -> list[str]:
+        paths: list[str] = []
+        for line in stdout.splitlines():
+            match = re.search(r"Converted XML to JSON(?:\s+\[[^\]]+\])?:\s+(.+\.json)\s*$", line)
+            if match:
+                paths.append(match.group(1).strip())
+        return paths
 
     def map_data_file(self) -> None:
         if self.current_payload is None:
@@ -7318,7 +8594,9 @@ class AToolApp:
             occs_package = self._occs_manifest_package_short_name(self.current_occs_manifest)
             occs_version = self._occs_manifest_version_short_name(self.current_occs_manifest)
             if occs_package or occs_version:
-                occs_suffix = f" | OCCS: {occs_package} {occs_version}".rstrip()
+                occs_suffix = f" | Package Version: {occs_package} {occs_version}".rstrip()
+                if self.current_occs_shared_package_dir is not None and self.current_occs_shared_mode != "local":
+                    occs_suffix = f"{occs_suffix} ({self.current_occs_shared_mode})"
         return f"File: {file_name} | Package: {package_name}{occs_suffix}"
 
     def _restore_default_status_text(self) -> None:
