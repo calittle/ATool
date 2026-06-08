@@ -206,11 +206,16 @@ class AToolApp:
             accelerator=open_accelerator,
             command=self.open_occs_package,
         )
+        package_menu.add_command(label="Open JSON AT Package...", command=self.open_assembly_template)
         package_menu.add_command(label="Preview...", command=self.preview_occs_package)
         package_menu.add_command(label="Update Package", command=self.update_shared_occs_package)
         package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
         package_menu.add_command(label="Release Package Version Lock", command=self.release_shared_occs_lock)
         package_menu.add_separator()
+        package_menu.add_command(
+            label="List Packages from Comms...",
+            command=self.list_occs_packages_from_comms,
+        )
         package_menu.add_command(
             label="Get Package Version from Comms...",
             command=self.get_occs_package,
@@ -6163,7 +6168,28 @@ class AToolApp:
 
         self._open_shared_package_selection_dialog(entries)
 
-    def get_occs_package(self, publish_to_shared_after_get: bool = False) -> None:
+    def list_occs_packages_from_comms(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("List Packages from Comms", "An OCCS operation is already in progress.")
+            return
+        self._run_occs_json_command_async(
+            [
+                "package",
+                "list",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ],
+            "Listing Comms packages...",
+            lambda result: self._open_occs_package_list_dialog(self._normalize_occs_packages(result)),
+            on_failure=lambda error: messagebox.showerror("List Packages from Comms", str(error)),
+        )
+
+    def get_occs_package(
+        self,
+        publish_to_shared_after_get: bool = False,
+        initial_package: str = "",
+        initial_version: str = "",
+    ) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
@@ -6181,11 +6207,11 @@ class AToolApp:
         container.columnconfigure(1, weight=1)
 
         mru_package_names = self._occs_mru_package_names()
-        initial_package = mru_package_names[0] if mru_package_names else ""
-        initial_versions = self._occs_mru_versions_for_package(initial_package)
-        initial_version = initial_versions[0] if initial_versions else "latest"
-        package_var = tk.StringVar(value=initial_package)
-        version_var = tk.StringVar(value=initial_version)
+        initial_package_text = initial_package.strip() or (mru_package_names[0] if mru_package_names else "")
+        initial_versions = self._occs_mru_versions_for_package(initial_package_text)
+        initial_version_text = initial_version.strip() or (initial_versions[0] if initial_versions else "latest")
+        package_var = tk.StringVar(value=initial_package_text)
+        version_var = tk.StringVar(value=initial_version_text)
         search_status_var = tk.StringVar(value="")
 
         ttk.Label(container, text="Package:").grid(row=0, column=0, sticky="w", padx=(0, 6))
@@ -7973,6 +7999,186 @@ class AToolApp:
     def _safe_occs_path_segment(value: str) -> str:
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
         return safe or "unnamed"
+
+    def _open_occs_package_list_dialog(
+        self,
+        packages: list[dict[str, str]],
+        query: str = "",
+    ) -> None:
+        if not packages:
+            messagebox.showinfo("List Packages from Comms", "No packages were found.")
+            return
+
+        packages = sorted(packages, key=lambda item: item.get("shortName", "").lower())
+        dialog = tk.Toplevel(self.root)
+        dialog.title("List Packages from Comms")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        filter_row = ttk.Frame(container)
+        filter_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        filter_row.columnconfigure(1, weight=1)
+
+        ttk.Label(filter_row, text="Filter:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        filter_var = tk.StringVar(value=query)
+        filter_entry = ttk.Entry(filter_row, textvariable=filter_var, width=48)
+        filter_entry.grid(row=0, column=1, sticky="ew")
+
+        def _clear_filter() -> None:
+            filter_var.set("")
+            filter_entry.focus_set()
+
+        ttk.Button(filter_row, text="Clear", command=_clear_filter).grid(row=0, column=2, padx=(6, 0))
+
+        tree = ttk.Treeview(
+            container,
+            columns=("name", "description", "uuid"),
+            show="tree headings",
+            height=min(max(len(packages), 8), 18),
+        )
+        tree.heading("#0", text="Short Name")
+        tree.heading("name", text="Name")
+        tree.heading("description", text="Description")
+        tree.heading("uuid", text="UUID")
+        tree.column("#0", width=180, stretch=False)
+        tree.column("name", width=220, stretch=True)
+        tree.column("description", width=360, stretch=True)
+        tree.column("uuid", width=240, stretch=False)
+        tree.grid(row=1, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(container, textvariable=status_var, anchor=tk.W).grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(8, 0),
+        )
+
+        package_by_id: dict[str, dict[str, str]] = {}
+
+        def _package_matches(package: dict[str, str], filter_text: str) -> bool:
+            if not filter_text:
+                return True
+            searchable = [
+                package.get("shortName", ""),
+                package.get("name", ""),
+                package.get("description", ""),
+                package.get("packageUuid", ""),
+            ]
+            return self._fuzzy_text_match(filter_text, " ".join(searchable))
+
+        def _render_package_rows(*_args: object) -> None:
+            package_by_id.clear()
+            tree.delete(*tree.get_children())
+            filter_text = filter_var.get().strip()
+            visible_packages = [
+                package
+                for package in packages
+                if _package_matches(package, filter_text)
+            ]
+            for package in visible_packages:
+                item_id = tree.insert(
+                    "",
+                    tk.END,
+                    text=package.get("shortName", ""),
+                    values=(
+                        package.get("name", ""),
+                        package.get("description", ""),
+                        package.get("packageUuid", ""),
+                    ),
+                )
+                package_by_id[item_id] = package
+            if package_by_id:
+                first_item = next(iter(package_by_id))
+                tree.selection_set(first_item)
+                tree.focus(first_item)
+            status_var.set(f"Showing {len(visible_packages)} of {len(packages)} packages.")
+
+        filter_var.trace_add("write", _render_package_rows)
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _search_comms() -> None:
+            search_text = simpledialog.askstring(
+                "Search Packages",
+                "Package search text (blank lists all):",
+                initialvalue=filter_var.get().strip(),
+                parent=dialog,
+            )
+            if search_text is None:
+                return
+            query_text = search_text.strip()
+            args = [
+                "package",
+                "list",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ]
+            if query_text:
+                args.insert(2, query_text)
+            dialog.destroy()
+            self._run_occs_json_command_async(
+                args,
+                "Searching Comms packages...",
+                lambda result, selected_query=query_text: self._open_occs_package_list_dialog(
+                    self._normalize_occs_packages(result),
+                    query=selected_query,
+                ),
+                on_failure=lambda error: messagebox.showerror("Search Packages", str(error)),
+            )
+
+        ttk.Button(buttons, text="Search Comms...", command=_search_comms).grid(
+            row=0,
+            column=1,
+            padx=(0, 8),
+        )
+
+        def _selected_package() -> dict[str, str] | None:
+            selection = tree.selection()
+            if not selection:
+                return None
+            return package_by_id.get(selection[0])
+
+        def _get_selected() -> None:
+            package = _selected_package()
+            if not package:
+                messagebox.showinfo("List Packages from Comms", "Select a package first.", parent=dialog)
+                return
+            short_name = package.get("shortName", "").strip()
+            if not short_name:
+                messagebox.showerror(
+                    "List Packages from Comms",
+                    "The selected package is missing a short name.",
+                    parent=dialog,
+                )
+                return
+            dialog.destroy()
+            self.get_occs_package(initial_package=short_name)
+
+        ttk.Button(buttons, text="Get Selected...", command=_get_selected).grid(row=0, column=2)
+        tree.bind("<Double-1>", lambda _event: _get_selected())
+
+        _render_package_rows()
+        filter_entry.focus_set()
+        dialog.update_idletasks()
+        width = max(dialog.winfo_width(), 940)
+        height = max(dialog.winfo_height(), 440)
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - width) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - height) // 2, 0)
+        dialog.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
 
     def _open_occs_package_search_results(
         self,

@@ -5,10 +5,25 @@ ATool (Assembly Template Tool) is a cross-platform Python desktop app for workin
 ## Requirements
 
 - Python 3.10+ (recommended)
-- `pip`
 - `tkinter` (bundled with standard Python installers on macOS/Windows)
+- OCCS CLI access for OCCS package, preview, mapping, and conversion actions
 
-## Install Python (if needed)
+ATool currently uses only Python standard library modules. There is no `pip install`
+or virtual environment setup required for normal users.
+
+## Internal Distribution
+
+For internal use, share the ATool folder or a zip containing:
+
+- `ATool.py`
+- `Run_ATool.bat`
+- `Run_ATool.zsh`
+- `README.md`
+
+Do not include local cache or generated folders such as `.venv`, `__pycache__`,
+or user-specific files under `~/.atool/`.
+
+## Install Python
 
 ### macOS
 
@@ -37,41 +52,61 @@ ATool (Assembly Template Tool) is a cross-platform Python desktop app for workin
    py --version
    ```
 
-## Setup ATool Environment
-
-### macOS
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Windows (PowerShell)
-
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
 ## Run ATool
 
-### macOS
+### Windows
 
-```bash
-source .venv/bin/activate
-python app.py
-```
+Double-click:
 
-### Windows (PowerShell)
+- `Run_ATool.bat`
+
+Or run from PowerShell:
 
 ```powershell
-.venv\Scripts\Activate.ps1
-py app.py
+.\Run_ATool.bat
 ```
 
-## Troubleshooting Setup
+### macOS
+
+From Terminal:
+
+```bash
+cd /path/to/ATool
+zsh Run_ATool.zsh
+```
+
+Optional one-time setup if you want to run it as an executable script:
+
+```bash
+chmod +x Run_ATool.zsh
+./Run_ATool.zsh
+```
+
+If you want a Finder double-click launcher on macOS, rename or copy the script as
+`Run_ATool.command`, then run `chmod +x Run_ATool.command`.
+
+### Direct Python Command
+
+If the launchers are unavailable, run the app directly from the ATool folder:
+
+macOS:
+
+```bash
+python3 ATool.py
+```
+
+Windows:
+
+```powershell
+py -3 ATool.py
+```
+
+## Troubleshooting Startup
+
+### Python Command Not Found
+
+Install Python from [python.org](https://www.python.org/downloads/), then reopen
+Terminal or PowerShell and try again.
 
 ### `tkinter` Missing
 
@@ -93,31 +128,18 @@ Use the steps below.
    ```bash
    brew install python-tk
    ```
-   If `python-tk` is unavailable in your Brew setup, install Python directly from [python.org](https://www.python.org/downloads/macos/) and recreate `.venv`.
-3. Recreate the virtual environment:
-   ```bash
-   rm -rf .venv
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+   If `python-tk` is unavailable in your Brew setup, install Python directly from
+   [python.org](https://www.python.org/downloads/macos/).
 
 ### Windows
 
 1. Re-run the official Python installer from [python.org](https://www.python.org/downloads/windows/).
 2. Choose **Modify** your installed version.
 3. Ensure **tcl/tk and IDLE** is selected.
-4. Recreate `.venv`:
-   ```powershell
-   rmdir /s /q .venv
-   py -m venv .venv
-   .venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
-   ```
 
 ### Linux (if applicable)
 
-Install Tk package for your distro, then recreate `.venv`.
+Install Tk package for your distro.
 
 Examples:
 
@@ -131,8 +153,12 @@ sudo dnf install python3-tkinter
 
 ## Core Workflow
 
-1. Open an AT file:
-   - `File -> Open...`
+1. Open an OCCS package or local package version:
+   - `Package -> Open Package...`
+   - `Package -> Open JSON AT Package...`
+   - `Package -> List Packages from Comms...`
+   - `Package -> Get Package Version from Comms...`
+   - `Package -> Open Local Package Version...`
    - macOS: `Cmd+O`
    - Windows/Linux: `Alt+O`
 2. Review and edit:
@@ -144,7 +170,7 @@ sudo dnf install python3-tkinter
    - macOS: `Cmd+S`
    - Windows/Linux: `Alt+S`
 4. Optional mapping run:
-   - `File -> Map...`
+   - `Data -> Map...`
    - macOS: `Cmd+M`
    - Windows/Linux: `Alt+M`
 
@@ -226,7 +252,7 @@ Cycle detection is enabled (for example `A -> B -> A` is rejected).
 4. Use embedded clauses (`CLAUSE{...}`) for readable master logic.
 5. Avoid very broad `$..` deep-search paths unless intentional.
 6. Keep complex one-offs in `RAW{...}` only when reuse is unlikely.
-7. Validate mapped behavior using `File -> Map...` with representative data files.
+7. Validate mapped behavior using `Data -> Map...` with representative data files.
 
 ## Mutual Exclusion Guidance
 
