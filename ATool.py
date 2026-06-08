@@ -458,6 +458,8 @@ class AToolApp:
         self.layouts_tree = ttk.Treeview(self.layouts_tree_panel, show="tree")
         self.layouts_tree.grid(row=0, column=0, sticky="nsew")
         self.layouts_tree.bind("<<TreeviewSelect>>", self._on_layout_tree_select)
+        self.layouts_tree.tag_configure("layout_triggered", foreground="blue")
+        self.layouts_tree.tag_configure("layout_untriggered", foreground="red")
         layouts_scroll = ttk.Scrollbar(self.layouts_tree_panel, orient=tk.VERTICAL, command=self.layouts_tree.yview)
         layouts_scroll.grid(row=0, column=1, sticky="ns")
         self.layouts_tree.configure(yscrollcommand=layouts_scroll.set)
@@ -4478,10 +4480,12 @@ class AToolApp:
     def _insert_layout_node(self, parent_node: str, layout: dict[str, object]) -> None:
         node_text = self._build_layout_tree_label("layout", layout)
         node_id = self.layouts_tree.insert(parent_node, "end", text=node_text, open=False)
-        self._layout_node_details[node_id] = {
+        details = {
             "node_kind": "layout",
             "source_ref": layout,
         }
+        self._layout_node_details[node_id] = details
+        self._apply_layout_mapping_tag(node_id, details)
         contents = self._extract_contents(layout)
         for content in contents:
             self._insert_content_node(node_id, content)
@@ -4489,10 +4493,12 @@ class AToolApp:
     def _insert_content_node(self, parent_node: str, content: dict[str, object]) -> None:
         node_text = self._build_layout_tree_label("content", content)
         node_id = self.layouts_tree.insert(parent_node, "end", text=node_text, open=False)
-        self._layout_node_details[node_id] = {
+        details = {
             "node_kind": "content",
             "source_ref": content,
         }
+        self._layout_node_details[node_id] = details
+        self._apply_layout_mapping_tag(node_id, details)
         self._insert_condition_child(node_id, content)
 
         iteration = self._extract_iteration(content)
@@ -4643,6 +4649,18 @@ class AToolApp:
         self.layout_mapped_text.set("-")
         self._updating_layout_form = False
 
+    def _apply_layout_mapping_tag(self, node_id: str, details: dict[str, object]) -> None:
+        node_kind = str(details.get("node_kind", ""))
+        if node_kind not in {"layout", "content"} or self.current_data_payload is None:
+            self.layouts_tree.item(node_id, tags=())
+            return
+        tag = "layout_triggered" if self._layout_node_chain_triggered_for_node(node_id) else "layout_untriggered"
+        self.layouts_tree.item(node_id, tags=(tag,))
+
+    def _refresh_layout_mapping_tags(self) -> None:
+        for node_id, details in self._layout_node_details.items():
+            self._apply_layout_mapping_tag(node_id, details)
+
     def _build_layout_mapped_display(self, details: dict[str, object]) -> str:
         if self.current_data_payload is None:
             return "(no data mapped)"
@@ -4692,14 +4710,18 @@ class AToolApp:
         return "-"
 
     def _layout_node_chain_triggered(self, details: dict[str, object]) -> bool:
+        if self._active_layout_node_id is None:
+            return False
+        return self._layout_node_chain_triggered_for_node(self._active_layout_node_id)
+
+    def _layout_node_chain_triggered_for_node(self, node_id: str) -> bool:
         document_ref = self._get_selected_document_ref()
         if document_ref is None:
             return False
+        if self.current_data_payload is None:
+            return False
         if not bool(document_ref.get("triggered", False)):
             return False
-        if self._active_layout_node_id is None:
-            return True
-        node_id = self._active_layout_node_id
         while node_id:
             node_details = self._layout_node_details.get(node_id)
             if isinstance(node_details, dict):
@@ -4845,6 +4867,7 @@ class AToolApp:
                 self._active_layout_node_id,
                 text=f"Condition: {str(source_ref.get('Condition', '')).strip()}",
             )
+            self._refresh_layout_mapping_tags()
             self._set_layout_details(details)
             return
         self._refresh_layouts_for_active_document()
@@ -5717,7 +5740,15 @@ class AToolApp:
         self.document_parent_text.set(parent_name if parent_name else "(root)")
         child_count = int(document.get("child_count", 0))
         triggered = bool(document.get("triggered"))
-        self.document_triggered_text.set("Y" if triggered else "N")
+        warnings = document.get("condition_warnings")
+        warning_lines = [str(warning) for warning in warnings] if isinstance(warnings, list) else []
+        trigger_text = "Y" if triggered else "N"
+        if warning_lines:
+            trigger_text += "\nComms-compatible condition warnings:"
+            trigger_text += "\n" + "\n".join(f"- {warning}" for warning in warning_lines[:5])
+            if len(warning_lines) > 5:
+                trigger_text += f"\n- ... and {len(warning_lines) - 5} more"
+        self.document_triggered_text.set(trigger_text)
         updated = str(document.get("updated", "")).strip()
         self.document_updated_text.set(updated if updated else "-")
         descr = str(document.get("descr", "")).strip()
@@ -5872,7 +5903,13 @@ class AToolApp:
             return clauses
         return [expr]
 
-    def _evaluate_atomic_condition_with_detail(self, expression: str, data_payload: object) -> tuple[bool, str]:
+    def _evaluate_atomic_condition_with_detail(
+        self,
+        expression: str,
+        data_payload: object,
+        *,
+        comms_compatible: bool = True,
+    ) -> tuple[bool, str]:
         expr = self._strip_outer_parens(expression)
         if not expr:
             return True, "empty expression"
@@ -5885,6 +5922,12 @@ class AToolApp:
             parent_path = self._get_empty_check_parent_path(normalized_path)
             parent_values = self._extract_values_by_path(data_payload, parent_path)
             if len(parent_values) == 0:
+                if comms_compatible and expect_empty and self._path_has_filter(normalized_path):
+                    return (
+                        False,
+                        "filtered parent path missing: "
+                        f"{parent_path}; Comms-compatible check treats this as not empty",
+                    )
                 passed = expect_empty
                 return passed, f"parent path missing: {parent_path}"
             full_values = self._extract_values_by_path(data_payload, normalized_path)
@@ -5897,11 +5940,28 @@ class AToolApp:
             lhs, operator, rhs = comparison
             left_values = self._evaluate_condition_operand(data_payload, lhs)
             right_values = self._evaluate_condition_operand(data_payload, rhs)
-            if operator == "!=" and right_values and not left_values:
-                passed = self._missing_left_satisfies_not_equal(right_values)
-                if passed:
-                    return True, f"left missing; treated as not-equal to {self._format_mapped_nodeset_preview(right_values)}"
-                return False, f"left missing; treated as null-equivalent to {self._format_mapped_nodeset_preview(right_values)}"
+            if operator in {"==", "!="}:
+                missing_result = self._compare_missing_condition_operand_values(
+                    left_values,
+                    operator,
+                    right_values,
+                    comms_compatible=comms_compatible,
+                )
+                if missing_result is not None:
+                    passed, side, present_values = missing_result
+                    if operator == "==" and passed:
+                        return True, f"{side} missing; treated as null-equivalent"
+                    if operator == "!=" and passed:
+                        return (
+                            True,
+                            f"{side} missing; treated as not-equal to "
+                            f"{self._format_mapped_nodeset_preview(present_values)}",
+                        )
+                    return (
+                        False,
+                        f"{side} missing; treated as null-equivalent to "
+                        f"{self._format_mapped_nodeset_preview(present_values)}",
+                    )
             if not left_values or not right_values:
                 return False, f"left={len(left_values)} right={len(right_values)}"
             passed = self._compare_condition_operand_values(left_values, operator, right_values)
@@ -8829,6 +8889,8 @@ class AToolApp:
         self.mapping_status_text.set("Mapping: Idle")
         for field in self._loaded_fields:
             field.pop("mapped_values", None)
+        for document in self._loaded_documents:
+            document.pop("condition_warnings", None)
         self._render_documents_tree()
         self._render_fields_tree()
         if self._active_layout_node_id:
@@ -9078,8 +9140,16 @@ class AToolApp:
                         self._debug_log(f"Field mapping progress: {index}/{len(field_paths)}")
 
                 triggered_docs_by_index: dict[int, bool] = {}
+                condition_warnings_by_index: dict[int, list[str]] = {}
                 for index, condition in enumerate(doc_conditions):
-                    triggered_docs_by_index[index] = self._evaluate_document_condition(condition, data_payload)
+                    condition_warnings: list[str] = []
+                    triggered_docs_by_index[index] = self._evaluate_document_condition(
+                        condition,
+                        data_payload,
+                        warnings=condition_warnings,
+                    )
+                    if condition_warnings:
+                        condition_warnings_by_index[index] = condition_warnings
                     if index and index % 250 == 0:
                         self._debug_log(f"Document condition progress: {index}/{len(doc_conditions)}")
 
@@ -9091,6 +9161,7 @@ class AToolApp:
                         data_payload,
                         mapped_values_by_index,
                         triggered_docs_by_index,
+                        condition_warnings_by_index,
                         selected_field,
                         duration,
                     ),
@@ -9111,6 +9182,7 @@ class AToolApp:
         data_payload: object,
         mapped_values_by_index: dict[int, list[object]],
         triggered_docs_by_index: dict[int, bool],
+        condition_warnings_by_index: dict[int, list[str]],
         selected_field: dict[str, object] | None,
         duration_seconds: float,
     ) -> None:
@@ -9125,14 +9197,20 @@ class AToolApp:
                 self._loaded_fields[index]["mapped_values"] = mapped_values
 
         triggered_docs: set[str] = set()
+        warning_docs = 0
         for index, is_triggered in triggered_docs_by_index.items():
             if 0 <= index < len(self._loaded_documents):
                 document = self._loaded_documents[index]
                 document["triggered"] = is_triggered
+                warnings = condition_warnings_by_index.get(index, [])
+                if warnings:
+                    document["condition_warnings"] = warnings
+                    warning_docs += 1
+                else:
+                    document.pop("condition_warnings", None)
                 if is_triggered:
                     triggered_docs.add(str(document["name"]))
         self._triggered_document_names = triggered_docs
-
         data_file_name = os.path.basename(self.current_data_file_path or "")
         self.data_status_text.set(f"Data: {data_file_name}" if data_file_name else "Data: (none)")
         self._render_documents_tree()
@@ -9145,6 +9223,7 @@ class AToolApp:
         self._debug_log(
             "Mapping complete: "
             f"triggered_docs={len(triggered_docs)} "
+            f"warning_docs={warning_docs} "
             f"elapsed={duration_seconds:.3f}s"
         )
 
@@ -9346,6 +9425,9 @@ class AToolApp:
                 "updated": str(document.get("updated", "")),
                 "descr": str(document.get("descr", "")),
                 "condition": str(document.get("condition", "")),
+                "condition_warnings": list(document.get("condition_warnings", []))
+                if isinstance(document.get("condition_warnings"), list)
+                else [],
                 "path_index": str(document.get("path_index", "")),
                 "document_ref": document,
             }
@@ -9393,6 +9475,9 @@ class AToolApp:
             "updated": str(document.get("updated", "")),
             "descr": str(document.get("descr", "")),
             "condition": str(document.get("condition", "")),
+            "condition_warnings": list(document.get("condition_warnings", []))
+            if isinstance(document.get("condition_warnings"), list)
+            else [],
             "path_index": str(document.get("path_index", "")),
             "document_ref": document,
         }
@@ -9967,28 +10052,75 @@ class AToolApp:
             return f"{preview_json} (+{len(mapped_values) - 5} more)"
         return preview_json
 
-    def _evaluate_document_condition(self, condition: str, data_payload: object) -> bool:
+    def _evaluate_document_condition(
+        self,
+        condition: str,
+        data_payload: object,
+        *,
+        comms_compatible: bool = True,
+        warnings: list[str] | None = None,
+    ) -> bool:
         text = self._extract_condition_body(condition)
         if not text:
             return True
-        return self._evaluate_condition_expression(text, data_payload)
+        return self._evaluate_condition_expression(
+            text,
+            data_payload,
+            comms_compatible=comms_compatible,
+            warnings=warnings,
+        )
 
-    def _evaluate_condition_expression(self, expression: str, data_payload: object) -> bool:
+    def _evaluate_condition_expression(
+        self,
+        expression: str,
+        data_payload: object,
+        *,
+        comms_compatible: bool = True,
+        warnings: list[str] | None = None,
+    ) -> bool:
         expr = self._strip_outer_parens(expression)
         if not expr:
             return True
 
         or_parts = self._split_top_level_operator(expr, "||")
         if len(or_parts) > 1:
-            return any(self._evaluate_condition_expression(part, data_payload) for part in or_parts)
+            return any(
+                self._evaluate_condition_expression(
+                    part,
+                    data_payload,
+                    comms_compatible=comms_compatible,
+                    warnings=warnings,
+                )
+                for part in or_parts
+            )
 
         and_parts = self._split_top_level_operator(expr, "&&")
         if len(and_parts) > 1:
-            return all(self._evaluate_condition_expression(part, data_payload) for part in and_parts)
+            return all(
+                self._evaluate_condition_expression(
+                    part,
+                    data_payload,
+                    comms_compatible=comms_compatible,
+                    warnings=warnings,
+                )
+                for part in and_parts
+            )
 
-        return self._evaluate_atomic_condition(expr, data_payload)
+        return self._evaluate_atomic_condition(
+            expr,
+            data_payload,
+            comms_compatible=comms_compatible,
+            warnings=warnings,
+        )
 
-    def _evaluate_atomic_condition(self, expression: str, data_payload: object) -> bool:
+    def _evaluate_atomic_condition(
+        self,
+        expression: str,
+        data_payload: object,
+        *,
+        comms_compatible: bool = True,
+        warnings: list[str] | None = None,
+    ) -> bool:
         expr = self._strip_outer_parens(expression)
         if not expr:
             return True
@@ -9997,15 +10129,28 @@ class AToolApp:
         if empty_match:
             path = empty_match.group(1).strip()
             expect_empty = empty_match.group(2).lower() == "true"
-            return self._evaluate_empty_check(data_payload, path, expect_empty)
+            return self._evaluate_empty_check(
+                data_payload,
+                path,
+                expect_empty,
+                comms_compatible=comms_compatible,
+                warnings=warnings,
+            )
 
         comparison = self._find_top_level_comparison(expr)
         if comparison is not None:
             lhs, operator, rhs = comparison
             left_values = self._evaluate_condition_operand(data_payload, lhs)
             right_values = self._evaluate_condition_operand(data_payload, rhs)
-            if operator == "!=" and right_values and not left_values:
-                return self._missing_left_satisfies_not_equal(right_values)
+            if operator in {"==", "!="}:
+                missing_result = self._compare_missing_condition_operand_values(
+                    left_values,
+                    operator,
+                    right_values,
+                    comms_compatible=comms_compatible,
+                )
+                if missing_result is not None:
+                    return bool(missing_result[0])
             if not left_values or not right_values:
                 return False
             return self._compare_condition_operand_values(left_values, operator, right_values)
@@ -10013,16 +10158,41 @@ class AToolApp:
         values = self._evaluate_condition_operand(data_payload, expr)
         return len(values) > 0
 
-    def _evaluate_empty_check(self, data_payload: object, path_expression: str, expect_empty: bool) -> bool:
+    def _evaluate_empty_check(
+        self,
+        data_payload: object,
+        path_expression: str,
+        expect_empty: bool,
+        *,
+        comms_compatible: bool = True,
+        warnings: list[str] | None = None,
+    ) -> bool:
         normalized_full_path = self._normalize_condition_path(path_expression)
         parent_path = self._get_empty_check_parent_path(normalized_full_path)
         parent_values = self._extract_values_by_path(data_payload, parent_path)
         if len(parent_values) == 0:
+            if comms_compatible and expect_empty and self._path_has_filter(normalized_full_path):
+                if warnings is not None:
+                    self._append_condition_warning(
+                        warnings,
+                        "Filtered empty check has a missing parent path: "
+                        f"{parent_path}. Comms may require an explicit null/empty guard or an empty array.",
+                    )
+                return False
             return expect_empty
 
         full_values = self._extract_values_by_path(data_payload, normalized_full_path)
         is_empty = len(full_values) == 0
         return is_empty if expect_empty else not is_empty
+
+    @staticmethod
+    def _path_has_filter(path_expression: str) -> bool:
+        return "[?(" in path_expression
+
+    @staticmethod
+    def _append_condition_warning(warnings: list[str], warning: str) -> None:
+        if warning not in warnings:
+            warnings.append(warning)
 
     @staticmethod
     def _get_empty_check_parent_path(path_expression: str) -> str:
@@ -10057,6 +10227,28 @@ class AToolApp:
                 if self._compare_single_condition_value(left, operator, right):
                     return True
         return False
+
+    def _compare_missing_condition_operand_values(
+        self,
+        left_values: list[object],
+        operator: str,
+        right_values: list[object],
+        *,
+        comms_compatible: bool,
+    ) -> tuple[bool, str, list[object]] | None:
+        if bool(left_values) == bool(right_values):
+            return None
+
+        missing_side = "left" if not left_values else "right"
+        present_values = right_values if not left_values else left_values
+
+        if operator == "!=":
+            return self._missing_left_satisfies_not_equal(present_values), missing_side, present_values
+
+        if operator == "==" and comms_compatible:
+            return all(value is None for value in present_values), missing_side, present_values
+
+        return None
 
     @staticmethod
     def _missing_left_satisfies_not_equal(right_values: list[object]) -> bool:

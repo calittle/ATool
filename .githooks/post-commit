@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+python_cmd="${PYTHON:-python3}"
+
+"$python_cmd" "$repo_root/tools/build_artifact.py" --source head
