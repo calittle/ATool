@@ -448,7 +448,13 @@ class AToolApp:
             text="Add Field",
             command=self.add_field_to_selected_iteration,
         )
-        self.add_iteration_field_button.grid(row=0, column=4)
+        self.add_iteration_field_button.grid(row=0, column=4, padx=(0, 6))
+        self.remove_layout_item_button = ttk.Button(
+            controls,
+            text="Remove",
+            command=self.remove_selected_layout_item,
+        )
+        self.remove_layout_item_button.grid(row=0, column=5)
 
         self.layouts_vertical_pane = ttk.Panedwindow(panel, orient=tk.VERTICAL)
         self.layouts_vertical_pane.grid(row=1, column=0, sticky="nsew")
@@ -459,6 +465,8 @@ class AToolApp:
         self.layouts_tree = ttk.Treeview(self.layouts_tree_panel, show="tree")
         self.layouts_tree.grid(row=0, column=0, sticky="nsew")
         self.layouts_tree.bind("<<TreeviewSelect>>", self._on_layout_tree_select)
+        self.layouts_tree.bind("<Delete>", self._remove_selected_layout_item_event)
+        self.layouts_tree.bind("<BackSpace>", self._remove_selected_layout_item_event)
         self.layouts_tree.tag_configure("layout_triggered", foreground="blue")
         self.layouts_tree.tag_configure("layout_untriggered", foreground="red")
         layouts_scroll = ttk.Scrollbar(self.layouts_tree_panel, orient=tk.VERTICAL, command=self.layouts_tree.yview)
@@ -3901,6 +3909,7 @@ class AToolApp:
         move_state = tk.NORMAL if node_kind == "layout" else tk.DISABLED
         add_iteration_state = tk.NORMAL if node_kind == "content" else tk.DISABLED
         add_field_state = tk.NORMAL if node_kind == "iteration" else tk.DISABLED
+        remove_state = tk.NORMAL if node_kind in {"layout", "content", "iteration", "field", "condition"} else tk.DISABLED
         if hasattr(self, "add_content_button"):
             self.add_content_button.config(state=add_content_state)
         if hasattr(self, "move_layout_up_button"):
@@ -3911,6 +3920,8 @@ class AToolApp:
             self.add_iteration_button.config(state=add_iteration_state)
         if hasattr(self, "add_iteration_field_button"):
             self.add_iteration_field_button.config(state=add_field_state)
+        if hasattr(self, "remove_layout_item_button"):
+            self.remove_layout_item_button.config(state=remove_state)
         if hasattr(self, "layout_condition_tool_button"):
             condition_state = tk.NORMAL if node_kind in {"layout", "content", "field", "condition"} else tk.DISABLED
             self.layout_condition_tool_button.config(state=condition_state)
@@ -5551,6 +5562,151 @@ class AToolApp:
         self._set_dirty(True)
         self._refresh_layouts_for_active_document()
         self._select_layout_node_for_source(content, preferred_kind="content")
+
+    def _remove_selected_layout_item_event(self, _event: tk.Event) -> str:
+        self.remove_selected_layout_item()
+        return "break"
+
+    def remove_selected_layout_item(self) -> None:
+        node_id = self._active_layout_node_id
+        if not node_id:
+            return
+        details = self._layout_node_details.get(node_id)
+        if not details:
+            return
+        node_kind = str(details.get("node_kind", ""))
+        if node_kind not in {"layout", "content", "iteration", "field", "condition"}:
+            return
+        source_ref = details.get("source_ref")
+        if not isinstance(source_ref, dict):
+            return
+
+        item_text = str(self.layouts_tree.item(node_id, "text") or node_kind)
+        message = f"Remove this {node_kind}?"
+        if node_kind in {"layout", "content", "iteration"}:
+            message = f"Remove this {node_kind} and all child items?"
+        if not messagebox.askyesno("Remove Layout Item", f"{message}\n\n{item_text}"):
+            return
+
+        parent_node_id = self.layouts_tree.parent(node_id)
+        parent_details = self._layout_node_details.get(parent_node_id, {}) if parent_node_id else {}
+        parent_source = parent_details.get("source_ref")
+        parent_kind = str(parent_details.get("node_kind", ""))
+        next_selection: tuple[dict[str, object], str] | None = None
+
+        removed = False
+        if node_kind == "layout":
+            removed, next_selection = self._remove_selected_layout(source_ref)
+        elif node_kind == "content":
+            removed = self._remove_selected_content(source_ref, parent_source)
+            if isinstance(parent_source, dict):
+                next_selection = (parent_source, "layout")
+        elif node_kind == "iteration":
+            removed = self._remove_selected_iteration(source_ref, parent_source)
+            if isinstance(parent_source, dict):
+                next_selection = (parent_source, "content")
+        elif node_kind == "field":
+            removed = self._remove_selected_iteration_field(source_ref, parent_source)
+            if isinstance(parent_source, dict):
+                next_selection = (parent_source, "iteration")
+        elif node_kind == "condition":
+            removed = self._remove_selected_condition(source_ref)
+            if isinstance(parent_source, dict) and parent_kind:
+                next_selection = (parent_source, parent_kind)
+
+        if not removed:
+            messagebox.showerror("Remove Layout Item", "Could not remove the selected layout item.")
+            return
+
+        self._touch_selected_document_updated()
+        self._set_dirty(True)
+        self._refresh_layouts_for_active_document()
+        if next_selection is not None:
+            self._select_layout_node_for_source(next_selection[0], preferred_kind=next_selection[1])
+
+    def _remove_selected_layout(
+        self,
+        layout: dict[str, object],
+    ) -> tuple[bool, tuple[dict[str, object], str] | None]:
+        document_ref = self._get_selected_document_ref()
+        if document_ref is None:
+            return False, None
+        doc_source = document_ref.get("source")
+        if not isinstance(doc_source, dict):
+            return False, None
+        layouts = doc_source.get("Layouts")
+        if not isinstance(layouts, list):
+            return False, None
+        index = self._index_of_identity(layouts, layout)
+        if index < 0:
+            return False, None
+        layouts.pop(index)
+        remaining_layouts = [item for item in layouts if isinstance(item, dict)]
+        if not remaining_layouts:
+            return True, None
+        next_index = min(index, len(remaining_layouts) - 1)
+        return True, (remaining_layouts[next_index], "layout")
+
+    def _remove_selected_content(self, content: dict[str, object], parent_source: object) -> bool:
+        if not isinstance(parent_source, dict):
+            return False
+        contents = self._contents_list_for_layout(parent_source)
+        return self._remove_identity_from_list(contents, content)
+
+    def _remove_selected_iteration(self, iteration: dict[str, object], parent_source: object) -> bool:
+        if not isinstance(parent_source, dict):
+            return False
+        for key in ("Iteration", "iteration"):
+            if parent_source.get(key) is iteration:
+                parent_source.pop(key, None)
+                return True
+        return False
+
+    def _remove_selected_iteration_field(self, field: dict[str, object], parent_source: object) -> bool:
+        if not isinstance(parent_source, dict):
+            return False
+        fields = self._fields_list_for_iteration(parent_source)
+        return self._remove_identity_from_list(fields, field)
+
+    @staticmethod
+    def _remove_selected_condition(source_ref: dict[str, object]) -> bool:
+        if "Condition" not in source_ref:
+            return False
+        source_ref.pop("Condition", None)
+        return True
+
+    @staticmethod
+    def _contents_list_for_layout(layout: dict[str, object]) -> list[object] | None:
+        for key in ("Contents", "Content", "contents", "content"):
+            value = layout.get(key)
+            if isinstance(value, list):
+                return value
+        return None
+
+    @staticmethod
+    def _fields_list_for_iteration(iteration: dict[str, object]) -> list[object] | None:
+        for key in ("Fields", "fields"):
+            value = iteration.get(key)
+            if isinstance(value, list):
+                return value
+        return None
+
+    @staticmethod
+    def _index_of_identity(items: list[object], target: object) -> int:
+        for index, item in enumerate(items):
+            if item is target:
+                return index
+        return -1
+
+    @classmethod
+    def _remove_identity_from_list(cls, items: list[object] | None, target: object) -> bool:
+        if items is None:
+            return False
+        index = cls._index_of_identity(items, target)
+        if index < 0:
+            return False
+        items.pop(index)
+        return True
 
     def move_selected_layout(self, direction: int) -> None:
         details = self._layout_node_details.get(self._active_layout_node_id or "")
