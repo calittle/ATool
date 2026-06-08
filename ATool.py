@@ -34,6 +34,8 @@ class AToolApp:
         "METADATA": 20,
     }
     OCCS_PREVIEW_MAX_TIMEOUT_SECONDS = 180
+    OCCS_LOGIN_TIMEOUT_SECONDS = 120
+    OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     DEFAULT_SETTINGS = {
         "document_display": {
             "collapse": False,
@@ -207,6 +209,7 @@ class AToolApp:
             command=self.open_occs_package,
         )
         package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
+        package_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
         package_menu.add_separator()
         package_menu.add_command(
@@ -6588,6 +6591,322 @@ class AToolApp:
             return
         self._load_occs_bundle(selected_dir)
 
+    def clean_local_occs_packages(self) -> None:
+        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
+        if not work_dir.exists() or not work_dir.is_dir():
+            messagebox.showinfo("Clean Local Packages", f"Local package folder does not exist:\n{work_dir}")
+            return
+
+        entries = self._local_occs_cleanup_entries(work_dir)
+        if not entries:
+            messagebox.showinfo("Clean Local Packages", f"No local package bundles were found in:\n{work_dir}")
+            return
+
+        self._open_local_occs_cleanup_dialog(work_dir, entries)
+
+    def _open_local_occs_cleanup_dialog(
+        self,
+        work_dir: Path,
+        entries: list[dict[str, object]],
+    ) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Clean Local Packages")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        summary_var = tk.StringVar(value="")
+        ttk.Label(
+            container,
+            textvariable=summary_var,
+            wraplength=920,
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+        tree = ttk.Treeview(
+            container,
+            columns=("selected", "package", "version", "modified", "age", "size", "status", "folder"),
+            show="headings",
+            height=min(max(len(entries), 8), 18),
+        )
+        headings = {
+            "selected": "Delete",
+            "package": "Package",
+            "version": "Version",
+            "modified": "Modified",
+            "age": "Age",
+            "size": "Size",
+            "status": "Status",
+            "folder": "Folder",
+        }
+        widths = {
+            "selected": 60,
+            "package": 150,
+            "version": 90,
+            "modified": 150,
+            "age": 70,
+            "size": 80,
+            "status": 210,
+            "folder": 320,
+        }
+        for column, heading in headings.items():
+            tree.heading(column, text=heading)
+            tree.column(column, width=widths[column], stretch=column in {"status", "folder"})
+        tree.grid(row=1, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        item_to_entry: dict[str, dict[str, object]] = {}
+
+        def _selected_entries() -> list[dict[str, object]]:
+            return [
+                entry
+                for entry in entries
+                if bool(entry.get("selected")) and not bool(entry.get("protected"))
+            ]
+
+        def _render_rows() -> None:
+            item_to_entry.clear()
+            tree.delete(*tree.get_children())
+            for entry in entries:
+                selected_text = "Yes" if bool(entry.get("selected")) else ""
+                item_id = tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        selected_text,
+                        str(entry.get("package", "")),
+                        str(entry.get("version", "")),
+                        str(entry.get("modified_text", "")),
+                        str(entry.get("age_text", "")),
+                        str(entry.get("size_text", "")),
+                        str(entry.get("status", "")),
+                        str(entry.get("folder", "")),
+                    ),
+                )
+                item_to_entry[item_id] = entry
+            selected_count = len(_selected_entries())
+            removable_count = sum(1 for entry in entries if not bool(entry.get("protected")))
+            total_size = sum(
+                int(entry.get("size_bytes", 0))
+                for entry in entries
+                if bool(entry.get("selected")) and not bool(entry.get("protected"))
+            )
+            summary_var.set(
+                f"Local package folder: {work_dir}\n"
+                f"Default cleanup selects removable bundles at least {self.OCCS_LOCAL_CLEANUP_DEFAULT_DAYS} days old. "
+                f"Selected: {selected_count} of {removable_count} removable, {self._format_bytes(total_size)}."
+            )
+
+        def _toggle_selected_row() -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            entry = item_to_entry.get(selection[0])
+            if not entry or bool(entry.get("protected")):
+                return
+            entry["selected"] = not bool(entry.get("selected"))
+            _render_rows()
+
+        def _select_old() -> None:
+            for entry in entries:
+                entry["selected"] = bool(entry.get("default_selected"))
+            _render_rows()
+
+        def _select_all_removable() -> None:
+            for entry in entries:
+                entry["selected"] = not bool(entry.get("protected"))
+            _render_rows()
+
+        def _clear_selection() -> None:
+            for entry in entries:
+                entry["selected"] = False
+            _render_rows()
+
+        def _delete_selected() -> None:
+            nonlocal entries
+            selected = _selected_entries()
+            if not selected:
+                messagebox.showinfo("Clean Local Packages", "Select at least one removable local package folder.", parent=dialog)
+                return
+            total_size = sum(int(entry.get("size_bytes", 0)) for entry in selected)
+            if not messagebox.askyesno(
+                "Clean Local Packages",
+                f"Delete {len(selected)} local package folder(s)?\n\n"
+                f"Estimated space: {self._format_bytes(total_size)}\n\n"
+                "This cannot be undone.",
+                parent=dialog,
+            ):
+                return
+
+            errors: list[str] = []
+            deleted_count = 0
+            for entry in selected:
+                path = entry.get("path")
+                if not isinstance(path, Path) or not self._is_direct_child_directory(path, work_dir):
+                    errors.append(f"Skipped unsafe path: {path}")
+                    continue
+                try:
+                    shutil.rmtree(path)
+                    deleted_count += 1
+                except OSError as error:
+                    errors.append(f"{path.name}: {error}")
+
+            self._show_temporary_status(f"Cleaned {deleted_count} local package folder(s)", duration_ms=5000)
+            if errors:
+                messagebox.showwarning(
+                    "Clean Local Packages",
+                    "Some local package folders could not be deleted:\n\n" + "\n".join(errors[:12]),
+                    parent=dialog,
+                )
+            entries = self._local_occs_cleanup_entries(work_dir)
+            if not entries:
+                dialog.destroy()
+                messagebox.showinfo("Clean Local Packages", "No local package bundles remain.")
+                return
+            _render_rows()
+
+        tree.bind("<Double-1>", lambda _event: _toggle_selected_row())
+        tree.bind("<space>", lambda _event: (_toggle_selected_row(), "break")[1])
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(buttons, text="Toggle", command=_toggle_selected_row).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Select Old", command=_select_old).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(buttons, text="Select All Removable", command=_select_all_removable).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(buttons, text="Clear", command=_clear_selection).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(buttons, text="Clean Selected", command=_delete_selected).grid(row=0, column=5)
+
+        _render_rows()
+        dialog.update_idletasks()
+        width = max(dialog.winfo_width(), 1100)
+        height = max(dialog.winfo_height(), 480)
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - width) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - height) // 2, 0)
+        dialog.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    def _local_occs_cleanup_entries(self, work_dir: Path) -> list[dict[str, object]]:
+        locked_bundle_dirs = self._active_shared_lock_bundle_dirs()
+        current_bundle_dir = self._resolved_path(Path(self.current_occs_bundle_dir)) if self.current_occs_bundle_dir else None
+        now = time.time()
+        entries: list[dict[str, object]] = []
+        for bundle_dir in sorted(work_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not bundle_dir.is_dir() or not (bundle_dir / "occs-package.json").exists():
+                continue
+            if not self._is_direct_child_directory(bundle_dir, work_dir):
+                continue
+            try:
+                manifest = self._read_occs_manifest(str(bundle_dir))
+                package_name = self._occs_manifest_package_short_name(manifest) or "(unknown)"
+                version_name = self._occs_manifest_version_short_name(manifest) or "(unknown)"
+            except ValueError:
+                package_name = "(unreadable)"
+                version_name = "(unreadable)"
+            resolved_dir = self._resolved_path(bundle_dir)
+            modified_ts = self._directory_modified_time(bundle_dir)
+            age_days = max(0.0, (now - modified_ts) / 86400)
+            size_bytes = self._directory_size_bytes(bundle_dir)
+            protected_reason = ""
+            if current_bundle_dir is not None and resolved_dir == current_bundle_dir:
+                protected_reason = "Current open package"
+            elif resolved_dir in locked_bundle_dirs:
+                protected_reason = "Referenced by active shared lock"
+            default_selected = not protected_reason and age_days >= self.OCCS_LOCAL_CLEANUP_DEFAULT_DAYS
+            entries.append(
+                {
+                    "path": bundle_dir,
+                    "folder": bundle_dir.name,
+                    "package": package_name,
+                    "version": version_name,
+                    "modified_ts": modified_ts,
+                    "modified_text": datetime.fromtimestamp(modified_ts).strftime("%Y-%m-%d %H:%M"),
+                    "age_days": age_days,
+                    "age_text": f"{int(age_days)}d",
+                    "size_bytes": size_bytes,
+                    "size_text": self._format_bytes(size_bytes),
+                    "protected": bool(protected_reason),
+                    "status": protected_reason or ("Old cleanup candidate" if default_selected else "Removable"),
+                    "default_selected": default_selected,
+                    "selected": default_selected,
+                }
+            )
+        entries.sort(key=lambda entry: (bool(entry.get("protected")), -float(entry.get("age_days", 0)), str(entry.get("folder", ""))))
+        return entries
+
+    def _active_shared_lock_bundle_dirs(self) -> set[Path]:
+        workspace_text = self._get_occs_shared_workspace_dir()
+        if not workspace_text:
+            return set()
+        workspace_dir = Path(os.path.expanduser(workspace_text))
+        packages_dir = workspace_dir / "packages"
+        if not packages_dir.exists():
+            return set()
+        bundle_dirs: set[Path] = set()
+        for lock_path in packages_dir.rglob("package.lock.json"):
+            lock_payload = self._read_shared_lock(lock_path)
+            if not isinstance(lock_payload, dict):
+                continue
+            bundle_dir_text = str(lock_payload.get("bundleDir", "")).strip()
+            if bundle_dir_text:
+                bundle_dirs.add(self._resolved_path(Path(os.path.expanduser(bundle_dir_text))))
+        return bundle_dirs
+
+    @staticmethod
+    def _resolved_path(path: Path) -> Path:
+        try:
+            return path.expanduser().resolve()
+        except OSError:
+            return path.expanduser()
+
+    def _is_direct_child_directory(self, path: Path, parent_dir: Path) -> bool:
+        try:
+            resolved_path = self._resolved_path(path)
+            resolved_parent = self._resolved_path(parent_dir)
+        except OSError:
+            return False
+        return resolved_path.is_dir() and resolved_path.parent == resolved_parent
+
+    @staticmethod
+    def _directory_modified_time(path: Path) -> float:
+        latest = path.stat().st_mtime
+        for root, _dirs, files in os.walk(path):
+            for file_name in files:
+                try:
+                    latest = max(latest, (Path(root) / file_name).stat().st_mtime)
+                except OSError:
+                    continue
+        return latest
+
+    @staticmethod
+    def _directory_size_bytes(path: Path) -> int:
+        total = 0
+        for root, _dirs, files in os.walk(path):
+            for file_name in files:
+                try:
+                    total += (Path(root) / file_name).stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    @staticmethod
+    def _format_bytes(size_bytes: int) -> str:
+        size = float(max(size_bytes, 0))
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                if unit == "B":
+                    return f"{int(size)} {unit}"
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} GB"
+
     def preview_occs_package(self) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
@@ -7786,60 +8105,116 @@ class AToolApp:
         command_args = [str(arg) for arg in args]
         if "--json" not in command_args:
             command_args.append("--json")
-        command = self._build_occs_command(command_args)
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=self._occs_cli_cwd(),
-                capture_output=True,
-                text=True,
-                timeout=600,
-                check=False,
-            )
-        except OSError as error:
-            raise RuntimeError(f"Could not run OCCS CLI: {error}") from error
-        except subprocess.TimeoutExpired as error:
-            raise RuntimeError("OCCS CLI command timed out.") from error
+        login_attempted = False
 
-        stdout = (completed.stdout or "").strip()
-        stderr = (completed.stderr or "").strip()
-        parsed = self._parse_occs_json_stdout(stdout)
+        while True:
+            completed = self._run_occs_cli(command_args)
+            stdout = (completed.stdout or "").strip()
+            stderr = (completed.stderr or "").strip()
+            parsed = self._parse_occs_json_stdout(stdout)
 
-        if completed.returncode != 0:
-            message = self._occs_error_message(parsed, stderr, completed.returncode)
-            raise RuntimeError(message)
-        if parsed is None:
-            detail = f"\n\nSTDERR:\n{stderr}" if stderr else ""
-            raise RuntimeError(f"OCCS CLI did not return JSON on stdout.{detail}")
-        if parsed.get("ok") is False:
-            raise RuntimeError(self._occs_error_message(parsed, stderr, completed.returncode))
-        return parsed
+            if completed.returncode != 0:
+                message = self._occs_error_message(parsed, stderr, completed.returncode)
+                if not login_attempted and self._should_retry_occs_after_login(command_args, message):
+                    self._run_occs_login_for_retry(message)
+                    login_attempted = True
+                    continue
+                raise RuntimeError(message)
+            if parsed is None:
+                detail = f"\n\nSTDERR:\n{stderr}" if stderr else ""
+                raise RuntimeError(f"OCCS CLI did not return JSON on stdout.{detail}")
+            if parsed.get("ok") is False:
+                message = self._occs_error_message(parsed, stderr, completed.returncode)
+                if not login_attempted and self._should_retry_occs_after_login(command_args, message):
+                    self._run_occs_login_for_retry(message)
+                    login_attempted = True
+                    continue
+                raise RuntimeError(message)
+            return parsed
 
     def _run_occs_command(self, args: list[str]) -> dict[str, object]:
-        command = self._build_occs_command([str(arg) for arg in args])
+        command_args = [str(arg) for arg in args]
+        login_attempted = False
+
+        while True:
+            completed = self._run_occs_cli(command_args)
+            stdout = (completed.stdout or "").strip()
+            stderr = (completed.stderr or "").strip()
+            if completed.returncode != 0:
+                message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
+                if not login_attempted and self._should_retry_occs_after_login(command_args, message):
+                    self._run_occs_login_for_retry(message)
+                    login_attempted = True
+                    continue
+                raise RuntimeError(message)
+            return {
+                "stdout": stdout,
+                "stderr": stderr,
+                "returnCode": completed.returncode,
+            }
+
+    def _run_occs_cli(
+        self,
+        args: list[str],
+        timeout_seconds: int = 600,
+        stdin: object | None = None,
+        timeout_message: str = "OCCS CLI command timed out.",
+    ) -> subprocess.CompletedProcess[str]:
+        command = self._build_occs_command(args)
         try:
-            completed = subprocess.run(
+            return subprocess.run(
                 command,
                 cwd=self._occs_cli_cwd(),
                 capture_output=True,
                 text=True,
-                timeout=600,
+                timeout=timeout_seconds,
                 check=False,
+                stdin=stdin,
             )
         except OSError as error:
             raise RuntimeError(f"Could not run OCCS CLI: {error}") from error
         except subprocess.TimeoutExpired as error:
-            raise RuntimeError("OCCS CLI command timed out.") from error
+            raise RuntimeError(timeout_message) from error
+
+    def _run_occs_login_for_retry(self, original_error: str) -> None:
+        self._debug_log("OCCS authorization failed; running `occs login` before retrying.")
+        self.root.after(0, lambda: self.status_text.set("OCCS session expired. Running occs login..."))
+        try:
+            completed = self._run_occs_cli(
+                ["login"],
+                timeout_seconds=self.OCCS_LOGIN_TIMEOUT_SECONDS,
+                stdin=subprocess.DEVNULL,
+                timeout_message="Automatic `occs login` timed out.",
+            )
+        except RuntimeError as error:
+            raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {error}") from error
 
         stdout = (completed.stdout or "").strip()
         stderr = (completed.stderr or "").strip()
         if completed.returncode != 0:
-            raise RuntimeError(stderr or stdout or f"OCCS CLI exited with status {completed.returncode}.")
-        return {
-            "stdout": stdout,
-            "stderr": stderr,
-            "returnCode": completed.returncode,
-        }
+            message = stderr or stdout or f"`occs login` exited with status {completed.returncode}."
+            raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {message}")
+        self._debug_log("OCCS login completed; retrying original command.")
+
+    def _should_retry_occs_after_login(self, command_args: list[str], message: str) -> bool:
+        if not command_args or command_args[0] == "login":
+            return False
+        return self._is_occs_unauthorized_error(message)
+
+    @staticmethod
+    def _is_occs_unauthorized_error(message: str) -> bool:
+        normalized = message.lower()
+        if "unauthorized" not in normalized:
+            return False
+        return any(
+            marker in normalized
+            for marker in (
+                "token may have expired",
+                "session may have expired",
+                "occs login",
+                "please log in again",
+            )
+        )
 
     def _build_occs_command(self, args: list[str]) -> list[str]:
         cli_path = os.path.expanduser(self._get_occs_cli_path())
@@ -8469,7 +8844,7 @@ class AToolApp:
             messagebox.showinfo("List Packages from Comms", "No packages were found.")
             return
 
-        packages = sorted(packages, key=lambda item: item.get("shortName", "").lower())
+        packages = self._sort_occs_packages(packages)
         dialog = tk.Toplevel(self.root)
         dialog.title("List Packages from Comms")
         dialog.transient(self.root)
@@ -8498,15 +8873,17 @@ class AToolApp:
 
         tree = ttk.Treeview(
             container,
-            columns=("name", "description", "uuid"),
+            columns=("config_id", "name", "description", "uuid"),
             show="tree headings",
             height=min(max(len(packages), 8), 18),
         )
         tree.heading("#0", text="Short Name")
+        tree.heading("config_id", text="ID")
         tree.heading("name", text="Name")
         tree.heading("description", text="Description")
         tree.heading("uuid", text="UUID")
         tree.column("#0", width=180, stretch=False)
+        tree.column("config_id", width=80, stretch=False)
         tree.column("name", width=220, stretch=True)
         tree.column("description", width=360, stretch=True)
         tree.column("uuid", width=240, stretch=False)
@@ -8532,6 +8909,7 @@ class AToolApp:
                 return True
             searchable = [
                 package.get("shortName", ""),
+                package.get("configId", ""),
                 package.get("name", ""),
                 package.get("description", ""),
                 package.get("packageUuid", ""),
@@ -8553,6 +8931,7 @@ class AToolApp:
                     tk.END,
                     text=package.get("shortName", ""),
                     values=(
+                        package.get("configId", ""),
                         package.get("name", ""),
                         package.get("description", ""),
                         package.get("packageUuid", ""),
@@ -8677,6 +9056,7 @@ class AToolApp:
                 on_status("No matching packages found.")
             messagebox.showinfo("Search Packages", "No matching packages were found.", parent=parent)
             return
+        packages = self._sort_occs_packages(packages)
         if len(packages) == 1:
             short_name = packages[0].get("shortName", "")
             package_var.set(short_name)
@@ -8699,14 +9079,16 @@ class AToolApp:
 
         tree = ttk.Treeview(
             container,
-            columns=("name", "description"),
+            columns=("config_id", "name", "description"),
             show="tree headings",
             height=min(max(len(packages), 6), 14),
         )
         tree.heading("#0", text="Short Name")
+        tree.heading("config_id", text="ID")
         tree.heading("name", text="Name")
         tree.heading("description", text="Description")
         tree.column("#0", width=180, stretch=False)
+        tree.column("config_id", width=80, stretch=False)
         tree.column("name", width=220, stretch=True)
         tree.column("description", width=360, stretch=True)
         tree.grid(row=0, column=0, sticky="nsew")
@@ -8722,6 +9104,7 @@ class AToolApp:
                 tk.END,
                 text=package.get("shortName", ""),
                 values=(
+                    package.get("configId", ""),
                     package.get("name", ""),
                     package.get("description", ""),
                 ),
@@ -8782,10 +9165,49 @@ class AToolApp:
                 "name": str(package.get("name", "")).strip(),
                 "description": str(package.get("description", "")).strip(),
                 "packageUuid": str(package.get("packageUuid", "")).strip(),
+                "configId": AToolApp._occs_package_config_id(package),
             }
             if item["shortName"]:
                 normalized.append(item)
-        return normalized
+        return AToolApp._sort_occs_packages(normalized)
+
+    @staticmethod
+    def _occs_package_config_id(package: dict[object, object]) -> str:
+        for key in ("configId", "id", "packageId", "ConfigId", "PackageId"):
+            value = package.get(key)
+            text = str(value).strip() if value is not None else ""
+            if text:
+                return text
+        configuration = package.get("configuration")
+        if isinstance(configuration, dict):
+            value = configuration.get("id")
+            text = str(value).strip() if value is not None else ""
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _sort_occs_packages(packages: list[dict[str, str]]) -> list[dict[str, str]]:
+        return sorted(packages, key=AToolApp._occs_package_sort_key)
+
+    @staticmethod
+    def _occs_package_sort_key(package: dict[str, str]) -> tuple[int, int, str, str, str]:
+        config_id = AToolApp._safe_int(package.get("configId"))
+        if config_id is None:
+            return (
+                1,
+                0,
+                package.get("shortName", "").lower(),
+                package.get("name", "").lower(),
+                package.get("packageUuid", "").lower(),
+            )
+        return (
+            0,
+            -config_id,
+            package.get("shortName", "").lower(),
+            package.get("name", "").lower(),
+            package.get("packageUuid", "").lower(),
+        )
 
     @staticmethod
     def _normalize_occs_configs(result: dict[str, object]) -> list[dict[str, str]]:
