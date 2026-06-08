@@ -202,25 +202,26 @@ class AToolApp:
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
         package_menu.add_command(
-            label="Open Package...",
+            label="Open Shared Package...",
             accelerator=open_accelerator,
             command=self.open_occs_package,
         )
-        package_menu.add_command(label="Open JSON AT Package...", command=self.open_assembly_template)
-        package_menu.add_command(label="Preview...", command=self.preview_occs_package)
-        package_menu.add_command(label="Update Package", command=self.update_shared_occs_package)
-        package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
-        package_menu.add_command(label="Release Package Version Lock", command=self.release_shared_occs_lock)
+        package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
+        package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
         package_menu.add_separator()
         package_menu.add_command(
             label="List Packages from Comms...",
             command=self.list_occs_packages_from_comms,
         )
         package_menu.add_command(
-            label="Get Package Version from Comms...",
+            label="Get Package from Comms...",
             command=self.get_occs_package,
         )
-        package_menu.add_command(label="Open Local Package Version...", command=self.open_occs_package_bundle)
+        package_menu.add_separator()
+        package_menu.add_command(label="Preview...", command=self.preview_occs_package)
+        package_menu.add_command(label="Update Shared Package", command=self.update_shared_occs_package)
+        package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
+        package_menu.add_command(label="Release Shared Package Lock", command=self.release_shared_occs_lock)
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
@@ -6199,7 +6200,7 @@ class AToolApp:
         ]
 
         file_path = filedialog.askopenfilename(
-            title="Open Assembly Template",
+            title="Open Raw AT",
             filetypes=filetypes,
         )
 
@@ -6249,6 +6250,7 @@ class AToolApp:
         publish_to_shared_after_get: bool = False,
         initial_package: str = "",
         initial_version: str = "",
+        open_shared_after_get_mode: str = "",
     ) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
@@ -6257,7 +6259,7 @@ class AToolApp:
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("Get Package Version from Comms")
+        dialog.title("Get Package from Comms")
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -6362,7 +6364,7 @@ class AToolApp:
             package_name = package_var.get().strip()
             version_name = version_var.get().strip() or "latest"
             if not package_name:
-                messagebox.showerror("Get Package Version from Comms", "Package is required.", parent=dialog)
+                messagebox.showerror("Get Package from Comms", "Package is required.", parent=dialog)
                 return
 
             work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
@@ -6370,7 +6372,7 @@ class AToolApp:
                 work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as error:
                 messagebox.showerror(
-                    "Get Package Version from Comms",
+                    "Get Package from Comms",
                     "Could not create the configured Local Package Folder.\n\n"
                     f"Folder:\n{work_dir}\n\n"
                     "Update it in Settings > User Settings.\n\n"
@@ -6384,6 +6386,7 @@ class AToolApp:
                 completion = lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_for_shared_complete(
                     result,
                     requested_bundle_dir,
+                    open_after_publish_mode=open_shared_after_get_mode,
                 )
             else:
                 completion = lambda result, requested_bundle_dir=str(bundle_dir): self._on_occs_package_get_complete(
@@ -6407,7 +6410,10 @@ class AToolApp:
                 completion,
             )
 
-        ttk.Button(buttons, text="Get", command=_submit).grid(row=0, column=1)
+        submit_label = "Get to Local"
+        if publish_to_shared_after_get:
+            submit_label = "Get to Shared/Edit" if open_shared_after_get_mode == "edit" else "Get to Shared"
+        ttk.Button(buttons, text=submit_label, command=_submit).grid(row=0, column=1)
 
         package_combo.focus_set()
         dialog.update_idletasks()
@@ -6419,7 +6425,7 @@ class AToolApp:
         if not self._prompt_save_if_dirty():
             return
         selected_dir = filedialog.askdirectory(
-            title="Open Local Package Version",
+            title="Open Local Package",
             initialdir=self._get_occs_work_dir() or None,
         )
         if not selected_dir:
@@ -6688,12 +6694,12 @@ class AToolApp:
         lock_path = self._shared_lock_path(context["package_dir"])
         existing_lock = self._read_shared_lock(lock_path)
         if not existing_lock:
-            messagebox.showinfo("Release Package Version Lock", "No lock exists for this package version.")
+            messagebox.showinfo("Release Shared Package Lock", "No lock exists for this package version.")
             return
         owner = self._current_shared_user_identity()
         if not self._is_shared_lock_owner(existing_lock, owner):
             if not messagebox.askyesno(
-                "Release Package Version Lock",
+                "Release Shared Package Lock",
                 "This lock belongs to another user.\n\n"
                 f"{self._format_shared_lock(existing_lock)}\n\n"
                 "Release it anyway?",
@@ -6703,7 +6709,7 @@ class AToolApp:
             lock_path.unlink()
         except OSError as error:
             messagebox.showerror(
-                "Release Package Version Lock",
+                "Release Shared Package Lock",
                 f"Could not remove shared lock:\n{lock_path}\n\nDetails: {error}",
             )
             return
@@ -6714,7 +6720,7 @@ class AToolApp:
     def update_shared_occs_package(self) -> None:
         if self.current_occs_shared_mode != "edit":
             messagebox.showinfo(
-                "Update Package",
+                "Update Shared Package",
                 "Open the package version for edit before updating the shared package folder.",
             )
             return
@@ -6785,13 +6791,13 @@ class AToolApp:
         existing_lock = self._read_shared_lock(lock_path)
         if not existing_lock:
             messagebox.showerror(
-                "Update Package",
+                "Update Shared Package",
                 "Cannot update the shared package folder because no edit lock exists.",
             )
             return False
         if not self._is_shared_lock_owner(existing_lock, owner):
             messagebox.showerror(
-                "Update Package",
+                "Update Shared Package",
                 "Cannot update because this package version is locked by another user.\n\n"
                 f"{self._format_shared_lock(existing_lock)}",
             )
@@ -6804,7 +6810,7 @@ class AToolApp:
             self._copy_occs_bundle_to_shared(context, history_dir)
         except OSError as error:
             messagebox.showerror(
-                "Update Package",
+                "Update Shared Package",
                 f"Could not update the shared package folder.\n\nDetails: {error}",
             )
             return False
@@ -6812,7 +6818,7 @@ class AToolApp:
         release_lock = release_lock_after
         if release_lock is None:
             release_lock = messagebox.askyesno(
-                "Update Package",
+                "Update Shared Package",
                 "Shared package folder updated.\n\nRelease the edit lock now?",
             )
         if release_lock:
@@ -6821,7 +6827,7 @@ class AToolApp:
                 self.current_occs_shared_mode = "testing"
             except OSError as error:
                 messagebox.showwarning(
-                    "Update Package",
+                    "Update Shared Package",
                     f"Shared package folder was updated, but the lock could not be released.\n\nDetails: {error}",
                 )
                 release_lock = False
@@ -6834,7 +6840,7 @@ class AToolApp:
         if show_message:
             lock_text = "released" if release_lock else "still held"
             messagebox.showinfo(
-                "Update Package",
+                "Update Shared Package",
                 f"Updated shared package version:\n{published_dir}\n\nLock: {lock_text}",
             )
         return True
@@ -7083,6 +7089,72 @@ class AToolApp:
             )
 
         self._prompt_lock_and_open_shared_entry(entry)
+
+    def _open_shared_entry_for_edit(self, entry: dict[str, object], title: str = "Open Package") -> bool:
+        entry = self._refresh_shared_package_entry(entry) or entry
+        package_dir = entry.get("package_dir")
+        if not isinstance(package_dir, Path):
+            messagebox.showerror(title, "The selected package version is missing shared folder metadata.")
+            return False
+
+        lock_path = self._shared_lock_path(package_dir)
+        lock_payload = self._read_shared_lock(lock_path)
+        owner = self._current_shared_user_identity()
+        if lock_payload and not self._is_shared_lock_owner(lock_payload, owner):
+            if messagebox.askyesno(
+                title,
+                "This package version is locked for edit.\n\n"
+                f"{self._format_shared_lock(lock_payload)}\n\n"
+                "Open a local testing copy? You will not be able to update the shared package folder.",
+            ):
+                return self._open_shared_entry_local_copy(entry, mode="testing")
+            return False
+
+        context = self._shared_context_from_entry(entry)
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_write_mode = "w" if lock_payload else "x"
+            with open(lock_path, lock_write_mode, encoding="utf-8") as target:
+                json.dump(self._build_shared_lock_payload(context, owner), target, indent=2)
+        except FileExistsError:
+            fresh_lock = self._read_shared_lock(lock_path)
+            if fresh_lock and messagebox.askyesno(
+                title,
+                "This package version was locked by another user before the edit lock could be created.\n\n"
+                f"{self._format_shared_lock(fresh_lock)}\n\n"
+                "Open a local testing copy?",
+            ):
+                return self._open_shared_entry_local_copy(entry, mode="testing")
+            return False
+        except OSError as error:
+            messagebox.showerror(
+                title,
+                f"Could not write shared lock:\n{lock_path}\n\nDetails: {error}",
+            )
+            return False
+
+        return self._open_shared_entry_local_copy(entry, mode="edit")
+
+    def _can_get_shared_package_for_edit(self, manifest: dict[str, object], bundle_path: Path) -> bool:
+        try:
+            package_dir = self._shared_package_dir_for_manifest(manifest)
+        except OSError as error:
+            messagebox.showerror("Get Package from Comms", str(error))
+            return False
+
+        lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir))
+        owner = self._current_shared_user_identity()
+        if not lock_payload or self._is_shared_lock_owner(lock_payload, owner):
+            return True
+
+        if messagebox.askyesno(
+            "Get Package from Comms",
+            "Cannot update the shared package folder because this package version is locked for edit.\n\n"
+            f"{self._format_shared_lock(lock_payload)}\n\n"
+            "Open the downloaded bundle as a local package instead?",
+        ):
+            self._load_occs_bundle(str(bundle_path))
+        return False
 
     def _prompt_lock_and_open_shared_entry(self, entry: dict[str, object]) -> None:
         entry = self._refresh_shared_package_entry(entry) or entry
@@ -7592,19 +7664,30 @@ class AToolApp:
         if self._load_occs_bundle(bundle_path):
             self._show_temporary_status(f"Loaded package version: {os.path.basename(bundle_path)}", duration_ms=5000)
 
-    def _on_occs_package_get_for_shared_complete(self, result: dict[str, object], requested_bundle_dir: str) -> None:
+    def _on_occs_package_get_for_shared_complete(
+        self,
+        result: dict[str, object],
+        requested_bundle_dir: str,
+        open_after_publish_mode: str = "",
+    ) -> None:
         bundle_path = Path(str(result.get("bundlePath") or requested_bundle_dir))
         try:
             manifest = self._read_occs_manifest(str(bundle_path))
-            self._publish_bundle_path_to_shared(bundle_path, manifest, reason="retrievedFromComms")
+            if open_after_publish_mode == "edit" and not self._can_get_shared_package_for_edit(manifest, bundle_path):
+                return
+            entry = self._publish_bundle_path_to_shared(bundle_path, manifest, reason="retrievedFromComms")
         except (OSError, ValueError) as error:
             messagebox.showerror(
-                "Get Package Version from Comms",
+                "Get Package from Comms",
                 f"Retrieved the package version, but could not update the shared package folder.\n\nDetails: {error}",
             )
             return
 
         self._record_occs_package_mru_from_manifest(manifest)
+        if open_after_publish_mode == "edit":
+            self._open_shared_entry_for_edit(entry, title="Get Package from Comms")
+            return
+
         self._show_temporary_status("Retrieved package version into shared folder", duration_ms=5000)
         workspace_dir = self._ensure_occs_shared_workspace_dir()
         if workspace_dir is None:
@@ -7623,12 +7706,12 @@ class AToolApp:
             manifest = self._read_occs_manifest(bundle_dir)
             assembly_template_path = self._occs_bundle_assembly_template_path(bundle_dir, manifest)
         except ValueError as error:
-            messagebox.showerror("Open Local Package Version", str(error))
+            messagebox.showerror("Open Local Package", str(error))
             return False
 
         if not os.path.exists(assembly_template_path):
             messagebox.showerror(
-                "Open Local Package Version",
+                "Open Local Package",
                 f"Assembly template file not found:\n{assembly_template_path}",
             )
             return False
@@ -7807,21 +7890,11 @@ class AToolApp:
         manifest: dict[str, object],
         reason: str,
     ) -> dict[str, object]:
-        workspace_dir = self._ensure_occs_shared_workspace_dir()
-        if workspace_dir is None:
-            raise OSError("Shared package folder is not configured.")
+        package_dir = self._shared_package_dir_for_manifest(manifest)
         package_name = self._occs_manifest_package_short_name(manifest)
         version_name = self._occs_manifest_version_short_name(manifest)
-        if not package_name or not version_name:
-            raise OSError("Package manifest is missing package or version metadata.")
-        package_dir = (
-            workspace_dir
-            / "packages"
-            / self._safe_occs_path_segment(package_name)
-            / self._safe_occs_path_segment(version_name)
-        )
         context = {
-            "workspace_dir": workspace_dir,
+            "workspace_dir": package_dir.parent.parent.parent,
             "package_dir": package_dir,
             "package_name": package_name,
             "version_name": version_name,
@@ -7838,6 +7911,21 @@ class AToolApp:
         if entry is None:
             raise OSError("Shared package folder was updated but could not be reloaded.")
         return entry
+
+    def _shared_package_dir_for_manifest(self, manifest: dict[str, object]) -> Path:
+        workspace_dir = self._ensure_occs_shared_workspace_dir()
+        if workspace_dir is None:
+            raise OSError("Shared package folder is not configured.")
+        package_name = self._occs_manifest_package_short_name(manifest)
+        version_name = self._occs_manifest_version_short_name(manifest)
+        if not package_name or not version_name:
+            raise OSError("Package manifest is missing package or version metadata.")
+        return (
+            workspace_dir
+            / "packages"
+            / self._safe_occs_path_segment(package_name)
+            / self._safe_occs_path_segment(version_name)
+        )
 
     @staticmethod
     def _occs_source_hashes_match(
@@ -8212,11 +8300,11 @@ class AToolApp:
                 return None
             return package_by_id.get(selection[0])
 
-        def _get_selected() -> None:
+        def _selected_short_name() -> str:
             package = _selected_package()
             if not package:
                 messagebox.showinfo("List Packages from Comms", "Select a package first.", parent=dialog)
-                return
+                return ""
             short_name = package.get("shortName", "").strip()
             if not short_name:
                 messagebox.showerror(
@@ -8224,17 +8312,39 @@ class AToolApp:
                     "The selected package is missing a short name.",
                     parent=dialog,
                 )
+                return ""
+            return short_name
+
+        def _get_selected_to_local() -> None:
+            short_name = _selected_short_name()
+            if not short_name:
                 return
             dialog.destroy()
             self.get_occs_package(initial_package=short_name)
 
-        ttk.Button(buttons, text="Get Selected...", command=_get_selected).grid(row=0, column=2)
-        tree.bind("<Double-1>", lambda _event: _get_selected())
+        def _get_selected_to_shared_edit() -> None:
+            short_name = _selected_short_name()
+            if not short_name:
+                return
+            dialog.destroy()
+            self.get_occs_package(
+                publish_to_shared_after_get=True,
+                initial_package=short_name,
+                open_shared_after_get_mode="edit",
+            )
+
+        ttk.Button(buttons, text="Get to Local...", command=_get_selected_to_local).grid(
+            row=0,
+            column=2,
+            padx=(0, 8),
+        )
+        ttk.Button(buttons, text="Get to Shared/Edit...", command=_get_selected_to_shared_edit).grid(row=0, column=3)
+        tree.bind("<Double-1>", lambda _event: _get_selected_to_local())
 
         _render_package_rows()
         filter_entry.focus_set()
         dialog.update_idletasks()
-        width = max(dialog.winfo_width(), 940)
+        width = max(dialog.winfo_width(), 1040)
         height = max(dialog.winfo_height(), 440)
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - width) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - height) // 2, 0)

@@ -204,12 +204,12 @@ sudo dnf install python3-tkinter
 
 ## Core Workflow
 
-1. Open an OCCS package or local package version:
-   - `Package -> Open Package...`
-   - `Package -> Open JSON AT Package...`
+1. Open an OCCS package, local package, or raw assembly template:
+   - `Package -> Open Shared Package...`
+   - `Package -> Open Local Package...`
+   - `Package -> Open Raw AT...`
    - `Package -> List Packages from Comms...`
-   - `Package -> Get Package Version from Comms...`
-   - `Package -> Open Local Package Version...`
+   - `Package -> Get Package from Comms...`
    - macOS: `Cmd+O`
    - Windows/Linux: `Alt+O`
 2. Review and edit:
