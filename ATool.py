@@ -6674,6 +6674,8 @@ class AToolApp:
                 "Replace this lock?",
             ):
                 return
+        if not self._verify_shared_update_base(context, existing_lock, "Check Out Package Version"):
+            return
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             with open(lock_path, "w", encoding="utf-8") as target:
@@ -6802,6 +6804,8 @@ class AToolApp:
                 f"{self._format_shared_lock(existing_lock)}",
             )
             return False
+        if not self._verify_shared_update_base(context, existing_lock, "Update Shared Package"):
+            return False
 
         published_dir = context["package_dir"] / "published" / "current"
         history_dir = context["package_dir"] / "published" / "history" / self._shared_publication_folder_name(owner)
@@ -6814,6 +6818,15 @@ class AToolApp:
                 f"Could not update the shared package folder.\n\nDetails: {error}",
             )
             return False
+
+        baseline_warning = ""
+        updated_entry = self._shared_package_entry_from_package_dir(context["package_dir"])
+        bundle_dir = context.get("bundle_dir")
+        if updated_entry is not None and isinstance(bundle_dir, Path):
+            try:
+                self._write_shared_baseline_for_local_copy(bundle_dir, updated_entry, reason="updatedShared")
+            except (OSError, ValueError) as error:
+                baseline_warning = str(error)
 
         release_lock = release_lock_after
         if release_lock is None:
@@ -6839,9 +6852,10 @@ class AToolApp:
         )
         if show_message:
             lock_text = "released" if release_lock else "still held"
+            warning_text = f"\n\nBaseline warning: {baseline_warning}" if baseline_warning else ""
             messagebox.showinfo(
                 "Update Shared Package",
-                f"Updated shared package version:\n{published_dir}\n\nLock: {lock_text}",
+                f"Updated shared package version:\n{published_dir}\n\nLock: {lock_text}{warning_text}",
             )
         return True
 
@@ -7156,6 +7170,74 @@ class AToolApp:
             self._load_occs_bundle(str(bundle_path))
         return False
 
+    def _verify_shared_update_base(
+        self,
+        context: dict[str, object],
+        lock_payload: dict[str, object] | None,
+        title: str,
+    ) -> bool:
+        package_dir = context.get("package_dir")
+        bundle_dir = context.get("bundle_dir")
+        if not isinstance(package_dir, Path) or not isinstance(bundle_dir, Path):
+            messagebox.showerror(title, "The current package is missing shared folder metadata.")
+            return False
+
+        entry = self._shared_package_entry_from_package_dir(package_dir)
+        if entry is None:
+            messagebox.showerror(title, "Could not read the current shared package version.")
+            return False
+
+        try:
+            current_shared_hashes = self._shared_current_hashes_for_entry(entry)
+        except ValueError as error:
+            messagebox.showerror(title, f"Could not verify the current shared package version.\n\nDetails: {error}")
+            return False
+
+        baseline = self._read_shared_baseline_for_local_copy(bundle_dir)
+        baseline_hashes = baseline.get("sharedHashes") if isinstance(baseline, dict) else None
+        if not isinstance(baseline_hashes, dict) or not baseline_hashes:
+            messagebox.showerror(
+                title,
+                "Cannot safely update the shared package folder because this local copy does not have "
+                "shared baseline metadata.\n\n"
+                "Open the package from the shared workspace again, then reapply your local changes.",
+            )
+            return False
+        baseline_package = str(baseline.get("package", "")).strip()
+        baseline_version = str(baseline.get("version", "")).strip()
+        if (
+            baseline_package != str(context.get("package_name", "")).strip()
+            or baseline_version != str(context.get("version_name", "")).strip()
+        ):
+            messagebox.showerror(
+                title,
+                "Cannot safely update the shared package folder because this local copy's shared baseline "
+                "does not match the current package/version.",
+            )
+            return False
+
+        if not self._shared_hashes_match(baseline_hashes, current_shared_hashes):
+            messagebox.showerror(
+                title,
+                "Cannot update the shared package folder because this local copy is based on an older "
+                "shared version.\n\n"
+                f"Current shared update: {self._shared_entry_updated_at(entry) or '(unknown time)'}\n"
+                f"Current shared owner: {self._shared_publication_owner_text(entry)}\n\n"
+                "Open the latest shared package, then reapply your local changes.",
+            )
+            return False
+
+        lock_hashes = lock_payload.get("sharedBaselineHashes") if isinstance(lock_payload, dict) else None
+        if isinstance(lock_hashes, dict) and lock_hashes and not self._shared_hashes_match(lock_hashes, current_shared_hashes):
+            messagebox.showerror(
+                title,
+                "Cannot update the shared package folder because the shared package changed after this edit lock was acquired.\n\n"
+                "Open the latest shared package, then reapply your local changes.",
+            )
+            return False
+
+        return True
+
     def _prompt_lock_and_open_shared_entry(self, entry: dict[str, object]) -> None:
         entry = self._refresh_shared_package_entry(entry) or entry
         package_dir = entry.get("package_dir")
@@ -7224,10 +7306,17 @@ class AToolApp:
                 mode,
             )
             shutil.copytree(published_dir, local_dir)
+            self._write_shared_baseline_for_local_copy(local_dir, entry, reason=f"opened-{mode}")
         except OSError as error:
             messagebox.showerror(
                 "Open Package",
                 f"Could not create local package copy.\n\nDetails: {error}",
+            )
+            return False
+        except ValueError as error:
+            messagebox.showerror(
+                "Open Package",
+                f"Could not record shared package baseline.\n\nDetails: {error}",
             )
             return False
 
@@ -7435,6 +7524,9 @@ class AToolApp:
             "manifest": self.current_occs_manifest,
             "publicationReason": "publishedToComms",
         }
+        lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir))
+        if not self._verify_shared_update_base(context, lock_payload, "Publish Package to Comms"):
+            return "Shared package folder was not updated because the local copy is stale."
         owner = self._current_shared_user_identity()
         history_dir = package_dir / "published" / "history" / self._shared_publication_folder_name(owner)
         try:
@@ -7442,6 +7534,12 @@ class AToolApp:
             self._copy_occs_bundle_to_shared(context, history_dir)
         except OSError as error:
             return str(error)
+        updated_entry = self._shared_package_entry_from_package_dir(package_dir)
+        if updated_entry is not None:
+            try:
+                self._write_shared_baseline_for_local_copy(bundle_dir, updated_entry, reason="publishedToComms")
+            except (OSError, ValueError) as error:
+                return f"Shared package folder was updated, but baseline metadata could not be refreshed: {error}"
         return ""
 
     def _run_occs_command_async(
@@ -7874,6 +7972,52 @@ class AToolApp:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
+    @staticmethod
+    def _shared_baseline_path(bundle_dir: Path) -> Path:
+        return bundle_dir / ".atool-shared-baseline.json"
+
+    def _read_shared_baseline_for_local_copy(self, bundle_dir: Path) -> dict[str, object]:
+        return self._read_json_object(self._shared_baseline_path(bundle_dir))
+
+    def _write_shared_baseline_for_local_copy(
+        self,
+        bundle_dir: Path,
+        entry: dict[str, object],
+        reason: str,
+    ) -> None:
+        payload = self._build_shared_baseline_payload(entry, reason)
+        with open(self._shared_baseline_path(bundle_dir), "w", encoding="utf-8") as target:
+            json.dump(payload, target, indent=2)
+
+    def _build_shared_baseline_payload(self, entry: dict[str, object], reason: str) -> dict[str, object]:
+        publication = entry.get("publication")
+        published_at = ""
+        if isinstance(publication, dict):
+            published_at = str(publication.get("publishedAt", "")).strip()
+        return {
+            "schemaVersion": "atool-shared-baseline/v1",
+            "capturedAt": self._current_timestamp(),
+            "reason": reason,
+            "package": str(entry.get("package_name", "")),
+            "version": str(entry.get("version_name", "")),
+            "publishedDir": str(entry.get("published_dir", "")),
+            "publishedAt": published_at,
+            "sharedHashes": self._shared_current_hashes_for_entry(entry),
+        }
+
+    def _shared_current_hashes_for_entry(self, entry: dict[str, object]) -> dict[str, str]:
+        published_dir = entry.get("published_dir")
+        manifest = entry.get("manifest")
+        if not isinstance(published_dir, Path) or not isinstance(manifest, dict):
+            raise ValueError("The shared package entry is missing published package metadata.")
+        return self._occs_bundle_current_hashes(published_dir, manifest)
+
+    @staticmethod
+    def _shared_hashes_match(expected: dict[object, object], actual: dict[str, str]) -> bool:
+        if set(str(key) for key in expected.keys()) != set(actual.keys()):
+            return False
+        return all(str(value) == str(actual.get(str(key), "")) for key, value in expected.items())
+
     def _shared_context_from_entry(self, entry: dict[str, object]) -> dict[str, object]:
         return {
             "workspace_dir": entry.get("workspace_dir"),
@@ -8029,8 +8173,17 @@ class AToolApp:
         source_hashes = manifest.get("sourceHashes") if isinstance(manifest, dict) else {}
         package_name = str(context.get("package_name", ""))
         version_name = str(context.get("version_name", ""))
+        package_dir = context.get("package_dir")
+        shared_baseline_hashes: dict[str, str] = {}
+        if isinstance(package_dir, Path):
+            entry = self._shared_package_entry_from_package_dir(package_dir)
+            if entry is not None:
+                try:
+                    shared_baseline_hashes = self._shared_current_hashes_for_entry(entry)
+                except ValueError:
+                    shared_baseline_hashes = {}
         now = self._current_timestamp()
-        return {
+        payload = {
             "schemaVersion": "atool-shared-lock/v1",
             "createdAt": now,
             "updatedAt": now,
@@ -8049,6 +8202,9 @@ class AToolApp:
             "bundleDir": str(context.get("bundle_dir", "")),
             "sourceHashes": source_hashes if isinstance(source_hashes, dict) else {},
         }
+        if shared_baseline_hashes:
+            payload["sharedBaselineHashes"] = shared_baseline_hashes
+        return payload
 
     @staticmethod
     def _read_shared_lock(lock_path: Path) -> dict[str, object] | None:
@@ -8704,9 +8860,15 @@ class AToolApp:
         return False
 
     def _occs_bundle_current_hashes(self, bundle_dir: Path, manifest: dict[str, object]) -> dict[str, str]:
+        files = manifest.get("files")
+        manifest_path = bundle_dir / "occs-package.json"
+        if isinstance(files, dict):
+            manifest_candidate = Path(str(files.get("manifest") or "occs-package.json"))
+            manifest_path = manifest_candidate if manifest_candidate.is_absolute() else bundle_dir / manifest_candidate
         assembly_template_path = Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest))
         version_master_path = Path(self._occs_bundle_version_master_path(str(bundle_dir), manifest))
         return {
+            "manifest": self._semantic_json_hash_for_file(manifest_path),
             "assemblyTemplate": self._semantic_json_hash_for_file(assembly_template_path),
             "versionMaster": self._semantic_json_hash_for_file(version_master_path),
         }
