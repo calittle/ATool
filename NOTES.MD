@@ -1,6 +1,6 @@
 # ATool Release Notes
 
-This release focuses on mapping visibility, match diagnostics, window startup behavior, and release-package transparency.
+This release focuses on mapping visibility, match diagnostics, Comms-compatible condition handling, window startup behavior, and release-package transparency.
 
 ## Mapping Results Are Easier To Review
 
@@ -43,6 +43,16 @@ Useful interpretation rules:
 - `Found` describes what the mapped data actually produced.
 - `empty false` means the path was expected to find at least one value.
 - `Found: no values.` means that path did not match anything in the mapped data.
+
+## Comms-Style Size Conditions Now Map Correctly
+
+ATool now recognizes top-level `size` checks in document conditions, matching Comms behavior for expressions such as:
+
+```text
+@.billPrint.premise.premList[*].serviceAgreement.saList[*].billSegment.bsegList[*].billCalcHdr.billCalcHdrList[*].billCalcLine.billCalcLineList[?(@.cmElements.chargeType == 'EC')].cmElements.chargeType size 1
+```
+
+This fixes cases where Comms triggered a document but ATool showed a failed clause because it treated `size 1` like part of the JSONPath. The mapping diagnostics now report the resolved value count, matched values, and expected size.
 
 ## Map Button Feedback
 

@@ -3004,10 +3004,10 @@ class AToolApp:
             expect_empty = empty_match.group(2).lower() == "true"
             return f"{subject} is empty" if expect_empty else f"{subject} has a value"
 
-        size_match = re.match(r"^(.*?)\s+size\s+(.+)$", body, flags=re.IGNORECASE)
+        size_match = cls._find_top_level_word_operator(body, "size")
         if size_match:
-            subject = cls._describe_condition_subject(size_match.group(1))
-            rhs = cls._describe_condition_operand(size_match.group(2))
+            subject = cls._describe_condition_subject(size_match[0])
+            rhs = cls._describe_condition_operand(size_match[1])
             return f"{subject} has size {rhs}"
 
         comparison = cls._find_top_level_comparison(body)
@@ -5221,6 +5221,28 @@ class AToolApp:
             self._set_generated_value_for_path(payload, path, "sample")
             return True
 
+        size_match = self._find_top_level_word_operator(expr, "size")
+        if size_match is not None:
+            path_text, expected_size_text = size_match
+            expected_values = self._evaluate_condition_operand(payload, expected_size_text)
+            expected_size = self._first_integral_condition_value(expected_values)
+            if expected_size is None:
+                report.append(f"Could not determine target size for expression: {expr}")
+                return False
+            path = self._normalize_condition_path(path_text)
+            if expected_size <= 0:
+                self._clear_generated_path_value(payload, path)
+            else:
+                self._ensure_generated_path_exists(payload, path)
+            actual_size = len(self._extract_values_by_path(payload, path))
+            if actual_size != expected_size:
+                report.append(
+                    f"Could not materialize expression size: {expr} "
+                    f"(expected {expected_size}, found {actual_size})"
+                )
+                return False
+            return True
+
         comparison = self._find_top_level_comparison(expr)
         if comparison is not None:
             lhs_text, operator, rhs_text = comparison
@@ -6172,6 +6194,19 @@ class AToolApp:
             is_empty = len(full_values) == 0
             passed = is_empty if expect_empty else not is_empty
             return passed, f"values={self._format_mapped_nodeset_preview(full_values)}"
+
+        size_match = self._find_top_level_word_operator(expr, "size")
+        if size_match is not None:
+            path, expected_size = size_match
+            values = self._evaluate_condition_operand(data_payload, path)
+            expected_values = self._evaluate_condition_operand(data_payload, expected_size)
+            passed = self._compare_condition_operand_values([len(values)], "==", expected_values)
+            return (
+                passed,
+                f"size={len(values)} "
+                f"values={self._format_mapped_nodeset_preview(values)} "
+                f"expected={self._format_mapped_nodeset_preview(expected_values)}",
+            )
 
         comparison = self._find_top_level_comparison(expr)
         if comparison is not None:
@@ -11345,6 +11380,15 @@ class AToolApp:
                 f"Found: {self._humanize_condition_detail(details)}",
             ]
 
+        size_match = self._find_top_level_word_operator(expr, "size")
+        if size_match is not None:
+            path, expected_size = size_match
+            return passed, [
+                f"Check: {expr}",
+                f"Expected: {path} should resolve to {expected_size} value(s).",
+                f"Found: {self._humanize_condition_detail(details)}",
+            ]
+
         comparison = self._find_top_level_comparison(expr)
         if comparison is not None:
             lhs, operator, rhs = comparison
@@ -11367,6 +11411,13 @@ class AToolApp:
             return "no values."
         if text.startswith("values="):
             return f"values found: {text[len('values='):]}"
+        size_match = re.match(r"^size=(\d+)\s+values=(.*?)\s+expected=(.*)$", text)
+        if size_match:
+            return (
+                f"size {size_match.group(1)}; "
+                f"values found: {size_match.group(2)}; "
+                f"expected sizes: {size_match.group(3)}"
+            )
         left_right_match = re.match(r"^left=(.*?)\s+right=(.*)$", text)
         if left_right_match:
             return f"left values: {left_right_match.group(1)}; right values: {left_right_match.group(2)}"
@@ -11468,6 +11519,15 @@ class AToolApp:
                 comms_compatible=comms_compatible,
                 warnings=warnings,
             )
+
+        size_match = self._find_top_level_word_operator(expr, "size")
+        if size_match is not None:
+            path, expected_size = size_match
+            values = self._evaluate_condition_operand(data_payload, path)
+            expected_values = self._evaluate_condition_operand(data_payload, expected_size)
+            if not expected_values:
+                return False
+            return self._compare_condition_operand_values([len(values)], "==", expected_values)
 
         comparison = self._find_top_level_comparison(expr)
         if comparison is not None:
@@ -11653,6 +11713,21 @@ class AToolApp:
         return None, False
 
     @staticmethod
+    def _first_integral_condition_value(values: list[object]) -> int | None:
+        if not values:
+            return None
+        value = values[0]
+        if isinstance(value, bool):
+            return None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not numeric_value.is_integer():
+            return None
+        return int(numeric_value)
+
+    @staticmethod
     def _find_top_level_comparison(expression: str) -> tuple[str, str, str] | None:
         text = expression
         operators = ("==", "!=", "<=", ">=", "<", ">")
@@ -11700,6 +11775,65 @@ class AToolApp:
                         left = text[:index].strip()
                         right = text[index + len(operator) :].strip()
                         return left, operator, right
+            index += 1
+        return None
+
+    @staticmethod
+    def _find_top_level_word_operator(expression: str, operator: str) -> tuple[str, str] | None:
+        text = expression
+        operator_text = operator.strip()
+        if not text or not operator_text:
+            return None
+
+        paren_depth = 0
+        bracket_depth = 0
+        quote = ""
+        escaped = False
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                index += 1
+                continue
+
+            if char in {"'", '"'}:
+                quote = char
+                index += 1
+                continue
+            if char == "(":
+                paren_depth += 1
+                index += 1
+                continue
+            if char == ")":
+                paren_depth = max(0, paren_depth - 1)
+                index += 1
+                continue
+            if char == "[":
+                bracket_depth += 1
+                index += 1
+                continue
+            if char == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+                index += 1
+                continue
+
+            if paren_depth == 0 and bracket_depth == 0:
+                candidate = text[index : index + len(operator_text)]
+                if candidate.lower() == operator_text.lower():
+                    before = text[index - 1] if index > 0 else ""
+                    after_index = index + len(operator_text)
+                    after = text[after_index] if after_index < len(text) else ""
+                    if (not before or before.isspace()) and (not after or after.isspace()):
+                        left = text[:index].strip()
+                        right = text[after_index:].strip()
+                        if left and right:
+                            return left, right
             index += 1
         return None
 
