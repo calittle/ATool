@@ -1,23 +1,21 @@
 # ATool Release Notes
 
-This release focuses on mapping visibility, match diagnostics, Comms-compatible condition handling, window startup behavior, and release-package transparency.
+This release focuses on mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
 
 ## Mapping Results Are Easier To Review
 
-- After mapping a data file, the Documents list now keeps both matched and unmatched documents visible.
+- After mapping a data file, the Documents list now starts in `Show Triggered` mode so matched documents are visible immediately.
+- Use `Show All` to inspect the full mapped document list, including failed matches.
 - Triggered documents are shown in blue.
 - Untriggered documents are shown in red.
 - The status bar shows the total document count and how many documents matched.
-- A mapped-only filter button appears after mapping:
-  - `Show Triggered` filters the Documents list to only triggered blue documents.
-  - `Show All` removes that filter and shows all mapped documents again.
-  - `Clear Map` hides the filter button and clears mapping colors/details.
+- `Clear Map` clears mapping colors/details and hides the mapped-result filter.
 
 ## Unmatched Documents Explain Why They Failed
 
-Selecting a red unmatched document now shows a `Match Details` section in Document Details.
+Selecting a red unmatched document shows a `Match Details` section in Document Details.
 
-The new format is intended to be read top-down:
+The diagnostics are intended to be read top-down:
 
 ```text
 Overall: FAIL
@@ -44,6 +42,25 @@ Useful interpretation rules:
 - `empty false` means the path was expected to find at least one value.
 - `Found: no values.` means that path did not match anything in the mapped data.
 
+## Convert And Map Workflow
+
+- The Data menu now includes `Convert and Map...`.
+- This converts an XML bill file to JSON, then maps the generated JSON to the open assembly template automatically.
+- The workflow reuses the existing conversion validation, including multi-Bill-ID confirmation and overwrite prompts.
+- If conversion succeeds but the generated JSON cannot be found, ATool reports the conversion output path instead of silently failing.
+
+## Preview Workflow And Package Menu
+
+- `Preview...` is now the final item in the Package menu, separated from package management commands by a divider.
+- When preview output is opened automatically, ATool no longer shows an extra completion popup first.
+- Preview still reports output paths when automatic opening is disabled or no output file is available to open.
+
+## macOS Window Readability
+
+- ATool now applies explicit light backgrounds and selection colors on macOS.
+- Main windows, managers, dialogs, popups, and tooltips use the same styled toplevel creation path.
+- Text boxes, list boxes, tree views, entries, and combo boxes are styled to avoid dark-mode readability issues.
+
 ## Comms-Style Size Conditions Now Map Correctly
 
 ATool now recognizes top-level `size` checks in document conditions, matching Comms behavior for expressions such as:
@@ -67,11 +84,11 @@ On startup, ATool now:
 3. Opens Clause Manager.
 4. Returns focus to the main window.
 
-The app menu is now attached to the main window, Field Manager, and Clause Manager so `File`, `Package`, `Data`, `Settings`, and `Window` remain available as focus moves between those windows.
+The app menu is attached to the main window, Field Manager, and Clause Manager so `File`, `Package`, `Data`, `Settings`, and `Window` remain available as focus moves between those windows.
 
 ## Release Package Notes
 
-Release zip artifacts now include a generated `NOTES.MD` file. The generated file includes:
+Release zip artifacts include a generated `NOTES.MD` file. The generated file includes:
 
 - artifact name
 - build source (`head` or `worktree`)

@@ -21,6 +21,10 @@ from xml.etree import ElementTree
 class AToolApp:
     DEFAULT_WIDTH = 1000
     DEFAULT_HEIGHT = 640
+    MACOS_PANEL_BACKGROUND = "#f0f0f0"
+    MACOS_CONTENT_BACKGROUND = "#ffffff"
+    MACOS_TEXT_FOREGROUND = "#1f1f1f"
+    MACOS_SELECTION_BACKGROUND = "#0a84ff"
     OCCS_SPECIFIC_VERSION_TIMEOUT_MS = 60000
     OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
     OCCS_CONVERT_XML_TIMEOUT_MS = 180000
@@ -166,6 +170,7 @@ class AToolApp:
         self._loaded_documents: list[dict[str, object]] = []
         self._loaded_fields: list[dict[str, object]] = []
 
+        self._configure_platform_appearance()
         self._create_menu()
         self._create_main_layout()
         self.documents_filter_var.trace_add("write", self._on_documents_filter_changed)
@@ -187,6 +192,57 @@ class AToolApp:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
+
+    def _configure_platform_appearance(self) -> None:
+        if not self._is_macos():
+            return
+
+        self._style_window_background(self.root)
+        style = ttk.Style(self.root)
+        panel_background = self.MACOS_PANEL_BACKGROUND
+        content_background = self.MACOS_CONTENT_BACKGROUND
+        foreground = self.MACOS_TEXT_FOREGROUND
+
+        self.root.option_add("*Text.background", content_background)
+        self.root.option_add("*Text.foreground", foreground)
+        self.root.option_add("*Text.insertBackground", foreground)
+        self.root.option_add("*Text.selectBackground", self.MACOS_SELECTION_BACKGROUND)
+        self.root.option_add("*Text.selectForeground", content_background)
+        self.root.option_add("*Text.highlightBackground", panel_background)
+        self.root.option_add("*Listbox.background", content_background)
+        self.root.option_add("*Listbox.foreground", foreground)
+        self.root.option_add("*Listbox.selectBackground", self.MACOS_SELECTION_BACKGROUND)
+        self.root.option_add("*Listbox.selectForeground", content_background)
+        self.root.option_add("*Listbox.highlightBackground", panel_background)
+
+        style.configure("TFrame", background=panel_background)
+        style.configure("TLabelframe", background=panel_background)
+        style.configure("TLabelframe.Label", background=panel_background)
+        style.configure("TLabel", background=panel_background)
+        style.configure("TCheckbutton", background=panel_background)
+        style.configure("TRadiobutton", background=panel_background)
+        style.configure("TPanedwindow", background=panel_background)
+        style.configure("TEntry", fieldbackground=content_background)
+        style.configure("TCombobox", fieldbackground=content_background)
+        style.configure("Treeview", background=content_background, fieldbackground=content_background, foreground=foreground)
+        style.map(
+            "Treeview",
+            background=[("selected", self.MACOS_SELECTION_BACKGROUND)],
+            foreground=[("selected", content_background)],
+        )
+
+    def _style_window_background(self, window: tk.Misc) -> None:
+        if not self._is_macos():
+            return
+        try:
+            window.configure(background=self.MACOS_PANEL_BACKGROUND)
+        except tk.TclError:
+            pass
+
+    def _create_toplevel(self, parent: tk.Misc | None = None) -> tk.Toplevel:
+        window = tk.Toplevel(parent if parent is not None else self.root)
+        self._style_window_background(window)
+        return window
 
     def _create_menu(self) -> None:
         self._attach_app_menu(self.root)
@@ -218,6 +274,10 @@ class AToolApp:
             label="Convert...",
             command=self.convert_xml_data_file,
         )
+        data_menu.add_command(
+            label="Convert and Map...",
+            command=self.convert_and_map_data_file,
+        )
 
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
@@ -242,10 +302,11 @@ class AToolApp:
             command=self.get_occs_package,
         )
         package_menu.add_separator()
-        package_menu.add_command(label="Preview...", command=self.preview_occs_package)
         package_menu.add_command(label="Update Shared Package", command=self.update_shared_occs_package)
         package_menu.add_command(label="Publish Package to Comms...", command=self.publish_occs_package_to_comms)
         package_menu.add_command(label="Release Shared Package Lock", command=self.release_shared_occs_lock)
+        package_menu.add_separator()
+        package_menu.add_command(label="Preview...", command=self.preview_occs_package)
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
@@ -1037,7 +1098,7 @@ class AToolApp:
     def _create_fields_window(self) -> None:
         if self.fields_window is not None and self.fields_window.winfo_exists():
             return
-        self.fields_window = tk.Toplevel(self.root)
+        self.fields_window = self._create_toplevel(self.root)
         self.fields_window.title("ATool - Field Manager")
         self.fields_window.minsize(480, 360)
         self._attach_app_menu(self.fields_window)
@@ -1145,7 +1206,7 @@ class AToolApp:
     def _create_condition_library_window(self) -> None:
         if self.condition_library_window is not None and self.condition_library_window.winfo_exists():
             return
-        self.condition_library_window = tk.Toplevel(self.root)
+        self.condition_library_window = self._create_toplevel(self.root)
         self.condition_library_window.title("ATool - Clause Manager")
         self.condition_library_window.minsize(560, 420)
         self._attach_app_menu(self.condition_library_window)
@@ -1708,7 +1769,7 @@ class AToolApp:
 
     def _create_clause_trigger_update_window(self, clause_name: str) -> None:
         parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
-        window = tk.Toplevel(parent)
+        window = self._create_toplevel(parent)
         window.title("ATool - Update Document Triggers")
         window.minsize(760, 520)
         window.protocol("WM_DELETE_WINDOW", self._close_clause_trigger_update_window)
@@ -2306,7 +2367,7 @@ class AToolApp:
 
     def _create_condition_usage_window(self, title: str, summary: str) -> None:
         parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
-        window = tk.Toplevel(parent)
+        window = self._create_toplevel(parent)
         window.title(f"ATool - {title}")
         window.minsize(820, 520)
         window.protocol("WM_DELETE_WINDOW", self._close_condition_usage_window)
@@ -3207,7 +3268,7 @@ class AToolApp:
         if self.compose_autocomplete_popup is not None and self.compose_autocomplete_popup.winfo_exists():
             return True
         parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
-        popup = tk.Toplevel(parent)
+        popup = self._create_toplevel(parent)
         popup.withdraw()
         popup.overrideredirect(True)
         popup.transient(parent)
@@ -3899,7 +3960,7 @@ class AToolApp:
 
     def _show_tooltip(self, event: tk.Event, text: str) -> None:
         self._hide_tooltip()
-        tip = tk.Toplevel(self.root)
+        tip = self._create_toplevel(self.root)
         tip.wm_overrideredirect(True)
         tip.attributes("-topmost", True)
         label = tk.Label(
@@ -3991,7 +4052,7 @@ class AToolApp:
             self.layout_condition_tool_button.config(state=condition_state)
 
     def _open_user_settings_dialog(self) -> None:
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("User Settings")
         dialog.transient(self.root)
         dialog.resizable(False, False)
@@ -5110,7 +5171,7 @@ class AToolApp:
         preview = json.dumps(payload, indent=2, ensure_ascii=False)
         summary = "\n".join(report_lines) if report_lines else "No warnings."
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title(f"Sample Input - {document_name}")
         dialog.transient(self.root)
         dialog.geometry("860x640")
@@ -6530,7 +6591,7 @@ class AToolApp:
         if not self._prompt_save_if_dirty():
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("Get Package from Comms")
         dialog.transient(self.root)
         dialog.resizable(False, False)
@@ -6722,7 +6783,7 @@ class AToolApp:
         work_dir: Path,
         entries: list[dict[str, object]],
     ) -> None:
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("Clean Local Packages")
         dialog.transient(self.root)
         dialog.resizable(True, True)
@@ -7036,7 +7097,7 @@ class AToolApp:
         data_file_text = self.current_data_file_path or ""
         mapped_data_file = bool(data_file_text)
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("Preview Package")
         dialog.transient(self.root)
         dialog.resizable(False, False)
@@ -7484,7 +7545,7 @@ class AToolApp:
         title: str = "Open Package",
         on_select: object | None = None,
     ) -> None:
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title(title)
         dialog.transient(self.root)
         dialog.resizable(True, True)
@@ -7939,7 +8000,7 @@ class AToolApp:
             messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("Publish Package to Comms")
         dialog.transient(self.root)
         dialog.resizable(False, False)
@@ -8958,7 +9019,7 @@ class AToolApp:
             return
 
         packages = self._sort_occs_packages(packages)
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_toplevel(self.root)
         dialog.title("List Packages from Comms")
         dialog.transient(self.root)
         dialog.resizable(True, True)
@@ -9179,7 +9240,7 @@ class AToolApp:
                 on_status(f"Selected exact package match: {short_name}")
             return
 
-        dialog = tk.Toplevel(parent)
+        dialog = self._create_toplevel(parent)
         dialog.title("Search Packages")
         dialog.transient(parent)
         dialog.resizable(True, True)
@@ -9440,10 +9501,10 @@ class AToolApp:
             )
         else:
             output_text = stdout or ", ".join(render_types)
-        messagebox.showinfo("Preview Package", f"Preview complete.\n\nOutput:\n{output_text}")
         self._show_temporary_status("Package preview complete", duration_ms=5000)
 
         if not open_after_generation or not outputs:
+            messagebox.showinfo("Preview Package", f"Preview complete.\n\nOutput:\n{output_text}")
             return
         open_errors: list[str] = []
         for output in outputs:
@@ -9600,13 +9661,26 @@ class AToolApp:
             return ""
         return str(version_info.get("shortName") or "").strip()
 
-    def convert_xml_data_file(self) -> None:
+    def convert_and_map_data_file(self) -> None:
+        if self.current_payload is None:
+            messagebox.showinfo("Map", "Open an assembly template first.")
+            return
+        if self._mapping_in_progress:
+            messagebox.showinfo("Map", "A mapping run is already in progress.")
+            return
+        if self._mapping_dialog_in_progress:
+            return
+        self.convert_xml_data_file(map_after_generation=True)
+
+    def convert_xml_data_file(self, *, map_after_generation: bool = False) -> None:
+        dialog_title = "Convert and Map" if map_after_generation else "Convert XML"
+        submit_label = "Convert and Map" if map_after_generation else "Convert"
         if self._occs_operation_in_progress:
-            messagebox.showinfo("Convert", "An OCCS operation is already in progress.")
+            messagebox.showinfo(dialog_title, "An OCCS operation is already in progress.")
             return
 
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Convert XML")
+        dialog = self._create_toplevel(self.root)
+        dialog.title(dialog_title)
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -9691,12 +9765,12 @@ class AToolApp:
                 bill_id = ""
 
             if not xml_file_text:
-                messagebox.showerror("Convert XML", "XML file is required.", parent=dialog)
+                messagebox.showerror(dialog_title, "XML file is required.", parent=dialog)
                 return
             xml_path = Path(os.path.expanduser(xml_file_text))
             if not xml_path.exists() or not xml_path.is_file():
                 messagebox.showerror(
-                    "Convert XML",
+                    dialog_title,
                     f"XML file not found:\n{xml_path}",
                     parent=dialog,
                 )
@@ -9707,7 +9781,7 @@ class AToolApp:
                 if len(bill_id_values) > 8:
                     preview_values = f"{preview_values}, ..."
                 if not messagebox.askokcancel(
-                    "Convert XML",
+                    dialog_title,
                     f"File contains multiple Bill IDs ({len(bill_id_values)}):\n{preview_values}\n\nConvert all?",
                     parent=dialog,
                 ):
@@ -9715,7 +9789,7 @@ class AToolApp:
 
             output_path = self._build_convert_xml_output_path(xml_path)
             if output_path.exists() and not messagebox.askyesno(
-                "Convert XML",
+                dialog_title,
                 f"Output file already exists:\n{output_path}\n\nOverwrite it?",
                 parent=dialog,
             ):
@@ -9743,11 +9817,12 @@ class AToolApp:
                 lambda result, selected_output_path=output_path: self._on_convert_xml_complete(
                     result,
                     selected_output_path,
+                    map_after_generation=map_after_generation,
                 ),
-                on_failure=lambda error: messagebox.showerror("Convert XML", str(error)),
+                on_failure=lambda error: messagebox.showerror(dialog_title, str(error)),
             )
 
-        ttk.Button(buttons, text="Convert", command=_submit).grid(row=0, column=1)
+        ttk.Button(buttons, text=submit_label, command=_submit).grid(row=0, column=1)
 
         xml_file_entry.focus_set()
         dialog.update_idletasks()
@@ -9782,14 +9857,79 @@ class AToolApp:
             return text.rsplit("}", 1)[1]
         return text
 
-    def _on_convert_xml_complete(self, result: dict[str, object], output_path: Path) -> None:
+    def _on_convert_xml_complete(
+        self,
+        result: dict[str, object],
+        output_path: Path,
+        *,
+        map_after_generation: bool = False,
+    ) -> None:
         stdout = str(result.get("stdout", "")).strip()
         converted_paths = self._converted_json_paths_from_stdout(stdout)
         if not converted_paths and output_path.exists():
             converted_paths = [str(output_path)]
         output_text = "\n".join(converted_paths) if converted_paths else str(output_path.parent)
+        if map_after_generation:
+            self._map_converted_json_output(converted_paths, output_path, output_text)
+            return
         messagebox.showinfo("Convert XML", f"XML conversion complete.\n\nOutput:\n{output_text}")
         self._show_temporary_status("XML conversion complete", duration_ms=5000)
+
+    def _map_converted_json_output(
+        self,
+        converted_paths: list[str],
+        output_path: Path,
+        output_text: str,
+    ) -> None:
+        if self.current_payload is None:
+            messagebox.showerror(
+                "Convert and Map",
+                "XML conversion completed, but no assembly template is open for mapping.",
+            )
+            return
+        if self._mapping_in_progress:
+            messagebox.showerror(
+                "Convert and Map",
+                "XML conversion completed, but a mapping run is already in progress.",
+            )
+            return
+        if self._mapping_dialog_in_progress:
+            messagebox.showerror(
+                "Convert and Map",
+                "XML conversion completed, but a mapping file dialog is already open.",
+            )
+            return
+
+        data_file_path = self._first_existing_converted_json_path(converted_paths, output_path)
+        if data_file_path is None:
+            messagebox.showerror(
+                "Convert and Map",
+                "XML conversion completed, but the generated JSON file could not be found for mapping.\n\n"
+                f"Output:\n{output_text}",
+            )
+            return
+
+        self._show_temporary_status(f"XML conversion complete; mapping {data_file_path.name}", duration_ms=5000)
+        self._map_data_file_path(str(data_file_path))
+
+    @staticmethod
+    def _first_existing_converted_json_path(converted_paths: list[str], output_path: Path) -> Path | None:
+        candidates: list[Path] = []
+        for path_text in converted_paths:
+            candidate = Path(os.path.expanduser(str(path_text).strip()))
+            if not candidate.is_absolute():
+                candidate = output_path.parent / candidate
+            candidates.append(candidate)
+        candidates.append(output_path)
+
+        seen: set[Path] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        return None
 
     @staticmethod
     def _converted_json_paths_from_stdout(stdout: str) -> list[str]:
@@ -9847,6 +9987,9 @@ class AToolApp:
             self._update_mapping_controls()
             return
 
+        self._map_data_file_path(data_file_path)
+
+    def _map_data_file_path(self, data_file_path: str) -> None:
         self.current_data_file_path = data_file_path
         self._update_app_state({"last_data_file": data_file_path})
         self._apply_mapping_async(data_file_path=data_file_path)
@@ -10188,7 +10331,7 @@ class AToolApp:
         self._mapping_in_progress = False
         self.mapping_status_text.set("Mapping: Idle")
         self.current_data_payload = data_payload
-        self._show_triggered_documents_only = False
+        self._show_triggered_documents_only = True
 
         for index, mapped_values in mapped_values_by_index.items():
             if 0 <= index < len(self._loaded_fields):
