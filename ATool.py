@@ -111,6 +111,8 @@ class AToolApp:
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
         self._mapping_in_progress = False
+        self._mapping_dialog_in_progress = False
+        self._show_triggered_documents_only = False
         self._mapping_job_id = 0
         self.is_dirty = False
         self._updating_field_form = False
@@ -172,9 +174,28 @@ class AToolApp:
         self._bind_shortcuts()
         self.root.bind("<Configure>", self._on_window_configure)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(0, self._open_startup_windows)
+
+    def _open_startup_windows(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self._show_fields_window()
+        self._show_condition_library_window()
+        self.root.after(200, self._focus_main_window)
+
+    def _focus_main_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
 
     def _create_menu(self) -> None:
-        menu_bar = tk.Menu(self.root)
+        self._attach_app_menu(self.root)
+
+    def _attach_app_menu(self, window: tk.Misc) -> None:
+        window.config(menu=self._build_app_menu(window))
+
+    def _build_app_menu(self, window: tk.Misc) -> tk.Menu:
+        menu_bar = tk.Menu(window)
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
         save_accelerator = "Cmd+S" if self._is_macos() else "Alt+S"
@@ -235,7 +256,7 @@ class AToolApp:
         menu_bar.add_cascade(label="Data", menu=data_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
         menu_bar.add_cascade(label="Window", menu=window_menu)
-        self.root.config(menu=menu_bar)
+        return menu_bar
 
     def _create_main_layout(self) -> None:
         frame = ttk.Frame(self.root, padding=16)
@@ -343,6 +364,16 @@ class AToolApp:
         )
         self._attach_tooltip(self.clear_mapping_button, "Map a data file or clear the current map.")
 
+        self.document_mapping_filter_button = ttk.Button(
+            controls,
+            text="Show Triggered",
+            command=self._toggle_triggered_document_filter,
+        )
+        self._attach_tooltip(
+            self.document_mapping_filter_button,
+            "Toggle between all mapped documents and triggered documents only.",
+        )
+
         self.add_layout_button = ttk.Button(
             controls,
             text="+Layout",
@@ -376,6 +407,7 @@ class AToolApp:
         self._document_toolbar_buttons = [
             self.documents_view_toggle_button,
             self.clear_mapping_button,
+            self.document_mapping_filter_button,
             self.add_layout_button,
             self.move_document_up_button,
             self.move_document_down_button,
@@ -399,7 +431,8 @@ class AToolApp:
 
         tree = ttk.Treeview(panel, show="tree")
         tree.grid(row=3, column=0, sticky="nsew")
-        tree.tag_configure("triggered_doc", foreground="darkgreen")
+        tree.tag_configure("triggered_doc", foreground="blue")
+        tree.tag_configure("untriggered_doc", foreground="red")
 
         scrollbar = ttk.Scrollbar(panel, orient=tk.VERTICAL, command=tree.yview)
         scrollbar.grid(row=3, column=1, sticky="ns")
@@ -822,6 +855,20 @@ class AToolApp:
         children_value.grid(row=5, column=0, sticky="w")
         self._document_details_wrapped_labels.append(children_value)
 
+        match_details_title = ttk.Label(meta_frame, text="Match Details:")
+        match_details_title.grid(row=6, column=0, sticky="w", pady=(8, 0))
+        match_details_frame = ttk.Frame(meta_frame)
+        match_details_frame.grid(row=7, column=0, sticky="nsew", pady=(2, 0))
+        match_details_frame.columnconfigure(0, weight=1)
+        match_details_frame.rowconfigure(0, weight=1)
+        meta_frame.rowconfigure(7, weight=1)
+        match_details_value = tk.Text(match_details_frame, height=6, wrap="word", undo=False)
+        match_details_value.grid(row=0, column=0, sticky="nsew")
+        match_details_scroll = ttk.Scrollbar(match_details_frame, orient=tk.VERTICAL, command=match_details_value.yview)
+        match_details_scroll.grid(row=0, column=1, sticky="ns")
+        match_details_value.configure(yscrollcommand=match_details_scroll.set, state=tk.DISABLED)
+        self.document_match_details_widget = match_details_value
+
         details_pane.add(editor_frame, weight=3)
         details_pane.add(meta_frame, weight=1)
 
@@ -993,6 +1040,7 @@ class AToolApp:
         self.fields_window = tk.Toplevel(self.root)
         self.fields_window.title("ATool - Field Manager")
         self.fields_window.minsize(480, 360)
+        self._attach_app_menu(self.fields_window)
         self.fields_window.protocol("WM_DELETE_WINDOW", self._hide_fields_window)
         self.fields_window.bind("<Configure>", self._on_fields_window_configure)
 
@@ -1100,6 +1148,7 @@ class AToolApp:
         self.condition_library_window = tk.Toplevel(self.root)
         self.condition_library_window.title("ATool - Clause Manager")
         self.condition_library_window.minsize(560, 420)
+        self._attach_app_menu(self.condition_library_window)
         self.condition_library_window.protocol("WM_DELETE_WINDOW", self._hide_condition_library_window)
         self.condition_library_window.bind("<Configure>", self._on_condition_library_window_configure)
 
@@ -1962,16 +2011,7 @@ class AToolApp:
         self._sync_document_to_payload(document)
 
         if self.current_data_payload is not None:
-            document_name = str(document.get("name", ""))
-            try:
-                triggered = self._evaluate_document_condition(new_condition, self.current_data_payload)
-                document["triggered"] = triggered
-                if triggered:
-                    self._triggered_document_names.add(document_name)
-                else:
-                    self._triggered_document_names.discard(document_name)
-            except Exception as error:  # pragma: no cover - defensive UI safety
-                self._debug_log(f"Could not re-evaluate updated document trigger '{document_name}': {error}")
+            self._refresh_document_condition_mapping(document)
 
         self._set_dirty(True)
         source = document.get("source")
@@ -3807,6 +3847,12 @@ class AToolApp:
             return
 
         buttons = list(self._document_toolbar_buttons)
+        if self.current_data_payload is None and hasattr(self, "document_mapping_filter_button"):
+            buttons = [
+                button
+                for button in buttons
+                if button is not self.document_mapping_filter_button
+            ]
         if self.document_view_mode != "flat":
             buttons = [
                 button
@@ -3881,6 +3927,10 @@ class AToolApp:
 
     def _update_mapping_controls(self) -> None:
         if hasattr(self, "clear_mapping_button"):
+            if self._mapping_dialog_in_progress:
+                self.clear_mapping_button.config(text="Opening...", command=self.map_data_file, state=tk.DISABLED)
+                self._relayout_documents_controls()
+                return
             has_mapped_file = self.current_data_file_path is not None
             text = "Clear Map" if has_mapped_file else "Map"
             command = self.clear_mapping if has_mapped_file else self._toggle_mapping_file
@@ -3888,6 +3938,17 @@ class AToolApp:
             state = tk.NORMAL if enabled else tk.DISABLED
             self.clear_mapping_button.config(text=text, command=command, state=state)
             self._relayout_documents_controls()
+        if hasattr(self, "document_mapping_filter_button"):
+            label = "Show All" if self._show_triggered_documents_only else "Show Triggered"
+            self.document_mapping_filter_button.config(text=label, state=tk.NORMAL)
+            self._relayout_documents_controls()
+
+    def _toggle_triggered_document_filter(self) -> None:
+        if self.current_data_payload is None:
+            return
+        self._show_triggered_documents_only = not self._show_triggered_documents_only
+        self._update_mapping_controls()
+        self._render_documents_tree()
 
     def _update_document_context_buttons(self) -> None:
         selected_doc = self._get_selected_document_ref()
@@ -5909,6 +5970,7 @@ class AToolApp:
             if len(warning_lines) > 5:
                 trigger_text += f"\n- ... and {len(warning_lines) - 5} more"
         self.document_triggered_text.set(trigger_text)
+        self._set_document_match_details(self._format_document_match_details(document))
         updated = str(document.get("updated", "")).strip()
         self.document_updated_text.set(updated if updated else "-")
         descr = str(document.get("descr", "")).strip()
@@ -5925,11 +5987,27 @@ class AToolApp:
         self.document_triggered_text.set("-")
         self.edit_document_name_var.set("")
         self._set_text_widget_value(self.document_condition_widget, "")
+        self._set_document_match_details("")
         self.document_descr_edit_text.set("")
         self.document_updated_text.set("-")
         self.document_parent_text.set("-")
         self.document_children_text.set("-")
         self._updating_document_form = False
+
+    def _format_document_match_details(self, document: dict[str, object]) -> str:
+        if self.current_data_payload is None:
+            return "(map a data file to see match diagnostics)"
+        breakdown = document.get("condition_breakdown")
+        if isinstance(breakdown, list) and breakdown:
+            return "\n".join(str(line) for line in breakdown)
+        if bool(document.get("triggered")):
+            return "PASS Document condition matched."
+        return "No match diagnostics recorded."
+
+    def _set_document_match_details(self, value: str) -> None:
+        widget = getattr(self, "document_match_details_widget", None)
+        if isinstance(widget, tk.Text):
+            self._set_readonly_text_widget_value(widget, str(value or ""))
 
     def _on_document_name_commit(self, _event: tk.Event | None = None) -> None:
         self._apply_document_form_change(name=self.edit_document_name_var.get())
@@ -9694,6 +9772,8 @@ class AToolApp:
         if self._mapping_in_progress:
             messagebox.showinfo("Map", "A mapping run is already in progress.")
             return
+        if self._mapping_dialog_in_progress:
+            return
 
         initial_dir = ""
         initial_file = ""
@@ -9707,16 +9787,29 @@ class AToolApp:
                 initial_dir = os.path.dirname(previous_data_file)
                 initial_file = os.path.basename(previous_data_file)
 
-        data_file_path = filedialog.askopenfilename(
-            title="Open Data File",
-            filetypes=[
-                ("JSON Files", "*.json"),
-                ("All Files", "*.*"),
-            ],
-            initialdir=initial_dir or None,
-            initialfile=initial_file or None,
-        )
+        self._mapping_dialog_in_progress = True
+        self.mapping_status_text.set("Mapping: Opening file dialog")
+        self._update_mapping_controls()
+        self.root.update_idletasks()
+        self.root.after(25, lambda: self._open_data_file_dialog(initial_dir, initial_file))
+
+    def _open_data_file_dialog(self, initial_dir: str, initial_file: str) -> None:
+        data_file_path = ""
+        try:
+            data_file_path = filedialog.askopenfilename(
+                title="Open Data File",
+                filetypes=[
+                    ("JSON Files", "*.json"),
+                    ("All Files", "*.*"),
+                ],
+                initialdir=initial_dir or None,
+                initialfile=initial_file or None,
+            )
+        finally:
+            self._mapping_dialog_in_progress = False
         if not data_file_path:
+            self.mapping_status_text.set("Mapping: Idle")
+            self._update_mapping_controls()
             return
 
         self.current_data_file_path = data_file_path
@@ -9734,15 +9827,19 @@ class AToolApp:
         self._mapping_in_progress = False
         self.current_data_payload = None
         self.current_data_file_path = None
+        self._show_triggered_documents_only = False
         self._triggered_document_names = set()
         self.data_status_text.set("Data: (none)")
         self.mapping_status_text.set("Mapping: Idle")
         for field in self._loaded_fields:
             field.pop("mapped_values", None)
         for document in self._loaded_documents:
+            document.pop("triggered", None)
             document.pop("condition_warnings", None)
+            document.pop("condition_breakdown", None)
         self._render_documents_tree()
         self._render_fields_tree()
+        self.document_count_text.set(f"Documents: {len(self._loaded_documents)}")
         if self._active_layout_node_id:
             details = self._layout_node_details.get(self._active_layout_node_id)
             if isinstance(details, dict):
@@ -9898,6 +9995,7 @@ class AToolApp:
         self._mapping_in_progress = False
         self.current_data_payload = None
         self.current_data_file_path = None
+        self._show_triggered_documents_only = False
         self._triggered_document_names = set()
         documents = self._extract_documents(payload)
         fields = self._extract_fields(payload)
@@ -9975,6 +10073,7 @@ class AToolApp:
             str(document.get("condition", ""))
             for document in self._loaded_documents
         ]
+        condition_library_entries = copy.deepcopy(self._condition_library_entries)
 
         def _worker() -> None:
             try:
@@ -9991,15 +10090,26 @@ class AToolApp:
 
                 triggered_docs_by_index: dict[int, bool] = {}
                 condition_warnings_by_index: dict[int, list[str]] = {}
+                condition_breakdowns_by_index: dict[int, list[str]] = {}
                 for index, condition in enumerate(doc_conditions):
                     condition_warnings: list[str] = []
-                    triggered_docs_by_index[index] = self._evaluate_document_condition(
+                    is_triggered = self._evaluate_document_condition(
                         condition,
                         data_payload,
                         warnings=condition_warnings,
                     )
+                    triggered_docs_by_index[index] = is_triggered
                     if condition_warnings:
                         condition_warnings_by_index[index] = condition_warnings
+                    if is_triggered:
+                        condition_breakdowns_by_index[index] = ["PASS Document condition matched."]
+                    else:
+                        condition_breakdowns_by_index[index] = self._build_document_condition_breakdown(
+                            condition,
+                            data_payload,
+                            is_triggered=is_triggered,
+                            entries=condition_library_entries,
+                        )
                     if index and index % 250 == 0:
                         self._debug_log(f"Document condition progress: {index}/{len(doc_conditions)}")
 
@@ -10012,6 +10122,7 @@ class AToolApp:
                         mapped_values_by_index,
                         triggered_docs_by_index,
                         condition_warnings_by_index,
+                        condition_breakdowns_by_index,
                         selected_field,
                         duration,
                     ),
@@ -10033,6 +10144,7 @@ class AToolApp:
         mapped_values_by_index: dict[int, list[object]],
         triggered_docs_by_index: dict[int, bool],
         condition_warnings_by_index: dict[int, list[str]],
+        condition_breakdowns_by_index: dict[int, list[str]],
         selected_field: dict[str, object] | None,
         duration_seconds: float,
     ) -> None:
@@ -10041,6 +10153,7 @@ class AToolApp:
         self._mapping_in_progress = False
         self.mapping_status_text.set("Mapping: Idle")
         self.current_data_payload = data_payload
+        self._show_triggered_documents_only = False
 
         for index, mapped_values in mapped_values_by_index.items():
             if 0 <= index < len(self._loaded_fields):
@@ -10058,11 +10171,17 @@ class AToolApp:
                     warning_docs += 1
                 else:
                     document.pop("condition_warnings", None)
+                breakdown = condition_breakdowns_by_index.get(index, [])
+                if breakdown:
+                    document["condition_breakdown"] = breakdown
+                else:
+                    document.pop("condition_breakdown", None)
                 if is_triggered:
                     triggered_docs.add(str(document["name"]))
         self._triggered_document_names = triggered_docs
         data_file_name = os.path.basename(self.current_data_file_path or "")
         self.data_status_text.set(f"Data: {data_file_name}" if data_file_name else "Data: (none)")
+        self.document_count_text.set(f"Documents: {len(self._loaded_documents)} ({len(triggered_docs)} matched)")
         self._render_documents_tree()
         self._render_fields_tree(selected_field=selected_field)
         if self._active_layout_node_id:
@@ -10075,6 +10194,49 @@ class AToolApp:
             f"triggered_docs={len(triggered_docs)} "
             f"warning_docs={warning_docs} "
             f"elapsed={duration_seconds:.3f}s"
+        )
+
+    def _refresh_document_condition_mapping(self, document: dict[str, object]) -> None:
+        if self.current_data_payload is None:
+            return
+
+        document_name = str(document.get("name", ""))
+        condition = str(document.get("condition", ""))
+        warnings: list[str] = []
+        try:
+            is_triggered = self._evaluate_document_condition(
+                condition,
+                self.current_data_payload,
+                warnings=warnings,
+            )
+        except Exception as error:  # pragma: no cover - defensive UI safety
+            self._debug_log(f"Could not re-evaluate document trigger '{document_name}': {error}")
+            document["triggered"] = False
+            document["condition_warnings"] = [f"Could not evaluate condition: {error}"]
+            document["condition_breakdown"] = [f"FAIL Could not evaluate document condition: {error}"]
+            self._triggered_document_names.discard(document_name)
+            self.document_count_text.set(
+                f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
+            )
+            return
+
+        document["triggered"] = is_triggered
+        if warnings:
+            document["condition_warnings"] = warnings
+        else:
+            document.pop("condition_warnings", None)
+        if is_triggered:
+            document["condition_breakdown"] = ["PASS Document condition matched."]
+            self._triggered_document_names.add(document_name)
+        else:
+            document["condition_breakdown"] = self._build_document_condition_breakdown(
+                condition,
+                self.current_data_payload,
+                is_triggered=is_triggered,
+            )
+            self._triggered_document_names.discard(document_name)
+        self.document_count_text.set(
+            f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
         )
 
     def _on_mapping_failed(self, mapping_job_id: int, error: Exception, stack: str) -> None:
@@ -10254,6 +10416,8 @@ class AToolApp:
             empty_message = "No documents found"
             if self.documents_filter_var.get().strip():
                 empty_message = "No matching documents"
+            elif self.current_data_payload is not None and self._show_triggered_documents_only:
+                empty_message = "No triggered documents"
             self._set_empty_documents_tree(empty_message)
             return
 
@@ -10263,7 +10427,7 @@ class AToolApp:
 
         for document in documents:
             doc_name = str(document["name"])
-            tags: tuple[str, ...] = ("triggered_doc",) if doc_name in self._triggered_document_names else ()
+            tags = self._document_mapping_tags(document)
             node_id = self.documents_tree.insert("", "end", text=doc_name)
             if tags:
                 self.documents_tree.item(node_id, tags=tags)
@@ -10278,9 +10442,19 @@ class AToolApp:
                 "condition_warnings": list(document.get("condition_warnings", []))
                 if isinstance(document.get("condition_warnings"), list)
                 else [],
+                "condition_breakdown": list(document.get("condition_breakdown", []))
+                if isinstance(document.get("condition_breakdown"), list)
+                else [],
                 "path_index": str(document.get("path_index", "")),
                 "document_ref": document,
             }
+
+    def _document_mapping_tags(self, document: dict[str, object]) -> tuple[str, ...]:
+        if self.current_data_payload is None:
+            return ()
+        if bool(document.get("triggered")):
+            return ("triggered_doc",)
+        return ("untriggered_doc",)
 
     def _set_empty_documents_tree(self, message: str) -> None:
         self.documents_tree.delete(*self.documents_tree.get_children())
@@ -10313,10 +10487,11 @@ class AToolApp:
         doc_lookup: dict[str, dict[str, object]] | None = None,
     ) -> None:
         node_id = self.documents_tree.insert(parent_node, "end", text=doc_name)
-        if doc_name in self._triggered_document_names:
-            self.documents_tree.item(node_id, tags=("triggered_doc",))
         child_docs = children.get(doc_name, [])
         document = doc_lookup.get(doc_name, {}) if doc_lookup else {}
+        tags = self._document_mapping_tags(document)
+        if tags:
+            self.documents_tree.item(node_id, tags=tags)
         self._document_node_details[node_id] = {
             "name": doc_name,
             "parent": parent_name,
@@ -10327,6 +10502,9 @@ class AToolApp:
             "condition": str(document.get("condition", "")),
             "condition_warnings": list(document.get("condition_warnings", []))
             if isinstance(document.get("condition_warnings"), list)
+            else [],
+            "condition_breakdown": list(document.get("condition_breakdown", []))
+            if isinstance(document.get("condition_breakdown"), list)
             else [],
             "path_index": str(document.get("path_index", "")),
             "document_ref": document,
@@ -10345,11 +10523,11 @@ class AToolApp:
 
     def _get_filtered_documents(self) -> list[dict[str, object]]:
         base_documents = self._loaded_documents
-        if self.current_data_payload is not None:
+        if self.current_data_payload is not None and self._show_triggered_documents_only:
             base_documents = [
                 document
                 for document in base_documents
-                if str(document.get("name", "")) in self._triggered_document_names
+                if bool(document.get("triggered"))
             ]
 
         query = self.documents_filter_var.get().strip()
@@ -10901,6 +11079,310 @@ class AToolApp:
         if len(mapped_values) > 5:
             return f"{preview_json} (+{len(mapped_values) - 5} more)"
         return preview_json
+
+    def _build_document_condition_breakdown(
+        self,
+        condition: str,
+        data_payload: object,
+        *,
+        is_triggered: bool | None = None,
+        entries: list[dict[str, str]] | None = None,
+    ) -> list[str]:
+        condition_body = self._extract_condition_body(condition)
+        if not condition_body:
+            return ["PASS No condition; document always matches."]
+
+        triggered = (
+            is_triggered
+            if is_triggered is not None
+            else self._evaluate_condition_expression(condition_body, data_payload)
+        )
+        lines = [
+            f"Overall: {self._condition_status_text(triggered)}",
+        ]
+        library_entries = entries if entries is not None else self._condition_library_entries
+        parse_error = ""
+
+        try:
+            compose_text, _exact, unmatched_count = self._compose_expression_from_raw_condition_with_entries(
+                condition,
+                library_entries,
+            )
+            if compose_text:
+                parsed_tree = self._parse_composed_condition_tree(compose_text)
+                _passed, leaf_results = self._collect_condition_leaf_results(
+                    parsed_tree,
+                    data_payload,
+                    library_entries,
+                )
+                lines.extend(self._format_condition_leaf_summary(parsed_tree, leaf_results))
+                if unmatched_count:
+                    suffix = "s" if unmatched_count != 1 else ""
+                    lines.append(f"INFO {unmatched_count} raw fragment{suffix} did not match a saved clause.")
+                return self._limit_condition_breakdown_lines(lines)
+        except ValueError as error:
+            parse_error = str(error)
+
+        if parse_error:
+            lines.append(f"INFO Clause breakdown unavailable: {parse_error}")
+        raw_leaf_results = self._collect_raw_condition_leaf_results(condition_body, data_payload)
+        lines.extend(self._format_condition_leaf_summary(("RAW", condition_body), raw_leaf_results))
+        return self._limit_condition_breakdown_lines(lines)
+
+    @staticmethod
+    def _condition_status_text(passed: bool) -> str:
+        return "PASS" if passed else "FAIL"
+
+    def _parse_composed_condition_tree(self, compose_text: str) -> tuple[str, object]:
+        tokens = self._tokenize_clause_expression(compose_text)
+        if not tokens:
+            raise ValueError("Composed expression is empty.")
+        position = 0
+
+        def parse_or() -> tuple[str, object]:
+            nonlocal position
+            parts: list[tuple[str, object]] = [parse_and()]
+            while position < len(tokens) and tokens[position][0] == "OR":
+                position += 1
+                parts.append(parse_and())
+            if len(parts) == 1:
+                return parts[0]
+            return ("OR", parts)
+
+        def parse_and() -> tuple[str, object]:
+            nonlocal position
+            parts: list[tuple[str, object]] = [parse_term()]
+            while position < len(tokens) and tokens[position][0] == "AND":
+                position += 1
+                parts.append(parse_term())
+            if len(parts) == 1:
+                return parts[0]
+            return ("AND", parts)
+
+        def parse_term() -> tuple[str, object]:
+            nonlocal position
+            if position >= len(tokens):
+                raise ValueError("Unexpected end of expression.")
+            token_type, token_value = tokens[position]
+            if token_type == "LPAREN":
+                position += 1
+                inner = parse_or()
+                if position >= len(tokens) or tokens[position][0] != "RPAREN":
+                    raise ValueError("Missing closing parenthesis in composed expression.")
+                position += 1
+                return inner
+            if token_type == "RAW":
+                position += 1
+                return ("RAW", token_value)
+            if token_type == "NAME":
+                position += 1
+                return ("NAME", token_value)
+            raise ValueError(f"Unexpected token '{token_value}'.")
+
+        parsed_tree = parse_or()
+        if position != len(tokens):
+            raise ValueError("Unexpected trailing tokens in composed expression.")
+        return parsed_tree
+
+    def _collect_condition_leaf_results(
+        self,
+        node: tuple[str, object],
+        data_payload: object,
+        entries: list[dict[str, str]],
+    ) -> tuple[bool, list[dict[str, object]]]:
+        kind, value = node
+        if kind in {"AND", "OR"}:
+            assert isinstance(value, list)
+            child_results = [
+                self._collect_condition_leaf_results(child, data_payload, entries)
+                for child in value
+            ]
+            passed = all(result for result, _leaves in child_results) if kind == "AND" else any(
+                result for result, _leaves in child_results
+            )
+            leaves: list[dict[str, object]] = []
+            for _result, child_leaves in child_results:
+                leaves.extend(child_leaves)
+            return passed, leaves
+
+        if kind == "NAME":
+            clause_name = str(value)
+            try:
+                clause_expression = self._resolve_clause_expression_by_name_from_entries(entries, clause_name)
+            except ValueError as error:
+                return False, [
+                    {
+                        "label": clause_name,
+                        "passed": False,
+                        "details": [f"Reason: {error}"],
+                    }
+                ]
+            return self._collect_condition_leaf_result(clause_name, clause_expression, data_payload)
+
+        if kind == "RAW":
+            return self._collect_condition_leaf_result("RAW condition", str(value), data_payload)
+
+        return False, [
+            {
+                "label": f"Unknown condition node: {kind}",
+                "passed": False,
+                "details": [],
+            }
+        ]
+
+    def _collect_raw_condition_leaf_results(
+        self,
+        expression: str,
+        data_payload: object,
+    ) -> list[dict[str, object]]:
+        _passed, leaves = self._collect_condition_leaf_result("RAW condition", expression, data_payload)
+        return leaves
+
+    def _collect_condition_leaf_result(
+        self,
+        label: str,
+        expression: str,
+        data_payload: object,
+    ) -> tuple[bool, list[dict[str, object]]]:
+        body = self._extract_condition_body(expression).strip()
+        if not body:
+            return True, [{"label": label, "passed": True, "details": ["No condition; always matches."]}]
+
+        try:
+            passed = self._evaluate_condition_expression(body, data_payload)
+        except Exception as error:  # pragma: no cover - defensive diagnostic guard
+            return False, [{"label": label, "passed": False, "details": [f"Reason: could not evaluate ({error})"]}]
+
+        atomic_clauses = self._collect_atomic_condition_clauses(body)
+        failing_details: list[str] = []
+        fallback_details: list[str] = []
+        for clause in atomic_clauses:
+            atomic_passed, atomic_details = self._describe_atomic_condition_result(clause, data_payload)
+            if atomic_passed:
+                continue
+            if atomic_details:
+                failing_details.extend(atomic_details)
+            else:
+                fallback_details.append(f"Check: {clause}")
+
+        if passed:
+            return True, [{"label": label, "passed": True, "details": []}]
+        return False, [
+            {
+                "label": label,
+                "passed": False,
+                "details": failing_details or fallback_details,
+            }
+        ]
+
+    def _format_condition_leaf_summary(
+        self,
+        root_node: tuple[str, object],
+        leaf_results: list[dict[str, object]],
+    ) -> list[str]:
+        lines: list[str] = []
+        logic_text = self._condition_logic_text(root_node)
+        if logic_text:
+            lines.append(f"Logic: {logic_text}")
+
+        failed = [result for result in leaf_results if not bool(result.get("passed"))]
+        passed = [result for result in leaf_results if bool(result.get("passed"))]
+
+        if failed:
+            lines.append("")
+            lines.append("Failed clauses:")
+            for result in failed:
+                lines.append(f"- {result.get('label', '(unnamed clause)')}")
+                details = result.get("details", [])
+                if isinstance(details, list):
+                    for detail in details:
+                        lines.append(f"  {detail}")
+        else:
+            lines.append("")
+            lines.append("Failed clauses: none")
+
+        if passed:
+            lines.append("")
+            lines.append("Passed clauses:")
+            for result in passed:
+                lines.append(f"- {result.get('label', '(unnamed clause)')}")
+        return lines
+
+    def _condition_logic_text(self, node: tuple[str, object]) -> str:
+        kind, value = node
+        if kind == "AND":
+            assert isinstance(value, list)
+            count = len(value)
+            item_text = "clause" if count == 1 else "clauses"
+            return f"AND - all {count} {item_text} must pass."
+        if kind == "OR":
+            assert isinstance(value, list)
+            count = len(value)
+            item_text = "clause" if count == 1 else "clauses"
+            return f"OR - at least one of {count} {item_text} must pass."
+        return ""
+
+    def _describe_atomic_condition_result(
+        self,
+        expression: str,
+        data_payload: object,
+    ) -> tuple[bool, list[str]]:
+        expr = self._strip_outer_parens(expression)
+        passed, details = self._evaluate_atomic_condition_with_detail(expr, data_payload)
+
+        empty_match = re.match(r"^(.*?)\s+empty\s+(true|false)\s*$", expr, flags=re.IGNORECASE)
+        if empty_match:
+            path = empty_match.group(1).strip()
+            expect_empty = empty_match.group(2).lower() == "true"
+            expected = (
+                f"{path} should be empty or missing."
+                if expect_empty
+                else f"{path} should be present and non-empty."
+            )
+            return passed, [
+                f"Check: {expr}",
+                f"Expected: {expected}",
+                f"Found: {self._humanize_condition_detail(details)}",
+            ]
+
+        comparison = self._find_top_level_comparison(expr)
+        if comparison is not None:
+            lhs, operator, rhs = comparison
+            return passed, [
+                f"Check: {expr}",
+                f"Expected: {lhs} {operator} {rhs}",
+                f"Found: {self._humanize_condition_detail(details)}",
+            ]
+
+        return passed, [
+            f"Check: {expr}",
+            "Expected: path/expression should find at least one value.",
+            f"Found: {self._humanize_condition_detail(details)}",
+        ]
+
+    @staticmethod
+    def _humanize_condition_detail(details: str) -> str:
+        text = str(details or "").strip()
+        if text == "values=[]":
+            return "no values."
+        if text.startswith("values="):
+            return f"values found: {text[len('values='):]}"
+        left_right_match = re.match(r"^left=(.*?)\s+right=(.*)$", text)
+        if left_right_match:
+            return f"left values: {left_right_match.group(1)}; right values: {left_right_match.group(2)}"
+        if text.startswith("parent path missing:"):
+            return text + "."
+        if text.startswith("filtered parent path missing:"):
+            return text + "."
+        return text
+
+    def _limit_condition_breakdown_lines(self, lines: list[str]) -> list[str]:
+        max_lines = 80
+        max_line_length = 320
+        limited = [self._truncate_ui_text(str(line), max_line_length) for line in lines[:max_lines]]
+        if len(lines) > max_lines:
+            limited.append(f"... {len(lines) - max_lines} more diagnostic line(s)")
+        return limited
 
     def _evaluate_document_condition(
         self,

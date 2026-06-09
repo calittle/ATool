@@ -19,6 +19,7 @@ For internal use, share the ATool folder or a zip containing:
 - `Run_ATool.bat`
 - `Run_ATool.zsh`
 - `README.md`
+- `NOTES.MD`
 
 Do not include local cache or generated folders such as `.venv`, `__pycache__`,
 or user-specific files under `~/.atool/`.
@@ -32,6 +33,9 @@ builds a zip artifact from the committed `HEAD` snapshot and writes it to:
 
 If a local SharePoint/OneDrive sync folder is configured, the same artifact is
 also copied there, along with a stable `ATool-latest.zip` file.
+
+Each release zip includes a generated `NOTES.MD` file with commit details and a
+short change summary for the packaged snapshot.
 
 ### Enable the Git Hook
 
