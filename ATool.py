@@ -75,7 +75,8 @@ class AToolApp:
         self._triggered_document_names: set[str] = set()
         self.documents_panel_width = self._load_saved_documents_panel_width()
         self.layouts_panel_width = self._load_saved_layouts_panel_width()
-        self.document_details_editor_height = self._load_saved_document_details_editor_height()
+        self.document_condition_collapsed = self._load_document_details_section_collapsed("condition")
+        self.document_match_details_collapsed = self._load_document_details_section_collapsed("match_details")
         self.fields_window: tk.Toplevel | None = None
         self._fields_window_geometry_job: str | None = None
         self.condition_library_window: tk.Toplevel | None = None
@@ -141,8 +142,6 @@ class AToolApp:
         self.document_condition_text = tk.StringVar(value="")
         self.document_descr_edit_text = tk.StringVar(value="")
         self.document_updated_text = tk.StringVar(value="-")
-        self.document_parent_text = tk.StringVar(value="-")
-        self.document_children_text = tk.StringVar(value="-")
         self.edit_document_name_var = tk.StringVar(value="")
         self.layout_item_kind_text = tk.StringVar(value="-")
         self.layout_name_edit_var = tk.StringVar(value="")
@@ -366,7 +365,6 @@ class AToolApp:
 
         self.root.after(0, self._apply_saved_documents_panel_width)
         self.root.after(0, self._apply_saved_layouts_panel_width)
-        self.root.after(0, self._apply_saved_document_details_split)
         self.left_vertical_pane.bind("<ButtonRelease-1>", self._on_main_pane_release)
         self.docs_layouts_pane.bind("<ButtonRelease-1>", self._on_docs_layouts_pane_release)
         self._create_fields_window()
@@ -435,26 +433,65 @@ class AToolApp:
             "Toggle between all mapped documents and triggered documents only.",
         )
 
-        self.add_layout_button = ttk.Button(
+        self.add_document_button = ttk.Button(
             controls,
-            text="+Layout",
-            command=self.add_layout_to_selected_document,
+            text="+Document",
+            command=self.add_document,
         )
-        self._attach_tooltip(self.add_layout_button, "Add a layout to the selected document.")
+        self._attach_tooltip(self.add_document_button, "Add a document to the assembly template.")
 
         self.move_document_up_button = ttk.Button(
             controls,
             text="Up",
-            command=lambda: self.move_selected_document(-1),
+            command=lambda: self._run_document_move_button_command(
+                self.move_document_up_button,
+                lambda: self.move_selected_document(-1),
+            ),
         )
         self._attach_tooltip(self.move_document_up_button, "Move selected document up (Flat view only).")
 
         self.move_document_down_button = ttk.Button(
             controls,
             text="Down",
-            command=lambda: self.move_selected_document(1),
+            command=lambda: self._run_document_move_button_command(
+                self.move_document_down_button,
+                lambda: self.move_selected_document(1),
+            ),
         )
         self._attach_tooltip(self.move_document_down_button, "Move selected document down (Flat view only).")
+
+        self.move_document_top_button = ttk.Button(
+            controls,
+            text="Top",
+            command=lambda: self._run_document_move_button_command(
+                self.move_document_top_button,
+                self.move_selected_document_to_top,
+            ),
+        )
+        self._attach_tooltip(self.move_document_top_button, "Move selected document to the top (Flat view only).")
+
+        self.move_document_bottom_button = ttk.Button(
+            controls,
+            text="Bottom",
+            command=lambda: self._run_document_move_button_command(
+                self.move_document_bottom_button,
+                self.move_selected_document_to_bottom,
+            ),
+        )
+        self._attach_tooltip(self.move_document_bottom_button, "Move selected document to the bottom (Flat view only).")
+
+        self.auto_move_document_button = ttk.Button(
+            controls,
+            text="Auto Move",
+            command=lambda: self._run_document_move_button_command(
+                self.auto_move_document_button,
+                self.auto_move_selected_document,
+            ),
+        )
+        self._attach_tooltip(
+            self.auto_move_document_button,
+            "Move selected document near similarly named documents.",
+        )
 
         self.generate_sample_input_button = ttk.Button(
             controls,
@@ -469,9 +506,12 @@ class AToolApp:
             self.documents_view_toggle_button,
             self.clear_mapping_button,
             self.document_mapping_filter_button,
-            self.add_layout_button,
+            self.add_document_button,
+            self.move_document_top_button,
             self.move_document_up_button,
             self.move_document_down_button,
+            self.move_document_bottom_button,
+            self.auto_move_document_button,
             self.generate_sample_input_button,
         ]
         self._relayout_documents_controls()
@@ -490,7 +530,7 @@ class AToolApp:
         )
         documents_filter_clear.grid(row=0, column=1)
 
-        tree = ttk.Treeview(panel, show="tree")
+        tree = ttk.Treeview(panel, show="tree", selectmode="extended")
         tree.grid(row=3, column=0, sticky="nsew")
         tree.tag_configure("triggered_doc", foreground="blue")
         tree.tag_configure("untriggered_doc", foreground="red")
@@ -516,42 +556,49 @@ class AToolApp:
 
         controls = ttk.Frame(header)
         controls.grid(row=0, column=1, sticky="e")
+        self.add_layout_button = ttk.Button(
+            controls,
+            text="+Layout",
+            command=self.add_layout_to_selected_document,
+        )
+        self.add_layout_button.grid(row=0, column=0, padx=(0, 6))
+        self._attach_tooltip(self.add_layout_button, "Add a layout to the selected document.")
         self.add_content_button = ttk.Button(
             controls,
-            text="Add Content",
+            text="+Content",
             command=self.add_content_to_selected_layout,
         )
-        self.add_content_button.grid(row=0, column=0, padx=(0, 6))
+        self.add_content_button.grid(row=0, column=1, padx=(0, 6))
         self.move_layout_up_button = ttk.Button(
             controls,
-            text="Move Up",
+            text="Up",
             command=lambda: self.move_selected_layout(-1),
         )
-        self.move_layout_up_button.grid(row=0, column=1, padx=(0, 6))
+        self.move_layout_up_button.grid(row=0, column=2, padx=(0, 6))
         self.move_layout_down_button = ttk.Button(
             controls,
-            text="Move Down",
+            text="Down",
             command=lambda: self.move_selected_layout(1),
         )
-        self.move_layout_down_button.grid(row=0, column=2, padx=(0, 6))
+        self.move_layout_down_button.grid(row=0, column=3, padx=(0, 6))
         self.add_iteration_button = ttk.Button(
             controls,
-            text="Add Iteration",
+            text="+Iteration",
             command=self.add_iteration_to_selected_content,
         )
-        self.add_iteration_button.grid(row=0, column=3, padx=(0, 6))
+        self.add_iteration_button.grid(row=0, column=4, padx=(0, 6))
         self.add_iteration_field_button = ttk.Button(
             controls,
-            text="Add Field",
+            text="+Field",
             command=self.add_field_to_selected_iteration,
         )
-        self.add_iteration_field_button.grid(row=0, column=4, padx=(0, 6))
+        self.add_iteration_field_button.grid(row=0, column=5, padx=(0, 6))
         self.remove_layout_item_button = ttk.Button(
             controls,
             text="Remove",
             command=self.remove_selected_layout_item,
         )
-        self.remove_layout_item_button.grid(row=0, column=5)
+        self.remove_layout_item_button.grid(row=0, column=6)
 
         self.layouts_vertical_pane = ttk.Panedwindow(panel, orient=tk.VERTICAL)
         self.layouts_vertical_pane.grid(row=1, column=0, sticky="nsew")
@@ -684,6 +731,7 @@ class AToolApp:
             "mandatory": (self.layout_mandatory_title, self.layout_mandatory_check),
         }
         self._update_layout_context_buttons()
+        self._update_document_context_buttons()
         return panel
 
     def _create_tree_panel(self, parent: ttk.Frame, heading: str) -> tuple[ttk.Frame, ttk.Treeview]:
@@ -839,14 +887,11 @@ class AToolApp:
         panel.bind("<Configure>", self._on_document_details_configure)
         self._document_details_wrapped_labels: list[ttk.Label] = []
 
-        details_pane = ttk.Panedwindow(panel, orient=tk.VERTICAL)
-        details_pane.grid(row=0, column=0, sticky="nsew")
-        details_pane.bind("<ButtonRelease-1>", self._on_document_details_pane_release)
-        self.document_details_inner_pane = details_pane
-
-        editor_frame = ttk.Frame(details_pane)
+        editor_frame = ttk.Frame(panel)
+        editor_frame.grid(row=0, column=0, sticky="nsew")
         editor_frame.columnconfigure(0, weight=1)
-        editor_frame.rowconfigure(8, weight=1)
+        editor_frame.rowconfigure(10, weight=3)
+        editor_frame.rowconfigure(12, weight=2)
         self.document_details_editor_frame = editor_frame
 
         heading = ttk.Label(editor_frame, text="Document Details", font=("TkDefaultFont", 12, "bold"))
@@ -866,73 +911,52 @@ class AToolApp:
         descr_value.grid(row=4, column=0, sticky="ew", pady=(0, 8))
         self.document_descr_edit_text.trace_add("write", self._on_document_descr_changed)
 
-        triggered_title = ttk.Label(editor_frame, text="Triggered:")
-        triggered_title.grid(row=5, column=0, sticky="w")
-        triggered_value = ttk.Label(
+        updated_title = ttk.Label(editor_frame, text="Updated:")
+        updated_title.grid(row=5, column=0, sticky="w")
+        updated_value = ttk.Label(editor_frame, textvariable=self.document_updated_text, wraplength=280, justify=tk.LEFT)
+        updated_value.grid(row=6, column=0, sticky="w", pady=(0, 8))
+        self._document_details_wrapped_labels.append(updated_value)
+
+        self.document_triggered_title = ttk.Label(editor_frame, text="Triggered:")
+        self.document_triggered_title.grid(row=7, column=0, sticky="w")
+        self.document_triggered_value = ttk.Label(
             editor_frame,
             textvariable=self.document_triggered_text,
             wraplength=280,
             justify=tk.LEFT,
         )
-        triggered_value.grid(row=6, column=0, sticky="w", pady=(0, 8))
-        self._document_details_wrapped_labels.append(triggered_value)
+        self.document_triggered_value.grid(row=8, column=0, sticky="w", pady=(0, 8))
+        self._document_details_wrapped_labels.append(self.document_triggered_value)
 
-        condition_row = ttk.Frame(editor_frame)
-        condition_row.grid(row=7, column=0, sticky="ew")
-        condition_row.columnconfigure(0, weight=1)
-        condition_title = ttk.Label(condition_row, text="Condition:")
-        condition_title.grid(row=0, column=0, sticky="w")
-        self.document_condition_tool_button = ttk.Button(
-            condition_row,
-            text="...",
-            width=3,
-            command=self.open_conditions_tool_from_document,
+        self.document_condition_toggle_button = ttk.Button(
+            editor_frame,
+            command=self._toggle_document_condition_collapsed,
         )
-        self.document_condition_tool_button.grid(row=0, column=1, sticky="e")
+        self.document_condition_toggle_button.grid(row=9, column=0, sticky="ew", pady=(0, 2))
         condition_value = tk.Text(editor_frame, height=10, wrap="word", undo=True)
-        condition_value.grid(row=8, column=0, sticky="nsew", pady=(0, 8))
+        condition_value.grid(row=10, column=0, sticky="nsew", pady=(0, 8))
         condition_value.bind("<KeyRelease>", self._on_document_condition_changed)
         self.document_condition_widget = condition_value
 
-        meta_frame = ttk.Frame(details_pane)
-        meta_frame.columnconfigure(0, weight=1)
-        self.document_details_meta_frame = meta_frame
-
-        updated_title = ttk.Label(meta_frame, text="Updated:")
-        updated_title.grid(row=0, column=0, sticky="w")
-        updated_value = ttk.Label(meta_frame, textvariable=self.document_updated_text, wraplength=280, justify=tk.LEFT)
-        updated_value.grid(row=1, column=0, sticky="w", pady=(0, 8))
-        self._document_details_wrapped_labels.append(updated_value)
-
-        parent_title = ttk.Label(meta_frame, text="Parent:")
-        parent_title.grid(row=2, column=0, sticky="w")
-        parent_value = ttk.Label(meta_frame, textvariable=self.document_parent_text, wraplength=280, justify=tk.LEFT)
-        parent_value.grid(row=3, column=0, sticky="w", pady=(0, 8))
-        self._document_details_wrapped_labels.append(parent_value)
-
-        children_title = ttk.Label(meta_frame, text="Children:")
-        children_title.grid(row=4, column=0, sticky="w")
-        children_value = ttk.Label(meta_frame, textvariable=self.document_children_text, wraplength=280, justify=tk.LEFT)
-        children_value.grid(row=5, column=0, sticky="w")
-        self._document_details_wrapped_labels.append(children_value)
-
-        match_details_title = ttk.Label(meta_frame, text="Match Details:")
-        match_details_title.grid(row=6, column=0, sticky="w", pady=(8, 0))
-        match_details_frame = ttk.Frame(meta_frame)
-        match_details_frame.grid(row=7, column=0, sticky="nsew", pady=(2, 0))
+        self.document_match_details_toggle_button = ttk.Button(
+            editor_frame,
+            command=self._toggle_document_match_details_collapsed,
+        )
+        self.document_match_details_toggle_button.grid(row=11, column=0, sticky="ew", pady=(0, 2))
+        match_details_frame = ttk.Frame(editor_frame)
+        match_details_frame.grid(row=12, column=0, sticky="nsew")
         match_details_frame.columnconfigure(0, weight=1)
         match_details_frame.rowconfigure(0, weight=1)
-        meta_frame.rowconfigure(7, weight=1)
         match_details_value = tk.Text(match_details_frame, height=6, wrap="word", undo=False)
         match_details_value.grid(row=0, column=0, sticky="nsew")
         match_details_scroll = ttk.Scrollbar(match_details_frame, orient=tk.VERTICAL, command=match_details_value.yview)
         match_details_scroll.grid(row=0, column=1, sticky="ns")
         match_details_value.configure(yscrollcommand=match_details_scroll.set, state=tk.DISABLED)
+        self.document_match_details_frame = match_details_frame
         self.document_match_details_widget = match_details_value
 
-        details_pane.add(editor_frame, weight=3)
-        details_pane.add(meta_frame, weight=1)
-
+        self._update_document_triggered_visibility()
+        self._apply_document_details_section_visibility()
         self.root.after(0, self._update_document_details_wraplength)
         return panel
 
@@ -941,9 +965,6 @@ class AToolApp:
 
     def _on_docs_layouts_pane_release(self, _event: tk.Event) -> None:
         self._persist_layouts_panel_width()
-
-    def _on_document_details_pane_release(self, _event: tk.Event) -> None:
-        self._persist_document_details_split()
 
     def _on_field_details_configure(self, _event: tk.Event) -> None:
         self._update_field_details_wraplength()
@@ -973,6 +994,45 @@ class AToolApp:
         wrap_length = max(panel_width - 28, 120)
         for label in self._document_details_wrapped_labels:
             label.configure(wraplength=wrap_length)
+
+    def _toggle_document_condition_collapsed(self) -> None:
+        self.document_condition_collapsed = not self.document_condition_collapsed
+        self._persist_document_details_section_state()
+        self._apply_document_details_section_visibility()
+
+    def _toggle_document_match_details_collapsed(self) -> None:
+        self.document_match_details_collapsed = not self.document_match_details_collapsed
+        self._persist_document_details_section_state()
+        self._apply_document_details_section_visibility()
+
+    def _apply_document_details_section_visibility(self) -> None:
+        if hasattr(self, "document_condition_toggle_button"):
+            prefix = "[+]" if self.document_condition_collapsed else "[-]"
+            self.document_condition_toggle_button.config(text=f"{prefix} Condition")
+        if hasattr(self, "document_condition_widget"):
+            if self.document_condition_collapsed:
+                self.document_condition_widget.grid_remove()
+            else:
+                self.document_condition_widget.grid()
+
+        if hasattr(self, "document_match_details_toggle_button"):
+            prefix = "[+]" if self.document_match_details_collapsed else "[-]"
+            self.document_match_details_toggle_button.config(text=f"{prefix} Match Details")
+        if hasattr(self, "document_match_details_frame"):
+            if self.document_match_details_collapsed:
+                self.document_match_details_frame.grid_remove()
+            else:
+                self.document_match_details_frame.grid()
+
+    def _update_document_triggered_visibility(self) -> None:
+        if not hasattr(self, "document_triggered_title") or not hasattr(self, "document_triggered_value"):
+            return
+        if self.current_data_payload is None:
+            self.document_triggered_title.grid_remove()
+            self.document_triggered_value.grid_remove()
+            return
+        self.document_triggered_title.grid()
+        self.document_triggered_value.grid()
 
     def _update_layout_properties_wraplength(self) -> None:
         if not hasattr(self, "layout_properties_panel"):
@@ -1068,32 +1128,18 @@ class AToolApp:
             return 360
         return width
 
-    def _apply_saved_document_details_split(self) -> None:
-        if not hasattr(self, "document_details_inner_pane") or not hasattr(self, "document_details_editor_frame"):
-            return
-        self.root.update_idletasks()
-        total_height = self.document_details_inner_pane.winfo_height()
-        if total_height <= 1:
-            return
-        editor_height = max(180, min(self.document_details_editor_height, total_height - 120))
-        self.document_details_editor_height = editor_height
-        self.document_details_inner_pane.sashpos(0, editor_height)
-
-    def _persist_document_details_split(self) -> None:
-        if not hasattr(self, "document_details_editor_frame"):
-            return
-        height = self.document_details_editor_frame.winfo_height()
-        if height < 120:
-            return
-        self.document_details_editor_height = height
-        self._update_app_state({"document_details_editor_height": height})
-
-    def _load_saved_document_details_editor_height(self) -> int:
+    def _load_document_details_section_collapsed(self, section: str) -> bool:
         state = self._read_app_state()
-        height = self._safe_int(state.get("document_details_editor_height"))
-        if height is None or height < 120:
-            return 340
-        return height
+        value = state.get(f"document_details_{section}_collapsed")
+        return bool(value) if isinstance(value, bool) else False
+
+    def _persist_document_details_section_state(self) -> None:
+        self._update_app_state(
+            {
+                "document_details_condition_collapsed": self.document_condition_collapsed,
+                "document_details_match_details_collapsed": self.document_match_details_collapsed,
+            }
+        )
 
     def _create_fields_window(self) -> None:
         if self.fields_window is not None and self.fields_window.winfo_exists():
@@ -3918,7 +3964,14 @@ class AToolApp:
             buttons = [
                 button
                 for button in buttons
-                if button not in {self.move_document_up_button, self.move_document_down_button}
+                if button
+                not in {
+                    self.move_document_top_button,
+                    self.move_document_up_button,
+                    self.move_document_down_button,
+                    self.move_document_bottom_button,
+                    self.auto_move_document_button,
+                }
             ]
 
         signature = (
@@ -3986,7 +4039,23 @@ class AToolApp:
             self._tooltip_window.destroy()
         self._tooltip_window = None
 
+    def _run_document_move_button_command(self, button: ttk.Button, command: object) -> None:
+        try:
+            if callable(command):
+                command()
+        finally:
+            self.root.after_idle(lambda selected_button=button: self._release_document_move_button(selected_button))
+
+    @staticmethod
+    def _release_document_move_button(button: ttk.Button) -> None:
+        try:
+            if button.winfo_exists():
+                button.state(["!pressed", "active"])
+        except tk.TclError:
+            return
+
     def _update_mapping_controls(self) -> None:
+        self._update_document_triggered_visibility()
         if hasattr(self, "clear_mapping_button"):
             if self._mapping_dialog_in_progress:
                 self.clear_mapping_button.config(text="Opening...", command=self.map_data_file, state=tk.DISABLED)
@@ -4013,17 +4082,24 @@ class AToolApp:
 
     def _update_document_context_buttons(self) -> None:
         selected_doc = self._get_selected_document_ref()
-        state = tk.NORMAL if selected_doc is not None else tk.DISABLED
+        document_state = tk.NORMAL if self.current_payload is not None else tk.DISABLED
+        selected_state = tk.NORMAL if selected_doc is not None else tk.DISABLED
+        if hasattr(self, "add_document_button"):
+            self.add_document_button.config(state=document_state)
         if hasattr(self, "add_layout_button"):
-            self.add_layout_button.config(state=state)
+            self.add_layout_button.config(state=selected_state)
+        if hasattr(self, "move_document_top_button"):
+            self.move_document_top_button.config(state=selected_state)
         if hasattr(self, "move_document_up_button"):
-            self.move_document_up_button.config(state=state)
+            self.move_document_up_button.config(state=selected_state)
         if hasattr(self, "move_document_down_button"):
-            self.move_document_down_button.config(state=state)
+            self.move_document_down_button.config(state=selected_state)
+        if hasattr(self, "move_document_bottom_button"):
+            self.move_document_bottom_button.config(state=selected_state)
+        if hasattr(self, "auto_move_document_button"):
+            self.auto_move_document_button.config(state=selected_state)
         if hasattr(self, "generate_sample_input_button"):
-            self.generate_sample_input_button.config(state=state)
-        if hasattr(self, "document_condition_tool_button"):
-            self.document_condition_tool_button.config(state=state)
+            self.generate_sample_input_button.config(state=selected_state)
 
     def _update_layout_context_buttons(self) -> None:
         node_kind = ""
@@ -5053,6 +5129,60 @@ class AToolApp:
             return None
         return [item for item in documents if isinstance(item, dict)]
 
+    def add_document(self) -> None:
+        if self.current_payload is None:
+            messagebox.showinfo("Add Document", "Open an assembly template first.")
+            return
+
+        documents = self.current_payload.get("Documents")
+        if not isinstance(documents, list):
+            documents = []
+            self.current_payload["Documents"] = documents
+
+        existing_names = {
+            str(document.get("$$Id", "")).strip()
+            for document in documents
+            if isinstance(document, dict)
+        }
+        counter = len(existing_names) + 1
+        while True:
+            candidate = f"NewDocument{counter}"
+            if candidate not in existing_names:
+                break
+            counter += 1
+
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        source_document = {
+            "$$Id": candidate,
+            "Updated": now_text,
+            "Descr": "",
+            "Condition": "",
+            "Layouts": [],
+        }
+        documents.append(source_document)
+
+        self._loaded_documents = self._extract_documents(self.current_payload)
+        new_document = next(
+            (
+                document
+                for document in self._loaded_documents
+                if document.get("source") is source_document
+            ),
+            None,
+        )
+        if new_document is not None and self.current_data_payload is not None:
+            self._refresh_document_condition_mapping(new_document)
+        elif self.current_data_payload is not None:
+            self.document_count_text.set(
+                f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
+            )
+        else:
+            self.document_count_text.set(f"Documents: {len(self._loaded_documents)}")
+
+        self._set_dirty(True)
+        self._render_documents_tree()
+        self._select_document_node_for_source(source_document)
+
     def add_layout_to_selected_document(self) -> None:
         document_ref = self._get_selected_document_ref()
         if document_ref is None:
@@ -5660,32 +5790,368 @@ class AToolApp:
             parent[slot] = value
 
     def move_selected_document(self, direction: int) -> None:
-        document_ref = self._get_selected_document_ref()
-        if document_ref is None:
+        context = self._selected_document_move_context()
+        if context is None:
             return
-        source = document_ref.get("source")
-        if not isinstance(source, dict):
+        selected_sources, documents, _selected_indexes = context
+        visible_sources = self._visible_document_sources(documents)
+        reordered_sources = self._move_visible_document_selection(
+            visible_sources,
+            selected_sources,
+            direction,
+        )
+        if reordered_sources is None:
             return
+        self._apply_document_visible_order(documents, reordered_sources, selected_sources)
+
+    def move_selected_document_to_top(self) -> None:
+        context = self._selected_document_move_context()
+        if context is None:
+            return
+        selected_sources, documents, _selected_indexes = context
+        visible_sources = self._visible_document_sources(documents)
+        selected_ids = {id(source) for source in selected_sources}
+        reordered_sources = [
+            source for source in visible_sources if id(source) in selected_ids
+        ] + [
+            source for source in visible_sources if id(source) not in selected_ids
+        ]
+        self._apply_document_visible_order(documents, reordered_sources, selected_sources)
+
+    def move_selected_document_to_bottom(self) -> None:
+        context = self._selected_document_move_context()
+        if context is None:
+            return
+        selected_sources, documents, _selected_indexes = context
+        visible_sources = self._visible_document_sources(documents)
+        selected_ids = {id(source) for source in selected_sources}
+        reordered_sources = [
+            source for source in visible_sources if id(source) not in selected_ids
+        ] + [
+            source for source in visible_sources if id(source) in selected_ids
+        ]
+        self._apply_document_visible_order(documents, reordered_sources, selected_sources)
+
+    def auto_move_selected_document(self) -> None:
+        context = self._selected_document_move_context()
+        if context is None:
+            return
+        selected_sources, documents, _selected_indexes = context
+        source = selected_sources[0]
+        insertion_slot = self._auto_document_insertion_slot(source, documents, selected_sources)
+        if insertion_slot is None:
+            self._show_temporary_status("Auto Move: no similarly named document found.")
+            return
+        moved = self._move_selected_documents_to_remaining_slot(
+            insertion_slot,
+            documents=documents,
+            selected_sources=selected_sources,
+        )
+        if not moved:
+            self._show_temporary_status("Auto Move: document is already near similarly named documents.")
+
+    def _selected_document_move_context(self) -> tuple[list[dict[str, object]], list[object], list[int]] | None:
         if not isinstance(self.current_payload, dict):
-            return
+            return None
         documents = self.current_payload.get("Documents")
         if not isinstance(documents, list):
-            return
-        index = -1
-        for i, item in enumerate(documents):
-            if item is source:
-                index = i
-                break
-        if index < 0:
-            return
-        new_index = index + direction
-        if new_index < 0 or new_index >= len(documents):
-            return
-        documents[index], documents[new_index] = documents[new_index], documents[index]
+            return None
+
+        selected_sources = self._selected_document_sources()
+        if not selected_sources:
+            return None
+        source_indexes = {
+            id(document): index
+            for index, document in enumerate(documents)
+            if isinstance(document, dict)
+        }
+        selected_indexes = [
+            source_indexes[id(source)]
+            for source in selected_sources
+            if id(source) in source_indexes
+        ]
+        if not selected_indexes:
+            return None
+        return selected_sources, documents, selected_indexes
+
+    def _selected_document_sources(self) -> list[dict[str, object]]:
+        selected_node_ids = set(self.documents_tree.selection())
+        visible_node_ids = list(self.documents_tree.get_children(""))
+        ordered_node_ids = [
+            node_id
+            for node_id in visible_node_ids
+            if node_id in selected_node_ids
+        ]
+        if not ordered_node_ids and self._active_document_node_id:
+            ordered_node_ids = [self._active_document_node_id]
+
+        selected_sources: list[dict[str, object]] = []
+        seen_source_ids: set[int] = set()
+        for node_id in ordered_node_ids:
+            details = self._document_node_details.get(node_id, {})
+            document_ref = details.get("document_ref")
+            source = document_ref.get("source") if isinstance(document_ref, dict) else None
+            if not isinstance(source, dict):
+                continue
+            source_id = id(source)
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            selected_sources.append(source)
+        return selected_sources
+
+    def _visible_document_sources(self, documents: list[object]) -> list[dict[str, object]]:
+        source_ids = {
+            id(document)
+            for document in documents
+            if isinstance(document, dict)
+        }
+        sources: list[dict[str, object]] = []
+        for node_id in self.documents_tree.get_children(""):
+            details = self._document_node_details.get(node_id, {})
+            document_ref = details.get("document_ref")
+            source = document_ref.get("source") if isinstance(document_ref, dict) else None
+            if isinstance(source, dict) and id(source) in source_ids:
+                sources.append(source)
+        return sources
+
+    def _move_visible_document_selection(
+        self,
+        visible_sources: list[dict[str, object]],
+        selected_sources: list[dict[str, object]],
+        direction: int,
+    ) -> list[dict[str, object]] | None:
+        if direction == 0 or not visible_sources:
+            return None
+        selected_ids = {id(source) for source in selected_sources}
+        if direction < 0:
+            return self._move_visible_document_selection_up(visible_sources, selected_ids)
+        return self._move_visible_document_selection_down(visible_sources, selected_ids)
+
+    @staticmethod
+    def _move_visible_document_selection_up(
+        visible_sources: list[dict[str, object]],
+        selected_ids: set[int],
+    ) -> list[dict[str, object]] | None:
+        reordered_sources = list(visible_sources)
+        changed = False
+        index = 0
+        while index < len(reordered_sources):
+            if id(reordered_sources[index]) not in selected_ids:
+                index += 1
+                continue
+            start = index
+            while index < len(reordered_sources) and id(reordered_sources[index]) in selected_ids:
+                index += 1
+            end = index
+            if start > 0 and id(reordered_sources[start - 1]) not in selected_ids:
+                previous_source = reordered_sources.pop(start - 1)
+                reordered_sources.insert(end - 1, previous_source)
+                changed = True
+        return reordered_sources if changed else None
+
+    @staticmethod
+    def _move_visible_document_selection_down(
+        visible_sources: list[dict[str, object]],
+        selected_ids: set[int],
+    ) -> list[dict[str, object]] | None:
+        reordered_sources = list(visible_sources)
+        changed = False
+        index = len(reordered_sources) - 1
+        while index >= 0:
+            if id(reordered_sources[index]) not in selected_ids:
+                index -= 1
+                continue
+            end = index + 1
+            while index >= 0 and id(reordered_sources[index]) in selected_ids:
+                index -= 1
+            start = index + 1
+            if end < len(reordered_sources) and id(reordered_sources[end]) not in selected_ids:
+                next_source = reordered_sources.pop(end)
+                reordered_sources.insert(start, next_source)
+                changed = True
+        return reordered_sources if changed else None
+
+    def _apply_document_visible_order(
+        self,
+        documents: list[object],
+        ordered_visible_sources: list[dict[str, object]],
+        selected_sources: list[dict[str, object]],
+    ) -> bool:
+        visible_ids = {id(source) for source in ordered_visible_sources}
+        current_visible_order = [
+            id(document)
+            for document in documents
+            if isinstance(document, dict) and id(document) in visible_ids
+        ]
+        next_visible_order = [id(source) for source in ordered_visible_sources]
+        if current_visible_order == next_visible_order:
+            return False
+
+        ordered_iterator = iter(ordered_visible_sources)
+        for index, document in enumerate(documents):
+            if isinstance(document, dict) and id(document) in visible_ids:
+                documents[index] = next(ordered_iterator)
+        self._sync_loaded_documents_order(documents)
         self._set_dirty(True)
-        self._loaded_documents = self._extract_documents(self.current_payload)
-        self._render_documents_tree()
-        self._select_document_node_for_source(source)
+        self._sync_document_tree_positions(documents, selected_sources)
+        return True
+
+    def _move_selected_documents_to_remaining_slot(
+        self,
+        insertion_slot: int,
+        *,
+        documents: list[object],
+        selected_sources: list[dict[str, object]],
+    ) -> bool:
+        selected_ids = {id(source) for source in selected_sources}
+        selected_documents = [
+            document
+            for document in documents
+            if isinstance(document, dict) and id(document) in selected_ids
+        ]
+        remaining_documents = [
+            document
+            for document in documents
+            if not (isinstance(document, dict) and id(document) in selected_ids)
+        ]
+        insertion_slot = max(0, min(insertion_slot, len(remaining_documents)))
+        reordered_documents = (
+            remaining_documents[:insertion_slot]
+            + selected_documents
+            + remaining_documents[insertion_slot:]
+        )
+        if [id(document) for document in documents] == [id(document) for document in reordered_documents]:
+            return False
+        documents[:] = reordered_documents
+        self._sync_loaded_documents_order(documents)
+        self._set_dirty(True)
+        self._sync_document_tree_positions(documents, selected_sources)
+        return True
+
+    def _sync_loaded_documents_order(self, documents: list[object]) -> None:
+        source_order = {
+            id(document): index
+            for index, document in enumerate(documents)
+            if isinstance(document, dict)
+        }
+        self._loaded_documents.sort(
+            key=lambda document: source_order.get(id(document.get("source")), len(source_order))
+        )
+
+    def _sync_document_tree_positions(
+        self,
+        documents: list[object],
+        selected_sources: list[dict[str, object]],
+    ) -> None:
+        if self.document_view_mode != "flat":
+            return
+
+        source_order = {
+            id(document): index
+            for index, document in enumerate(documents)
+            if isinstance(document, dict)
+        }
+
+        child_sources: list[tuple[str, dict[str, object]]] = []
+        children = list(self.documents_tree.get_children(""))
+        for child_id in children:
+            details = self._document_node_details.get(child_id, {})
+            document_ref = details.get("document_ref")
+            child_source = document_ref.get("source") if isinstance(document_ref, dict) else None
+            if isinstance(child_source, dict) and id(child_source) in source_order:
+                child_sources.append((child_id, child_source))
+
+        child_sources.sort(key=lambda item: source_order[id(item[1])])
+        for visible_index, (child_id, _source) in enumerate(child_sources):
+            self.documents_tree.move(child_id, "", visible_index)
+
+        selected_ids = {id(source) for source in selected_sources}
+        selected_node_ids = [
+            child_id
+            for child_id, source in child_sources
+            if id(source) in selected_ids
+        ]
+        if not selected_node_ids:
+            return
+        if set(self.documents_tree.selection()) != set(selected_node_ids):
+            self.documents_tree.selection_set(*selected_node_ids)
+        focus_node_id = (
+            self._active_document_node_id
+            if self._active_document_node_id in selected_node_ids
+            else selected_node_ids[0]
+        )
+        self.documents_tree.focus(focus_node_id)
+        self.documents_tree.see(focus_node_id)
+
+    def _auto_document_insertion_slot(
+        self,
+        source: dict[str, object],
+        documents: list[object],
+        selected_sources: list[dict[str, object]],
+    ) -> int | None:
+        selected_name = str(source.get("$$Id", "")).strip()
+        if not selected_name:
+            return None
+
+        selected_ids = {id(source) for source in selected_sources}
+        remaining = [
+            document
+            for document in documents
+            if isinstance(document, dict) and id(document) not in selected_ids
+        ]
+        if not remaining:
+            return None
+
+        selected_tokens = self._document_name_tokens(selected_name)
+        for prefix_length in range(len(selected_tokens) - 1, 0, -1):
+            prefix = selected_tokens[:prefix_length]
+            matching_indexes = [
+                index
+                for index, document in enumerate(remaining)
+                if self._document_name_tokens(str(document.get("$$Id", "")))[:prefix_length] == prefix
+            ]
+            if matching_indexes:
+                return matching_indexes[-1] + 1
+
+        selected_normalized = self._normalize_document_name_for_move(selected_name)
+        if len(selected_normalized) < 3:
+            return None
+
+        best_length = 0
+        best_indexes: list[int] = []
+        for index, document in enumerate(remaining):
+            other_name = self._normalize_document_name_for_move(str(document.get("$$Id", "")))
+            common_length = self._common_prefix_length(selected_normalized, other_name)
+            if common_length > best_length:
+                best_length = common_length
+                best_indexes = [index]
+            elif common_length == best_length and common_length > 0:
+                best_indexes.append(index)
+
+        if best_length < 3 or not best_indexes:
+            return None
+        return best_indexes[-1] + 1
+
+    @staticmethod
+    def _document_name_tokens(name: str) -> list[str]:
+        return [
+            token.casefold()
+            for token in re.split(r"[^A-Za-z0-9]+", name)
+            if token
+        ]
+
+    @staticmethod
+    def _normalize_document_name_for_move(name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]+", "", name).casefold()
+
+    @staticmethod
+    def _common_prefix_length(first: str, second: str) -> int:
+        limit = min(len(first), len(second))
+        index = 0
+        while index < limit and first[index] == second[index]:
+            index += 1
+        return index
 
     def add_content_to_selected_layout(self) -> None:
         details = self._layout_node_details.get(self._active_layout_node_id or "")
@@ -6040,9 +6506,6 @@ class AToolApp:
         self._updating_document_form = True
         self.document_name_text.set(str(document.get("name", "-")))
         self.edit_document_name_var.set(str(document.get("name", "")))
-        parent_name = str(document.get("parent", "")).strip()
-        self.document_parent_text.set(parent_name if parent_name else "(root)")
-        child_count = int(document.get("child_count", 0))
         triggered = bool(document.get("triggered"))
         warnings = document.get("condition_warnings")
         warning_lines = [str(warning) for warning in warnings] if isinstance(warnings, list) else []
@@ -6060,7 +6523,8 @@ class AToolApp:
         self.document_descr_edit_text.set(descr)
         condition = str(document.get("condition", "")).strip()
         self._set_text_widget_value(self.document_condition_widget, condition)
-        self.document_children_text.set(str(child_count))
+        self._update_document_triggered_visibility()
+        self._apply_document_details_section_visibility()
         self._updating_document_form = False
 
     def _clear_document_details(self) -> None:
@@ -6073,8 +6537,8 @@ class AToolApp:
         self._set_document_match_details("")
         self.document_descr_edit_text.set("")
         self.document_updated_text.set("-")
-        self.document_parent_text.set("-")
-        self.document_children_text.set("-")
+        self._update_document_triggered_visibility()
+        self._apply_document_details_section_visibility()
         self._updating_document_form = False
 
     def _format_document_match_details(self, document: dict[str, object]) -> str:
@@ -6487,6 +6951,8 @@ class AToolApp:
         return True
 
     def _set_dirty(self, dirty: bool) -> None:
+        if self.is_dirty == dirty:
+            return
         self.is_dirty = dirty
         if self.current_file_path:
             file_name = os.path.basename(self.current_file_path)
@@ -7662,95 +8128,6 @@ class AToolApp:
                 self._open_shared_entry_local_copy(entry, mode="testing")
             return
 
-        if messagebox.askyesno(
-            "Open Package",
-            "Check Comms for an updated copy before opening this package version?",
-        ):
-            self._download_shared_entry_from_comms(entry)
-            return
-
-        self._prompt_lock_and_open_shared_entry(entry)
-
-    def _download_shared_entry_from_comms(self, entry: dict[str, object]) -> None:
-        package_name = str(entry.get("package_name", "")).strip()
-        version_name = str(entry.get("version_name", "")).strip()
-        if not package_name or not version_name:
-            messagebox.showerror("Open Package", "The selected package version is missing package metadata.")
-            return
-        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
-        try:
-            work_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            messagebox.showerror(
-                "Open Package",
-                f"Could not create local package folder:\n{work_dir}\n\nDetails: {error}",
-            )
-            return
-        bundle_dir = self._build_occs_bundle_output_path(work_dir, package_name, version_name)
-        self._run_occs_json_command_async(
-            [
-                "package",
-                "get",
-                package_name,
-                "--package-version",
-                version_name,
-                "--output",
-                str(bundle_dir),
-                "--timeout",
-                str(self._occs_package_get_timeout_ms(version_name)),
-            ],
-            f"Checking Comms package {package_name} {version_name}...",
-            lambda result, requested_bundle_dir=str(bundle_dir), selected_entry=entry: self._on_shared_refresh_get_complete(
-                result,
-                requested_bundle_dir,
-                selected_entry,
-            ),
-        )
-
-    def _on_shared_refresh_get_complete(
-        self,
-        result: dict[str, object],
-        requested_bundle_dir: str,
-        entry: dict[str, object],
-    ) -> None:
-        bundle_path = Path(str(result.get("bundlePath") or requested_bundle_dir))
-        try:
-            fresh_manifest = self._read_occs_manifest(str(bundle_path))
-        except ValueError as error:
-            messagebox.showerror("Open Package", str(error))
-            return
-
-        shared_manifest = entry.get("manifest")
-        if isinstance(shared_manifest, dict) and self._occs_source_hashes_match(shared_manifest, fresh_manifest):
-            self._show_temporary_status("Shared package version matches Comms", duration_ms=5000)
-            self._prompt_lock_and_open_shared_entry(entry)
-            return
-
-        shared_updated = self._shared_entry_updated_at(entry) or "(unknown time)"
-        shared_owner = self._shared_publication_owner_text(entry)
-        if messagebox.askyesno(
-            "Open Package",
-            "Comms returned package content that differs from the shared package folder.\n\n"
-            f"Shared package folder last update: {shared_updated}\n"
-            f"Shared update owner: {shared_owner}\n\n"
-            "If the shared package folder contains local team updates, use the shared copy.\n\n"
-            "Update the shared package folder from Comms before opening?",
-        ):
-            try:
-                entry = self._publish_bundle_path_to_shared(bundle_path, fresh_manifest, reason="refreshFromComms")
-            except OSError as error:
-                messagebox.showerror(
-                    "Open Package",
-                    f"Could not update the shared package folder from Comms.\n\nDetails: {error}",
-                )
-                return
-            self._show_temporary_status("Updated shared package version from Comms", duration_ms=5000)
-        else:
-            messagebox.showinfo(
-                "Open Package",
-                "Using the shared package folder. If local changes were already updated there, this is the correct version to edit.",
-            )
-
         self._prompt_lock_and_open_shared_entry(entry)
 
     def _open_shared_entry_for_edit(self, entry: dict[str, object], title: str = "Open Package") -> bool:
@@ -7907,6 +8284,19 @@ class AToolApp:
                 self._open_shared_entry_local_copy(entry, mode="testing")
             return
 
+        if lock_payload and self._is_shared_lock_owner(lock_payload, owner):
+            resume_dir = self._shared_edit_resume_dir(entry, lock_payload)
+            if resume_dir is not None and messagebox.askyesno(
+                "Open Package",
+                "You already hold an edit lock for this package version.\n\n"
+                f"{self._format_shared_lock(lock_payload)}\n\n"
+                f"Resume the existing local edit session?\n\n{resume_dir}\n\n"
+                "Choose No to create a fresh local copy.",
+            ):
+                if self._load_occs_bundle(str(resume_dir), shared_package_dir=package_dir, shared_mode="edit"):
+                    self._show_temporary_status("Resumed package edit session", duration_ms=5000)
+                return
+
         lock_for_edit = messagebox.askyesno(
             "Open Package",
             "Lock this package version for edit?\n\n"
@@ -7956,6 +8346,8 @@ class AToolApp:
             )
             shutil.copytree(published_dir, local_dir)
             self._write_shared_baseline_for_local_copy(local_dir, entry, reason=f"opened-{mode}")
+            if mode == "edit":
+                self._write_shared_edit_lock_for_local_copy(entry, local_dir)
         except OSError as error:
             messagebox.showerror(
                 "Open Package",
@@ -7979,10 +8371,110 @@ class AToolApp:
             self._show_temporary_status("Opened local testing copy", duration_ms=5000)
         return True
 
+    def _shared_edit_resume_dir(
+        self,
+        entry: dict[str, object],
+        lock_payload: dict[str, object],
+    ) -> Path | None:
+        candidates: list[Path] = []
+        bundle_dir_text = str(lock_payload.get("bundleDir", "")).strip()
+        if bundle_dir_text:
+            candidates.append(Path(os.path.expanduser(bundle_dir_text)))
+
+        state = self._read_app_state()
+        last_bundle = state.get("last_occs_bundle")
+        if isinstance(last_bundle, str) and last_bundle.strip():
+            candidates.append(Path(os.path.expanduser(last_bundle)))
+
+        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
+        if work_dir.exists():
+            try:
+                local_dirs = [
+                    bundle_dir
+                    for bundle_dir in work_dir.iterdir()
+                    if bundle_dir.is_dir() and (bundle_dir / "occs-package.json").exists()
+                ]
+            except OSError:
+                local_dirs = []
+            local_dirs.sort(key=lambda path: self._directory_modified_time(path), reverse=True)
+            candidates.extend(local_dirs)
+
+        seen: set[Path] = set()
+        for candidate in candidates:
+            resolved_candidate = self._resolved_path(candidate)
+            if resolved_candidate in seen:
+                continue
+            seen.add(resolved_candidate)
+            if self._is_shared_edit_resume_dir(candidate, entry):
+                return candidate
+        return None
+
+    def _is_shared_edit_resume_dir(self, bundle_dir: Path, entry: dict[str, object]) -> bool:
+        if not bundle_dir.exists() or not bundle_dir.is_dir():
+            return False
+        if not (bundle_dir / "occs-package.json").exists():
+            return False
+
+        published_dir = entry.get("published_dir")
+        if isinstance(published_dir, Path) and self._resolved_path(bundle_dir) == self._resolved_path(published_dir):
+            return False
+
+        baseline = self._read_shared_baseline_for_local_copy(bundle_dir)
+        if not isinstance(baseline, dict):
+            return False
+        if str(baseline.get("reason", "")).strip() != "opened-edit":
+            return False
+        if str(baseline.get("package", "")).strip() != str(entry.get("package_name", "")).strip():
+            return False
+        if str(baseline.get("version", "")).strip() != str(entry.get("version_name", "")).strip():
+            return False
+
+        try:
+            manifest = self._read_occs_manifest(str(bundle_dir))
+        except ValueError:
+            return False
+        return (
+            self._occs_manifest_package_short_name(manifest) == str(entry.get("package_name", "")).strip()
+            and self._occs_manifest_version_short_name(manifest) == str(entry.get("version_name", "")).strip()
+        )
+
+    def _write_shared_edit_lock_for_local_copy(self, entry: dict[str, object], local_dir: Path) -> None:
+        package_dir = entry.get("package_dir")
+        if not isinstance(package_dir, Path):
+            return
+        try:
+            manifest = self._read_occs_manifest(str(local_dir))
+        except ValueError:
+            manifest = entry.get("manifest") if isinstance(entry.get("manifest"), dict) else {}
+        context = {
+            "workspace_dir": entry.get("workspace_dir"),
+            "package_dir": package_dir,
+            "package_name": str(entry.get("package_name", "")),
+            "version_name": str(entry.get("version_name", "")),
+            "bundle_dir": local_dir,
+            "manifest": manifest,
+        }
+        lock_path = self._shared_lock_path(package_dir)
+        owner = self._current_shared_user_identity()
+        existing_lock = self._read_shared_lock(lock_path)
+        payload = self._build_shared_lock_payload(context, owner)
+        if isinstance(existing_lock, dict):
+            created_at = str(existing_lock.get("createdAt", "")).strip()
+            if created_at:
+                payload["createdAt"] = created_at
+        with open(lock_path, "w", encoding="utf-8") as target:
+            json.dump(payload, target, indent=2)
+
     def _publish_shared_entry_to_comms(self, entry: dict[str, object]) -> None:
         if not self._prompt_save_if_dirty():
             return
-        if self._open_shared_entry_local_copy(entry, mode="publish"):
+        published_dir = entry.get("published_dir")
+        package_dir = entry.get("package_dir")
+        if not isinstance(published_dir, Path) or not isinstance(package_dir, Path):
+            messagebox.showerror("Publish Package to Comms", "The selected package version is missing shared folder metadata.")
+            return
+        if self._load_occs_bundle(str(published_dir), shared_package_dir=package_dir, shared_mode="publish"):
+            self._show_temporary_status("Loaded shared package version for Comms publish", duration_ms=5000)
             self.save_occs_package()
 
     def _on_occs_config_list_failed(self, error: Exception) -> None:
@@ -8019,7 +8511,8 @@ class AToolApp:
             sticky="w",
         )
 
-        ttk.Label(container, text="Local Folder:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        folder_label = "Shared Folder:" if self.current_occs_shared_mode == "publish" else "Local Folder:"
+        ttk.Label(container, text=folder_label).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         ttk.Label(
             container,
             text=str(self.current_occs_bundle_dir),
@@ -10952,7 +11445,6 @@ class AToolApp:
         self._persist_window_geometry()
         self._persist_documents_panel_width()
         self._persist_layouts_panel_width()
-        self._persist_document_details_split()
         self._persist_fields_window_geometry()
         self._persist_clause_manager_split()
         self._persist_condition_library_window_geometry()

@@ -1,6 +1,33 @@
 # ATool Release Notes
 
-This release focuses on mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
+This release focuses on shared package edit flow, Comms publish behavior, document/layout editing ergonomics, mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
+
+## Shared Package Editing And Comms Publish
+
+- Opening a shared package version no longer asks whether to check Comms for a newer copy before opening.
+- If you already hold the edit lock for a shared package version, opening it now offers to resume the existing local edit session instead of reacquiring the lock and creating a fresh local copy.
+- Local edit locks now remember the active local edit folder so iterative local saves can be resumed before updating the shared package.
+- Publishing a shared package to Comms now publishes directly from the shared `published/current` folder instead of creating a temporary local publish copy first.
+- The Comms publish dialog labels the package source as `Shared Folder` when it is publishing from the shared package folder.
+
+## Documents And Layouts Panels
+
+- The Documents panel now has a `+Document` button for adding documents directly.
+- Document movement supports multi-select in flat view.
+- Document movement adds `Top`, `Bottom`, and `Auto Move` controls.
+- `Auto Move` places selected documents near similarly named documents.
+- Repeated document movement clicks now work without moving the mouse off and back onto the button.
+- The Layouts panel now places `+Layout` to the left of `+Content`.
+- Layout controls now use shorter labels: `+Content`, `Up`, `Down`, `+Iteration`, and `+Field`.
+
+## Document Details Panel
+
+- `Triggered` is hidden until data has been mapped.
+- `Updated` now appears directly under Description.
+- Parent and Children display rows were removed.
+- Condition and Match Details are collapsible, and the collapsed state is saved across app sessions.
+- Match Details now appears under Condition in Document Details instead of in a separate resizable panel.
+- The condition ellipsis button was removed because selecting a document already populates Clause Manager.
 
 ## Mapping Results Are Easier To Review
 
