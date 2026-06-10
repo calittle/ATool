@@ -8871,6 +8871,13 @@ class AToolApp:
     @staticmethod
     def _is_occs_unauthorized_error(message: str) -> bool:
         normalized = message.lower()
+        if "401" in normalized and (
+            "unauthorized" in normalized
+            or "authorization required" in normalized
+            or "status code 401" in normalized
+            or "status: 401" in normalized
+        ):
+            return True
         if "unauthorized" not in normalized:
             return False
         return any(

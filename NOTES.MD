@@ -1,6 +1,10 @@
 # ATool Release Notes
 
-This release focuses on shared package edit flow, Comms publish behavior, document/layout editing ergonomics, mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
+This release focuses on shared package edit flow, Comms publish behavior, Comms authentication resilience, document/layout editing ergonomics, mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
+
+## Comms Authentication
+
+- Comms package/config commands now auto-run `occs login` and retry once when OCCS returns a plain HTTP 401 response such as `401 Unauthorized` or `401 Authorization Required`.
 
 ## Shared Package Editing And Comms Publish
 
