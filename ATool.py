@@ -266,10 +266,16 @@ class AToolApp:
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
         save_accelerator = "Cmd+S" if self._is_macos() else "Alt+S"
+        open_session_accelerator = "Shift+Cmd+O" if self._is_macos() else "Shift+Ctrl+O"
         file_menu.add_command(
             label="Save",
             accelerator=save_accelerator,
             command=self.save_assembly_template,
+        )
+        file_menu.add_command(
+            label="Open Session",
+            accelerator=open_session_accelerator,
+            command=self.open_last_session,
         )
         file_menu.add_separator()
         file_menu.add_command(label="About ATool", command=self._show_about_dialog)
@@ -649,44 +655,51 @@ class AToolApp:
             text="+Layout",
             command=self.add_layout_to_selected_document,
         )
-        self.add_layout_button.grid(row=0, column=0, padx=(0, 6))
+        self.add_layout_button.grid(row=0, column=0, padx=(0, 2))
         self._attach_tooltip(self.add_layout_button, "Add a layout to the selected document.")
         self.add_content_button = ttk.Button(
             controls,
             text="+Content",
             command=self.add_content_to_selected_layout,
         )
-        self.add_content_button.grid(row=0, column=1, padx=(0, 6))
+        self.add_content_button.grid(row=0, column=1, padx=(0, 2))
         self.move_layout_up_button = ttk.Button(
             controls,
             text="Up",
             command=lambda: self.move_selected_layout(-1),
         )
-        self.move_layout_up_button.grid(row=0, column=2, padx=(0, 6))
+        self.move_layout_up_button.grid(row=0, column=2, padx=(0, 2))
         self.move_layout_down_button = ttk.Button(
             controls,
             text="Down",
             command=lambda: self.move_selected_layout(1),
         )
-        self.move_layout_down_button.grid(row=0, column=3, padx=(0, 6))
+        self.move_layout_down_button.grid(row=0, column=3, padx=(0, 2))
         self.add_iteration_button = ttk.Button(
             controls,
             text="+Iteration",
             command=self.add_iteration_to_selected_content,
         )
-        self.add_iteration_button.grid(row=0, column=4, padx=(0, 6))
+        self.add_iteration_button.grid(row=0, column=4, padx=(0, 2))
         self.add_iteration_field_button = ttk.Button(
             controls,
             text="+Field",
             command=self.add_field_to_selected_iteration,
         )
-        self.add_iteration_field_button.grid(row=0, column=5, padx=(0, 6))
+        self.add_iteration_field_button.grid(row=0, column=5, padx=(0, 2))
         self.remove_layout_item_button = ttk.Button(
             controls,
             text="Remove",
             command=self.remove_selected_layout_item,
         )
-        self.remove_layout_item_button.grid(row=0, column=6)
+        self.remove_layout_item_button.grid(row=0, column=6, padx=(0, 2))
+        self.toggle_layout_tree_button = ttk.Button(
+            controls,
+            text="Expand",
+            command=self.toggle_layout_tree_expansion,
+        )
+        self.toggle_layout_tree_button.grid(row=0, column=7)
+        self._attach_tooltip(self.toggle_layout_tree_button, "Expand or collapse the full layout tree.")
 
         self.layouts_vertical_pane = ttk.Panedwindow(panel, orient=tk.VERTICAL)
         self.layouts_vertical_pane.grid(row=1, column=0, sticky="nsew")
@@ -697,6 +710,8 @@ class AToolApp:
         self.layouts_tree = ttk.Treeview(self.layouts_tree_panel, show="tree", selectmode="extended")
         self.layouts_tree.grid(row=0, column=0, sticky="nsew")
         self.layouts_tree.bind("<<TreeviewSelect>>", self._on_layout_tree_select)
+        self.layouts_tree.bind("<<TreeviewOpen>>", self._on_layout_tree_open_close)
+        self.layouts_tree.bind("<<TreeviewClose>>", self._on_layout_tree_open_close)
         self.layouts_tree.bind("<Delete>", self._remove_selected_layout_item_event)
         self.layouts_tree.bind("<BackSpace>", self._remove_selected_layout_item_event)
         if self._is_macos():
@@ -4312,6 +4327,11 @@ class AToolApp:
             self.add_iteration_field_button.config(state=add_field_state)
         if hasattr(self, "remove_layout_item_button"):
             self.remove_layout_item_button.config(state=remove_state)
+        if hasattr(self, "toggle_layout_tree_button"):
+            has_expandable_nodes = self._layout_tree_has_expandable_nodes()
+            toggle_text = "Expand" if self._layout_tree_has_collapsed_nodes() else "Collapse"
+            toggle_state = tk.NORMAL if has_expandable_nodes else tk.DISABLED
+            self.toggle_layout_tree_button.config(text=toggle_text, state=toggle_state)
         if hasattr(self, "layout_condition_tool_button"):
             condition_state = tk.NORMAL if node_kind in {"layout", "content", "field", "condition"} else tk.DISABLED
             self.layout_condition_tool_button.config(state=condition_state)
@@ -4928,6 +4948,7 @@ class AToolApp:
 
         if not self.layouts_tree.get_children():
             self._set_empty_layouts_tree("No layouts found")
+        self._update_layout_context_buttons()
 
     def _insert_layout_node(self, parent_node: str, layout: dict[str, object]) -> None:
         node_text = self._build_layout_tree_label("layout", layout)
@@ -5034,6 +5055,39 @@ class AToolApp:
         self._active_layout_node_id = None
         self._update_layout_context_buttons()
 
+    def toggle_layout_tree_expansion(self) -> None:
+        if not self._layout_tree_has_expandable_nodes():
+            return
+        self._set_all_layout_tree_nodes_open(self._layout_tree_has_collapsed_nodes())
+        self._update_layout_context_buttons()
+
+    def _layout_tree_has_expandable_nodes(self) -> bool:
+        return any(self._layout_node_has_children_recursive(node_id) for node_id in self.layouts_tree.get_children(""))
+
+    def _layout_node_has_children_recursive(self, node_id: str) -> bool:
+        children = self.layouts_tree.get_children(node_id)
+        if children:
+            return True
+        return any(self._layout_node_has_children_recursive(child_id) for child_id in children)
+
+    def _layout_tree_has_collapsed_nodes(self) -> bool:
+        return any(self._layout_node_has_collapsed_nodes_recursive(node_id) for node_id in self.layouts_tree.get_children(""))
+
+    def _layout_node_has_collapsed_nodes_recursive(self, node_id: str) -> bool:
+        children = self.layouts_tree.get_children(node_id)
+        if children and not bool(self.layouts_tree.item(node_id, "open")):
+            return True
+        return any(self._layout_node_has_collapsed_nodes_recursive(child_id) for child_id in children)
+
+    def _set_all_layout_tree_nodes_open(self, open_state: bool) -> None:
+        for node_id in self.layouts_tree.get_children(""):
+            self._set_layout_tree_node_open_recursive(node_id, open_state)
+
+    def _set_layout_tree_node_open_recursive(self, node_id: str, open_state: bool) -> None:
+        self.layouts_tree.item(node_id, open=open_state)
+        for child_id in self.layouts_tree.get_children(node_id):
+            self._set_layout_tree_node_open_recursive(child_id, open_state)
+
     def _on_layout_tree_select(self, _event: tk.Event) -> None:
         selected = self.layouts_tree.selection()
         if not selected:
@@ -5054,6 +5108,9 @@ class AToolApp:
         self._set_layout_details(details)
         self._update_layout_context_buttons()
         self._refresh_condition_composer_for_current_target()
+
+    def _on_layout_tree_open_close(self, _event: tk.Event) -> None:
+        self.root.after_idle(self._update_layout_context_buttons)
 
     def _set_layout_details(self, details: dict[str, object]) -> None:
         self._updating_layout_form = True
@@ -5225,7 +5282,9 @@ class AToolApp:
             if not iteration_path:
                 return False
             iteration_items = self._extract_values_by_path(self.current_data_payload, iteration_path)
-            return any(self._extract_values_by_path(item, path) for item in iteration_items)
+            if not iteration_items:
+                return False
+            return all(self._extract_values_by_path(item, path) for item in iteration_items)
         return False
 
     def _layout_node_chain_triggered(self, details: dict[str, object]) -> bool:
@@ -7501,6 +7560,7 @@ class AToolApp:
             self.root.bind_all("<Command-Q>", self._quit_event)
             self.root.bind_all("<Command-o>", self._open_event)
             self.root.bind_all("<Command-O>", self._open_event)
+            self.root.bind_all("<Command-Shift-O>", self._open_session_event)
             self.root.bind_all("<Command-s>", self._save_event)
             self.root.bind_all("<Command-S>", self._save_event)
             self.root.bind_all("<Command-m>", self._map_event)
@@ -7513,6 +7573,7 @@ class AToolApp:
         else:
             self.root.bind_all("<Alt-o>", self._open_event)
             self.root.bind_all("<Alt-O>", self._open_event)
+            self.root.bind_all("<Control-Shift-O>", self._open_session_event)
             self.root.bind_all("<Alt-s>", self._save_event)
             self.root.bind_all("<Alt-S>", self._save_event)
             self.root.bind_all("<Alt-m>", self._map_event)
@@ -7525,6 +7586,10 @@ class AToolApp:
 
     def _open_event(self, event: tk.Event) -> str:
         self.open_occs_package()
+        return "break"
+
+    def _open_session_event(self, event: tk.Event) -> str:
+        self.open_last_session()
         return "break"
 
     def _save_event(self, event: tk.Event) -> str:
@@ -7620,6 +7685,45 @@ class AToolApp:
         if not selected_dir:
             return
         self._load_occs_bundle(selected_dir)
+
+    def open_last_session(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Open Session", "A package operation is already in progress.")
+            return
+        if self._mapping_in_progress:
+            messagebox.showinfo("Open Session", "A mapping run is already in progress.")
+            return
+        if self._mapping_dialog_in_progress:
+            return
+        if not self._prompt_save_if_dirty():
+            return
+
+        state = self._read_app_state()
+        bundle_dir_text = str(state.get("last_occs_bundle", "")).strip()
+        if not bundle_dir_text:
+            messagebox.showinfo("Open Session", "No previous package session was found.")
+            return
+        bundle_dir = Path(os.path.expanduser(bundle_dir_text))
+        if not bundle_dir.exists() or not bundle_dir.is_dir():
+            messagebox.showerror("Open Session", f"Last package folder was not found:\n{bundle_dir}")
+            return
+
+        data_file_text = str(state.get("last_data_file", "")).strip()
+        data_file_path = Path(os.path.expanduser(data_file_text)) if data_file_text else None
+        can_map_data_file = data_file_path is not None and data_file_path.exists() and data_file_path.is_file()
+
+        if not self._load_occs_bundle(str(bundle_dir)):
+            return
+
+        if can_map_data_file and data_file_path is not None:
+            self._map_data_file_path(str(data_file_path))
+            self._show_temporary_status("Opened last session; mapping last data file", duration_ms=5000)
+            return
+
+        if data_file_path is None:
+            self._show_temporary_status("Opened last package; no previous JSON file to map", duration_ms=5000)
+        else:
+            self._show_temporary_status("Opened last package; previous JSON file was not found", duration_ms=5000)
 
     def clean_local_occs_packages(self) -> None:
         work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))

@@ -14,6 +14,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 ## Layout Mapping Diagnostics
 
 - The Layouts panel now colors every item with a mapped path or condition: blue when the data satisfies it, red when it does not. Layout Properties also show PASS/FAIL status for condition evaluation and mapping status in Summary, while mapped iterations and fields continue to show their current mapped values under Mapped.
+- Iterated layout fields now require every iterator row to map a value before they are colored blue; missing values in any row leave the field red.
 
 ## Shared Package Editing And Comms Publish
 
@@ -26,6 +27,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
 - Package menu shortcuts were added for Preview (`Cmd/Ctrl+P`), Update Shared Package (`Cmd/Ctrl+U`), and Publish Package to Comms (`Shift+Cmd/Ctrl+U`).
+- `File > Open Session` now reopens the last package and remaps the last JSON data file with `Shift+Cmd/Ctrl+O`.
 - Comms/OCCS requests now show a running elapsed timer in the status bar, such as `[2s] Previewing package clp_bills...`.
 
 ## Documents And Layouts Panels
@@ -39,6 +41,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Layout controls now use shorter labels: `+Content`, `Up`, `Down`, `+Iteration`, and `+Field`.
 - Layouts now opens in its own window, is available from `Window > Show Layouts`, and remembers its window size and position.
 - Layouts can now be copied and pasted between documents with Cmd/Ctrl+C and Cmd/Ctrl+V, including multi-selected layouts and their nested contents.
+- The Layouts toolbar is more compact and now includes an Expand/Collapse toggle for the full layout tree.
 - The document toolbar `Sample` button was removed; sample input generation is now available from `Data > Generate Sample...`.
 
 ## Document Details Panel
