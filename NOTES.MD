@@ -18,6 +18,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
 - Package menu shortcuts were added for Preview (`Cmd/Ctrl+P`), Update Shared Package (`Cmd/Ctrl+U`), and Publish Package to Comms (`Shift+Cmd/Ctrl+U`).
+- Comms/OCCS requests now show a running elapsed timer in the status bar, such as `[2s] Previewing package clp_bills...`.
 
 ## Documents And Layouts Panels
 
@@ -28,6 +29,8 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Repeated document movement clicks now work without moving the mouse off and back onto the button.
 - The Layouts panel now places `+Layout` to the left of `+Content`.
 - Layout controls now use shorter labels: `+Content`, `Up`, `Down`, `+Iteration`, and `+Field`.
+- Layouts now opens in its own window, is available from `Window > Show Layouts`, and remembers its window size and position.
+- The document toolbar `Sample` button was removed; sample input generation is now available from `Data > Generate Sample...`.
 
 ## Document Details Panel
 

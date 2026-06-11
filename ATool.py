@@ -72,16 +72,20 @@ class AToolApp:
         self.root = root
         self._geometry_write_job: str | None = None
         self._status_note_job: str | None = None
+        self._occs_status_timer_job: str | None = None
+        self._occs_status_started_at: float | None = None
+        self._occs_status_message = ""
         self._field_node_details: dict[str, dict[str, object]] = {}
         self._document_node_details: dict[str, dict[str, object]] = {}
         self._layout_node_details: dict[str, dict[str, object]] = {}
         self._triggered_document_names: set[str] = set()
         self.documents_panel_width = self._load_saved_documents_panel_width()
-        self.layouts_panel_width = self._load_saved_layouts_panel_width()
         self.document_condition_collapsed = self._load_document_details_section_collapsed("condition")
         self.document_match_details_collapsed = self._load_document_details_section_collapsed("match_details")
         self.fields_window: tk.Toplevel | None = None
         self._fields_window_geometry_job: str | None = None
+        self.layouts_window: tk.Toplevel | None = None
+        self._layouts_window_geometry_job: str | None = None
         self.condition_library_window: tk.Toplevel | None = None
         self.clause_trigger_update_window: tk.Toplevel | None = None
         self.condition_usage_window: tk.Toplevel | None = None
@@ -188,6 +192,7 @@ class AToolApp:
         self.root.lift()
         self._show_fields_window()
         self._show_condition_library_window()
+        self._show_layouts_window()
         self.root.after(200, self._focus_main_window)
 
     def _focus_main_window(self) -> None:
@@ -284,6 +289,11 @@ class AToolApp:
             accelerator=convert_and_map_accelerator,
             command=self.convert_and_map_data_file,
         )
+        data_menu.add_separator()
+        data_menu.add_command(
+            label="Generate Sample...",
+            command=self.generate_sample_input_for_selected_document,
+        )
 
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
@@ -328,6 +338,7 @@ class AToolApp:
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
         window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
+        window_menu.add_command(label="Show Layouts", command=self._show_layouts_window)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
@@ -430,10 +441,8 @@ class AToolApp:
         content_frame.columnconfigure(0, weight=1)
         content_frame.rowconfigure(0, weight=1)
 
-        self.docs_layouts_pane = ttk.Panedwindow(content_frame, orient=tk.HORIZONTAL)
-        self.docs_layouts_pane.grid(row=0, column=0, sticky="nsew")
-
-        self.left_column_frame = ttk.Frame(self.docs_layouts_pane)
+        self.left_column_frame = ttk.Frame(content_frame)
+        self.left_column_frame.grid(row=0, column=0, sticky="nsew")
         self.left_column_frame.columnconfigure(0, weight=1)
         self.left_column_frame.rowconfigure(0, weight=1)
 
@@ -446,20 +455,10 @@ class AToolApp:
         self.left_vertical_pane.add(self.documents_panel, weight=3)
         self.left_vertical_pane.add(self.document_details_panel, weight=2)
 
-        self.layouts_right_frame = ttk.Frame(self.docs_layouts_pane)
-        self.layouts_right_frame.columnconfigure(0, weight=1)
-        self.layouts_right_frame.rowconfigure(0, weight=1)
-        self.layouts_panel = self._create_layouts_panel(self.layouts_right_frame)
-        self.layouts_panel.grid(row=0, column=0, sticky="nsew")
-
-        self.docs_layouts_pane.add(self.left_column_frame, weight=3)
-        self.docs_layouts_pane.add(self.layouts_right_frame, weight=2)
-
         self.root.after(0, self._apply_saved_documents_panel_width)
-        self.root.after(0, self._apply_saved_layouts_panel_width)
         self.left_vertical_pane.bind("<ButtonRelease-1>", self._on_main_pane_release)
-        self.docs_layouts_pane.bind("<ButtonRelease-1>", self._on_docs_layouts_pane_release)
         self._create_fields_window()
+        self._create_layouts_window()
 
         self._set_empty_documents_tree("No documents loaded")
         self._set_empty_layouts_tree("No layouts loaded")
@@ -582,15 +581,6 @@ class AToolApp:
             "Move selected document near similarly named documents.",
         )
 
-        self.generate_sample_input_button = ttk.Button(
-            controls,
-            text="Sample",
-            command=self.generate_sample_input_for_selected_document,
-        )
-        self._attach_tooltip(
-            self.generate_sample_input_button,
-            "Generate a sample input JSON that satisfies the selected document.",
-        )
         self._document_toolbar_buttons = [
             self.documents_view_toggle_button,
             self.clear_mapping_button,
@@ -601,7 +591,6 @@ class AToolApp:
             self.move_document_down_button,
             self.move_document_bottom_button,
             self.auto_move_document_button,
-            self.generate_sample_input_button,
         ]
         self._relayout_documents_controls()
 
@@ -1055,9 +1044,6 @@ class AToolApp:
     def _on_main_pane_release(self, _event: tk.Event) -> None:
         self._persist_documents_panel_width()
 
-    def _on_docs_layouts_pane_release(self, _event: tk.Event) -> None:
-        self._persist_layouts_panel_width()
-
     def _on_field_details_configure(self, _event: tk.Event) -> None:
         self._update_field_details_wraplength()
 
@@ -1181,29 +1167,6 @@ class AToolApp:
         width = self._safe_int(state.get("documents_panel_width"))
         if width is None or width < 120:
             return 320
-        return width
-
-    def _apply_saved_layouts_panel_width(self) -> None:
-        self.root.update_idletasks()
-        total_width = self.docs_layouts_pane.winfo_width()
-        if total_width <= 1:
-            return
-        left_width = max(360, min(self.layouts_panel_width, total_width - 260))
-        self.layouts_panel_width = left_width
-        self.docs_layouts_pane.sashpos(0, left_width)
-
-    def _persist_layouts_panel_width(self) -> None:
-        width = self.left_column_frame.winfo_width()
-        if width < 220:
-            return
-        self.layouts_panel_width = width
-        self._update_app_state({"layouts_panel_width": width})
-
-    def _load_saved_layouts_panel_width(self) -> int:
-        state = self._read_app_state()
-        width = self._safe_int(state.get("layouts_panel_width"))
-        if width is None or width < 220:
-            return 620
         return width
 
     def _on_clause_manager_pane_release(self, _event: tk.Event) -> None:
@@ -1347,6 +1310,98 @@ class AToolApp:
         self._update_app_state(
             {
                 "fields_window_geometry": {
+                    "width": width,
+                    "height": height,
+                    "x": x_pos,
+                    "y": y_pos,
+                }
+            }
+        )
+
+    def _create_layouts_window(self) -> None:
+        if self.layouts_window is not None and self.layouts_window.winfo_exists():
+            return
+        self.layouts_window = self._create_toplevel(self.root)
+        self.layouts_window.title("ATool - Layouts")
+        self.layouts_window.minsize(520, 420)
+        self._attach_app_menu(self.layouts_window)
+        self.layouts_window.protocol("WM_DELETE_WINDOW", self._hide_layouts_window)
+        self.layouts_window.bind("<Configure>", self._on_layouts_window_configure)
+
+        container = ttk.Frame(self.layouts_window, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        self.layouts_panel = self._create_layouts_panel(container)
+        self.layouts_panel.grid(row=0, column=0, sticky="nsew")
+
+        self._restore_layouts_window_geometry()
+        self.root.after(0, self._position_layouts_window_if_needed)
+
+    def _position_layouts_window_if_needed(self) -> None:
+        if self.layouts_window is None or not self.layouts_window.winfo_exists():
+            return
+        state = self._read_app_state()
+        geometry = state.get("layouts_window_geometry")
+        if isinstance(geometry, dict):
+            return
+        self.root.update_idletasks()
+        self.layouts_window.update_idletasks()
+        x_pos = self.root.winfo_x() + self.root.winfo_width() + 28
+        y_pos = self.root.winfo_y() + 40
+        width = max(620, self.layouts_window.winfo_width())
+        height = max(520, self.root.winfo_height() - 40)
+        self.layouts_window.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    def _show_layouts_window(self) -> None:
+        self._create_layouts_window()
+        assert self.layouts_window is not None
+        self.layouts_window.deiconify()
+        self.layouts_window.lift()
+        self.layouts_window.focus_force()
+
+    def _hide_layouts_window(self) -> None:
+        if self.layouts_window is None or not self.layouts_window.winfo_exists():
+            return
+        self.layouts_window.withdraw()
+
+    def _on_layouts_window_configure(self, event: tk.Event) -> None:
+        if self.layouts_window is None or event.widget is not self.layouts_window:
+            return
+        if self._layouts_window_geometry_job:
+            self.root.after_cancel(self._layouts_window_geometry_job)
+        self._layouts_window_geometry_job = self.root.after(300, self._persist_layouts_window_geometry)
+
+    def _restore_layouts_window_geometry(self) -> None:
+        if self.layouts_window is None or not self.layouts_window.winfo_exists():
+            return
+        state = self._read_app_state()
+        geometry = state.get("layouts_window_geometry")
+        if not isinstance(geometry, dict):
+            return
+        width = self._safe_int(geometry.get("width"))
+        height = self._safe_int(geometry.get("height"))
+        x_pos = self._safe_int(geometry.get("x"))
+        y_pos = self._safe_int(geometry.get("y"))
+        if all(value is not None for value in [width, height, x_pos, y_pos]):
+            self.layouts_window.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    def _persist_layouts_window_geometry(self) -> None:
+        self._layouts_window_geometry_job = None
+        if self.layouts_window is None or not self.layouts_window.winfo_exists():
+            return
+        if self.layouts_window.state() == "withdrawn":
+            return
+        width = self.layouts_window.winfo_width()
+        height = self.layouts_window.winfo_height()
+        x_pos = self.layouts_window.winfo_x()
+        y_pos = self.layouts_window.winfo_y()
+        if width <= 1 or height <= 1:
+            return
+        self._update_app_state(
+            {
+                "layouts_window_geometry": {
                     "width": width,
                     "height": height,
                     "x": x_pos,
@@ -4214,8 +4269,6 @@ class AToolApp:
             self.move_document_bottom_button.config(state=selected_state)
         if hasattr(self, "auto_move_document_button"):
             self.auto_move_document_button.config(state=selected_state)
-        if hasattr(self, "generate_sample_input_button"):
-            self.generate_sample_input_button.config(state=selected_state)
 
     def _update_layout_context_buttons(self) -> None:
         node_kind = ""
@@ -6730,9 +6783,16 @@ class AToolApp:
         lines = detail.get("details")
         if not isinstance(lines, list) or not lines:
             return "Clause passed."
+        display_lines = [
+            str(line)
+            for line in lines
+            if not str(line).lstrip().startswith("Check:")
+        ]
+        if not display_lines:
+            return "Clause passed."
         return "\n".join(
             self._truncate_ui_text(str(line), 240)
-            for line in lines[:12]
+            for line in display_lines[:12]
         )
 
     def _on_document_name_commit(self, _event: tk.Event | None = None) -> None:
@@ -8741,10 +8801,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
-        if self._status_note_job:
-            self.root.after_cancel(self._status_note_job)
-            self._status_note_job = None
-        self.status_text.set(status_message)
+        self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
         def _worker() -> None:
@@ -8773,10 +8830,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
-        if self._status_note_job:
-            self.root.after_cancel(self._status_note_job)
-            self._status_note_job = None
-        self.status_text.set(status_message)
+        self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
         def _worker() -> None:
@@ -8795,6 +8849,7 @@ class AToolApp:
 
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
+        self._stop_occs_status_timer()
         self._restore_default_status_text()
         if callable(on_success):
             on_success(result)
@@ -8806,6 +8861,7 @@ class AToolApp:
         on_failure: object | None,
     ) -> None:
         self._occs_operation_in_progress = False
+        self._stop_occs_status_timer()
         self._restore_default_status_text()
         self._debug_log(f"OCCS command failed:\n{stack}")
         if callable(on_failure):
@@ -8890,7 +8946,10 @@ class AToolApp:
 
     def _run_occs_login_for_retry(self, original_error: str) -> None:
         self._debug_log("OCCS authorization failed; running `occs login` before retrying.")
-        self.root.after(0, lambda: self.status_text.set("OCCS session expired. Running occs login..."))
+        self.root.after(
+            0,
+            lambda: self._set_occs_status_timer_message("OCCS session expired. Running occs login..."),
+        )
         try:
             completed = self._run_occs_cli(
                 ["login"],
@@ -9827,10 +9886,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
-        if self._status_note_job:
-            self.root.after_cancel(self._status_note_job)
-            self._status_note_job = None
-        self.status_text.set(f"Loading Comms package versions for {package_name}...")
+        self._start_occs_status_timer(f"Loading Comms package versions for {package_name}...")
         self._debug_log(f"OCCS package version probe started: {package_name}")
 
         def _worker() -> None:
@@ -11922,10 +11978,44 @@ class AToolApp:
         self._status_note_job = None
         self.status_text.set(self._default_status_text())
 
+    def _format_occs_timed_status(self) -> str:
+        started_at = self._occs_status_started_at
+        elapsed_seconds = 0 if started_at is None else int(time.monotonic() - started_at)
+        return f"[{elapsed_seconds}s] {self._occs_status_message}"
+
+    def _refresh_occs_status_timer(self) -> None:
+        if self._occs_status_started_at is None:
+            self._occs_status_timer_job = None
+            return
+        self.status_text.set(self._format_occs_timed_status())
+        self._occs_status_timer_job = self.root.after(1000, self._refresh_occs_status_timer)
+
+    def _start_occs_status_timer(self, message: str) -> None:
+        if self._status_note_job:
+            self.root.after_cancel(self._status_note_job)
+            self._status_note_job = None
+        self._stop_occs_status_timer()
+        self._occs_status_started_at = time.monotonic()
+        self._occs_status_message = message
+        self._refresh_occs_status_timer()
+
+    def _set_occs_status_timer_message(self, message: str) -> None:
+        self._occs_status_message = message
+        if self._occs_status_started_at is not None:
+            self.status_text.set(self._format_occs_timed_status())
+
+    def _stop_occs_status_timer(self) -> None:
+        if self._occs_status_timer_job:
+            self.root.after_cancel(self._occs_status_timer_job)
+            self._occs_status_timer_job = None
+        self._occs_status_started_at = None
+        self._occs_status_message = ""
+
     def _show_temporary_status(self, message: str, duration_ms: int = 5000) -> None:
         if self._status_note_job:
             self.root.after_cancel(self._status_note_job)
             self._status_note_job = None
+        self._stop_occs_status_timer()
         self.status_text.set(message)
         self._status_note_job = self.root.after(duration_ms, self._restore_default_status_text)
 
@@ -11934,12 +12024,14 @@ class AToolApp:
             return
         self._persist_window_geometry()
         self._persist_documents_panel_width()
-        self._persist_layouts_panel_width()
         self._persist_fields_window_geometry()
+        self._persist_layouts_window_geometry()
         self._persist_clause_manager_split()
         self._persist_condition_library_window_geometry()
         if self.fields_window is not None and self.fields_window.winfo_exists():
             self.fields_window.destroy()
+        if self.layouts_window is not None and self.layouts_window.winfo_exists():
+            self.layouts_window.destroy()
         if self.condition_usage_window is not None and self.condition_usage_window.winfo_exists():
             self.condition_usage_window.destroy()
         if self.condition_library_window is not None and self.condition_library_window.winfo_exists():
