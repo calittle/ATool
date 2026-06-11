@@ -37,6 +37,13 @@ also copied there, along with a stable `ATool-latest.zip` file.
 Each release zip includes a generated `NOTES.MD` file with commit details and a
 short change summary for the packaged snapshot.
 
+The app's **File -> About ATool** dialog displays the build number and support
+contact. For packaged releases, the build number is the short form of the git
+commit recorded in `BUILD_INFO.txt`; dirty worktree builds add `-dirty`. The
+dialog also shows the source snapshot, build timestamp, and artifact name. For
+local development runs without `BUILD_INFO.txt`, ATool falls back to the current
+repo's short git hash and adds `-dirty` when there are uncommitted changes.
+
 ### Enable the Git Hook
 
 Run this once from the repo root:

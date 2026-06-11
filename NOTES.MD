@@ -35,7 +35,9 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - `Updated` now appears directly under Description.
 - Parent and Children display rows were removed.
 - Condition and Match Details are collapsible, and the collapsed state is saved across app sessions.
+- When either Condition or Match Details is collapsed, the still-open section expands to use the available details-panel space.
 - Match Details now appears under Condition in Document Details instead of in a separate resizable panel.
+- Match Details now shows a simplified clause list: passing clauses are blue, failing clauses are red, and hovering a clause shows the matched values or failure reason.
 - The condition ellipsis button was removed because selecting a document already populates Clause Manager.
 
 ## Mapping Results Are Easier To Review
@@ -45,6 +47,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Triggered documents are shown in blue.
 - Untriggered documents are shown in red.
 - The status bar shows the total document count and how many documents matched.
+- The short-lived `Mapping: ...` text was removed from the lower status bar.
 - `Clear Map` clears mapping colors/details and hides the mapped-result filter.
 
 ## Unmatched Documents Explain Why They Failed
@@ -89,6 +92,7 @@ Useful interpretation rules:
 ## Preview Workflow And Package Menu
 
 - `Preview...` is now the final item in the Package menu, separated from package management commands by a divider.
+- The Preview dialog now focuses the `Preview` button by default, so pressing Enter starts the preview.
 - When preview output is opened automatically, ATool no longer shows an extra completion popup first.
 - Preview still reports output paths when automatic opening is disabled or no output file is available to open.
 
@@ -123,6 +127,8 @@ On startup, ATool now:
 
 The app menu is attached to the main window, Field Manager, and Clause Manager so `File`, `Package`, `Data`, `Settings`, and `Window` remain available as focus moves between those windows.
 
+`File -> About ATool` now shows the app build number and support contact (`andy.little@oracle.com`). Packaged builds use the git commit recorded in `BUILD_INFO.txt` as the build number source, dirty worktree builds add `-dirty`, and local development runs fall back to the current short git hash.
+
 ## Release Package Notes
 
 Release zip artifacts include a generated `NOTES.MD` file. The generated file includes:
@@ -130,6 +136,7 @@ Release zip artifacts include a generated `NOTES.MD` file. The generated file in
 - artifact name
 - build source (`head` or `worktree`)
 - commit SHA
+- dirty worktree status
 - build timestamp
 - a `git show --stat` commit snippet for the packaged commit
 - worktree status and diffstat when built with `--source worktree`

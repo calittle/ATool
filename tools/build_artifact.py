@@ -204,7 +204,9 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     dist_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     commit_sha = git_value(repo_root, "rev-parse", "--short", "HEAD", default="local")
-    artifact_path = dist_dir / f"ATool-{timestamp}-{commit_sha}.zip"
+    is_dirty_worktree = source == "worktree" and bool(git_output(repo_root, "status", "--short", default=""))
+    build_id = f"{commit_sha}-dirty" if is_dirty_worktree and commit_sha != "local" else commit_sha
+    artifact_path = dist_dir / f"ATool-{timestamp}-{build_id}.zip"
     full_commit_sha = git_value(repo_root, "rev-parse", "HEAD", default="local")
     built_at = datetime.now().isoformat(timespec="seconds")
 
@@ -228,6 +230,7 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
                     f"artifact={artifact_path.name}",
                     f"source={source}",
                     f"commit={full_commit_sha}",
+                    f"dirty={str(is_dirty_worktree).lower()}",
                     f"built_at={built_at}",
                 ]
             )

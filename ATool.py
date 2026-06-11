@@ -19,6 +19,8 @@ from xml.etree import ElementTree
 
 
 class AToolApp:
+    APP_NAME = "Assembly Template Tool (ATool)"
+    CONTACT_EMAIL = "andy.little@oracle.com"
     DEFAULT_WIDTH = 1000
     DEFAULT_HEIGHT = 640
     MACOS_PANEL_BACKGROUND = "#f0f0f0"
@@ -261,6 +263,8 @@ class AToolApp:
             command=self.save_assembly_template,
         )
         file_menu.add_separator()
+        file_menu.add_command(label="About ATool", command=self._show_about_dialog)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
         data_menu = tk.Menu(menu_bar, tearoff=0)
@@ -332,6 +336,80 @@ class AToolApp:
         menu_bar.add_cascade(label="Window", menu=window_menu)
         return menu_bar
 
+    def _show_about_dialog(self) -> None:
+        build_info = self._get_app_build_info()
+        build_label = build_info.get("build_label", "local")
+        source_label = build_info.get("source", "local")
+        built_at = build_info.get("built_at", "")
+        artifact = build_info.get("artifact", "")
+
+        lines = [
+            self.APP_NAME,
+            f"Build: {build_label}",
+        ]
+        if source_label:
+            lines.append(f"Source: {source_label}")
+        if built_at:
+            lines.append(f"Built: {built_at}")
+        if artifact:
+            lines.append(f"Artifact: {artifact}")
+        lines.extend(
+            [
+                "",
+                f"Contact: {self.CONTACT_EMAIL}",
+            ]
+        )
+        messagebox.showinfo("About ATool", "\n".join(lines), parent=self.root)
+
+    @classmethod
+    def _get_app_build_info(cls) -> dict[str, str]:
+        build_info = cls._read_packaged_build_info()
+        if not build_info:
+            build_info = {
+                "source": "local worktree",
+                "commit": cls._local_git_value("rev-parse", "--short", "HEAD", default="local"),
+            }
+            if cls._local_git_value("status", "--short", default=""):
+                build_info["dirty"] = "true"
+
+        commit = build_info.get("commit", "").strip()
+        short_commit = commit[:7] if commit and commit != "local" else commit or "local"
+        if build_info.get("dirty") == "true" and short_commit != "local":
+            short_commit = f"{short_commit}-dirty"
+        build_info["build_label"] = short_commit or "local"
+        return build_info
+
+    @staticmethod
+    def _read_packaged_build_info() -> dict[str, str]:
+        build_info_path = Path(__file__).resolve().with_name("BUILD_INFO.txt")
+        if not build_info_path.exists():
+            return {}
+
+        values: dict[str, str] = {}
+        try:
+            for line in build_info_path.read_text(encoding="utf-8").splitlines():
+                key, separator, value = line.partition("=")
+                if separator and key:
+                    values[key.strip()] = value.strip()
+        except OSError:
+            return {}
+        return values
+
+    @staticmethod
+    def _local_git_value(*args: str, default: str = "") -> str:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(Path(__file__).resolve().parent), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return default
+        if result.returncode != 0:
+            return default
+        return result.stdout.strip() or default
+
     def _create_main_layout(self) -> None:
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -397,14 +475,11 @@ class AToolApp:
         data_label = ttk.Label(status_bar, textvariable=self.data_status_text, anchor=tk.W)
         data_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
 
-        mapping_label = ttk.Label(status_bar, textvariable=self.mapping_status_text, anchor=tk.W)
-        mapping_label.grid(row=0, column=2, sticky="w", padx=(12, 0))
-
         docs_label = ttk.Label(status_bar, textvariable=self.document_count_text, anchor=tk.CENTER)
-        docs_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
+        docs_label.grid(row=0, column=2, sticky="e", padx=(12, 0))
 
         fields_label = ttk.Label(status_bar, textvariable=self.field_count_text, anchor=tk.CENTER)
-        fields_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
+        fields_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
 
     def _create_documents_panel(self, parent: ttk.Frame) -> tuple[ttk.Frame, ttk.Treeview]:
         panel = ttk.Frame(parent, padding=(0, 0, 12, 0))
@@ -966,6 +1041,9 @@ class AToolApp:
         match_details_scroll = ttk.Scrollbar(match_details_frame, orient=tk.VERTICAL, command=match_details_value.yview)
         match_details_scroll.grid(row=0, column=1, sticky="ns")
         match_details_value.configure(yscrollcommand=match_details_scroll.set, state=tk.DISABLED)
+        match_details_value.tag_configure("match_pass", foreground="blue")
+        match_details_value.tag_configure("match_fail", foreground="red")
+        match_details_value.tag_configure("match_info", foreground=self.MACOS_TEXT_FOREGROUND)
         self.document_match_details_frame = match_details_frame
         self.document_match_details_widget = match_details_value
 
@@ -1037,6 +1115,30 @@ class AToolApp:
                 self.document_match_details_frame.grid_remove()
             else:
                 self.document_match_details_frame.grid()
+        self._update_document_details_section_weights()
+
+    def _update_document_details_section_weights(self) -> None:
+        editor_frame = getattr(self, "document_details_editor_frame", None)
+        if editor_frame is None:
+            return
+
+        condition_visible = not self.document_condition_collapsed
+        match_details_visible = not self.document_match_details_collapsed
+        if condition_visible and match_details_visible:
+            condition_weight = 3
+            match_details_weight = 2
+        elif condition_visible:
+            condition_weight = 5
+            match_details_weight = 0
+        elif match_details_visible:
+            condition_weight = 0
+            match_details_weight = 5
+        else:
+            condition_weight = 0
+            match_details_weight = 0
+
+        editor_frame.rowconfigure(10, weight=condition_weight)
+        editor_frame.rowconfigure(12, weight=match_details_weight)
 
     def _update_document_triggered_visibility(self) -> None:
         if not hasattr(self, "document_triggered_title") or not hasattr(self, "document_triggered_value"):
@@ -6546,7 +6648,7 @@ class AToolApp:
             if len(warning_lines) > 5:
                 trigger_text += f"\n- ... and {len(warning_lines) - 5} more"
         self.document_triggered_text.set(trigger_text)
-        self._set_document_match_details(self._format_document_match_details(document))
+        self._set_document_match_details(document)
         updated = str(document.get("updated", "")).strip()
         self.document_updated_text.set(updated if updated else "-")
         descr = str(document.get("descr", "")).strip()
@@ -6564,7 +6666,7 @@ class AToolApp:
         self.document_triggered_text.set("-")
         self.edit_document_name_var.set("")
         self._set_text_widget_value(self.document_condition_widget, "")
-        self._set_document_match_details("")
+        self._clear_document_match_details()
         self.document_descr_edit_text.set("")
         self.document_updated_text.set("-")
         self._update_document_triggered_visibility()
@@ -6581,10 +6683,57 @@ class AToolApp:
             return "PASS Document condition matched."
         return "No match diagnostics recorded."
 
-    def _set_document_match_details(self, value: str) -> None:
+    def _set_document_match_details(self, document: dict[str, object]) -> None:
+        widget = getattr(self, "document_match_details_widget", None)
+        if not isinstance(widget, tk.Text):
+            return
+
+        source_document = document.get("document_ref")
+        if not isinstance(source_document, dict):
+            source_document = document
+        details = source_document.get("condition_match_details")
+        if not isinstance(details, list) or not details:
+            self._set_readonly_text_widget_value(widget, self._format_document_match_details(source_document))
+            return
+
+        widget.configure(state=tk.NORMAL)
+        widget.delete("1.0", tk.END)
+        for tag_name in widget.tag_names():
+            if tag_name.startswith("match_detail_"):
+                widget.tag_delete(tag_name)
+
+        for index, detail in enumerate(details):
+            if not isinstance(detail, dict):
+                continue
+            passed = bool(detail.get("passed"))
+            status = "PASS" if passed else "FAIL"
+            label = str(detail.get("label", "")).strip() or "(unnamed clause)"
+            line_start = widget.index(tk.INSERT)
+            widget.insert(tk.INSERT, f"{status} {label}\n", "match_pass" if passed else "match_fail")
+            line_end = widget.index(tk.INSERT)
+            tooltip_text = self._format_match_detail_tooltip(detail)
+            if tooltip_text:
+                detail_tag = f"match_detail_{index}"
+                widget.tag_add(detail_tag, line_start, line_end)
+                widget.tag_bind(detail_tag, "<Enter>", lambda event, text=tooltip_text: self._show_tooltip(event, text))
+                widget.tag_bind(detail_tag, "<Leave>", lambda _event: self._hide_tooltip())
+                widget.tag_bind(detail_tag, "<ButtonPress>", lambda _event: self._hide_tooltip())
+
+        widget.configure(state=tk.DISABLED)
+
+    def _clear_document_match_details(self) -> None:
         widget = getattr(self, "document_match_details_widget", None)
         if isinstance(widget, tk.Text):
-            self._set_readonly_text_widget_value(widget, str(value or ""))
+            self._set_readonly_text_widget_value(widget, "")
+
+    def _format_match_detail_tooltip(self, detail: dict[str, object]) -> str:
+        lines = detail.get("details")
+        if not isinstance(lines, list) or not lines:
+            return "Clause passed."
+        return "\n".join(
+            self._truncate_ui_text(str(line), 240)
+            for line in lines[:12]
+        )
 
     def _on_document_name_commit(self, _event: tk.Event | None = None) -> None:
         self._apply_document_form_change(name=self.edit_document_name_var.get())
@@ -6620,6 +6769,7 @@ class AToolApp:
             return
 
         changed = False
+        condition_changed = False
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if name is not None:
@@ -6635,6 +6785,7 @@ class AToolApp:
                 document["condition"] = normalized_condition
                 details["condition"] = normalized_condition
                 changed = True
+                condition_changed = True
 
         if descr is not None and descr != str(document.get("descr", "")):
             document["descr"] = descr
@@ -6648,6 +6799,22 @@ class AToolApp:
         details["updated"] = now_text
         self._sync_document_to_payload(document)
         self._set_dirty(True)
+        if condition_changed and self.current_data_payload is not None:
+            self._refresh_document_condition_mapping(document)
+            details["triggered"] = bool(document.get("triggered"))
+            details["condition_warnings"] = list(document.get("condition_warnings", [])) if isinstance(
+                document.get("condition_warnings"),
+                list,
+            ) else []
+            details["condition_breakdown"] = list(document.get("condition_breakdown", [])) if isinstance(
+                document.get("condition_breakdown"),
+                list,
+            ) else []
+            details["condition_match_details"] = list(document.get("condition_match_details", [])) if isinstance(
+                document.get("condition_match_details"),
+                list,
+            ) else []
+            self._set_document_match_details(details)
 
         if name is not None and self._active_document_node_id:
             self.documents_tree.item(self._active_document_node_id, text=str(document.get("name", "")))
@@ -7622,12 +7789,10 @@ class AToolApp:
                 on_failure=lambda error: messagebox.showerror("Preview Package", str(error)),
             )
 
-        ttk.Button(buttons, text="Preview", command=_submit).grid(row=0, column=1)
-
-        if mapped_data_file:
-            timeout_entry.focus_set()
-        else:
-            data_file_entry.focus_set()
+        preview_button = ttk.Button(buttons, text="Preview", command=_submit, default="active")
+        preview_button.grid(row=0, column=1)
+        dialog.bind("<Return>", lambda _event: _submit())
+        preview_button.focus_set()
         dialog.update_idletasks()
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
@@ -11057,6 +11222,7 @@ class AToolApp:
                 triggered_docs_by_index: dict[int, bool] = {}
                 condition_warnings_by_index: dict[int, list[str]] = {}
                 condition_breakdowns_by_index: dict[int, list[str]] = {}
+                condition_match_details_by_index: dict[int, list[dict[str, object]]] = {}
                 for index, condition in enumerate(doc_conditions):
                     condition_warnings: list[str] = []
                     is_triggered = self._evaluate_document_condition(
@@ -11076,6 +11242,11 @@ class AToolApp:
                             is_triggered=is_triggered,
                             entries=condition_library_entries,
                         )
+                    condition_match_details_by_index[index] = self._build_document_condition_match_details(
+                        condition,
+                        data_payload,
+                        entries=condition_library_entries,
+                    )
                     if index and index % 250 == 0:
                         self._debug_log(f"Document condition progress: {index}/{len(doc_conditions)}")
 
@@ -11089,6 +11260,7 @@ class AToolApp:
                         triggered_docs_by_index,
                         condition_warnings_by_index,
                         condition_breakdowns_by_index,
+                        condition_match_details_by_index,
                         selected_field,
                         duration,
                     ),
@@ -11111,6 +11283,7 @@ class AToolApp:
         triggered_docs_by_index: dict[int, bool],
         condition_warnings_by_index: dict[int, list[str]],
         condition_breakdowns_by_index: dict[int, list[str]],
+        condition_match_details_by_index: dict[int, list[dict[str, object]]],
         selected_field: dict[str, object] | None,
         duration_seconds: float,
     ) -> None:
@@ -11142,6 +11315,11 @@ class AToolApp:
                     document["condition_breakdown"] = breakdown
                 else:
                     document.pop("condition_breakdown", None)
+                match_details = condition_match_details_by_index.get(index, [])
+                if match_details:
+                    document["condition_match_details"] = match_details
+                else:
+                    document.pop("condition_match_details", None)
                 if is_triggered:
                     triggered_docs.add(str(document["name"]))
         self._triggered_document_names = triggered_docs
@@ -11180,6 +11358,13 @@ class AToolApp:
             document["triggered"] = False
             document["condition_warnings"] = [f"Could not evaluate condition: {error}"]
             document["condition_breakdown"] = [f"FAIL Could not evaluate document condition: {error}"]
+            document["condition_match_details"] = [
+                {
+                    "label": "Document condition",
+                    "passed": False,
+                    "details": [f"Reason: could not evaluate ({error})"],
+                }
+            ]
             self._triggered_document_names.discard(document_name)
             self.document_count_text.set(
                 f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
@@ -11201,6 +11386,10 @@ class AToolApp:
                 is_triggered=is_triggered,
             )
             self._triggered_document_names.discard(document_name)
+        document["condition_match_details"] = self._build_document_condition_match_details(
+            condition,
+            self.current_data_payload,
+        )
         self.document_count_text.set(
             f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
         )
@@ -11411,6 +11600,9 @@ class AToolApp:
                 "condition_breakdown": list(document.get("condition_breakdown", []))
                 if isinstance(document.get("condition_breakdown"), list)
                 else [],
+                "condition_match_details": list(document.get("condition_match_details", []))
+                if isinstance(document.get("condition_match_details"), list)
+                else [],
                 "path_index": str(document.get("path_index", "")),
                 "document_ref": document,
             }
@@ -11471,6 +11663,9 @@ class AToolApp:
             else [],
             "condition_breakdown": list(document.get("condition_breakdown", []))
             if isinstance(document.get("condition_breakdown"), list)
+            else [],
+            "condition_match_details": list(document.get("condition_match_details", []))
+            if isinstance(document.get("condition_match_details"), list)
             else [],
             "path_index": str(document.get("path_index", "")),
             "document_ref": document,
@@ -12094,6 +12289,42 @@ class AToolApp:
         lines.extend(self._format_condition_leaf_summary(("RAW", condition_body), raw_leaf_results))
         return self._limit_condition_breakdown_lines(lines)
 
+    def _build_document_condition_match_details(
+        self,
+        condition: str,
+        data_payload: object,
+        *,
+        entries: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, object]]:
+        condition_body = self._extract_condition_body(condition)
+        if not condition_body:
+            return [
+                {
+                    "label": "No condition",
+                    "passed": True,
+                    "details": ["Document always matches."],
+                }
+            ]
+
+        library_entries = entries if entries is not None else self._condition_library_entries
+        try:
+            compose_text, _exact, _unmatched_count = self._compose_expression_from_raw_condition_with_entries(
+                condition,
+                library_entries,
+            )
+            if compose_text:
+                parsed_tree = self._parse_composed_condition_tree(compose_text)
+                _passed, leaf_results = self._collect_condition_leaf_results(
+                    parsed_tree,
+                    data_payload,
+                    library_entries,
+                )
+                return leaf_results
+        except ValueError:
+            pass
+
+        return self._collect_raw_condition_leaf_results(condition_body, data_payload)
+
     @staticmethod
     def _condition_status_text(passed: bool) -> str:
         return "PASS" if passed else "FAIL"
@@ -12185,7 +12416,9 @@ class AToolApp:
             return self._collect_condition_leaf_result(clause_name, clause_expression, data_payload)
 
         if kind == "RAW":
-            return self._collect_condition_leaf_result("RAW condition", str(value), data_payload)
+            leaves = self._collect_raw_condition_leaf_results(str(value), data_payload)
+            passed = all(bool(leaf.get("passed")) for leaf in leaves) if leaves else True
+            return passed, leaves
 
         return False, [
             {
@@ -12200,7 +12433,20 @@ class AToolApp:
         expression: str,
         data_payload: object,
     ) -> list[dict[str, object]]:
-        _passed, leaves = self._collect_condition_leaf_result("RAW condition", expression, data_payload)
+        atomic_clauses = self._collect_atomic_condition_clauses(expression)
+        if not atomic_clauses:
+            _passed, leaves = self._collect_condition_leaf_result("RAW condition", expression, data_payload)
+            return leaves
+        leaves: list[dict[str, object]] = []
+        for clause in atomic_clauses:
+            passed, details = self._describe_atomic_condition_result(clause, data_payload)
+            leaves.append(
+                {
+                    "label": clause,
+                    "passed": passed,
+                    "details": details,
+                }
+            )
         return leaves
 
     def _collect_condition_leaf_result(
@@ -12220,23 +12466,29 @@ class AToolApp:
 
         atomic_clauses = self._collect_atomic_condition_clauses(body)
         failing_details: list[str] = []
+        all_details: list[str] = []
         fallback_details: list[str] = []
         for clause in atomic_clauses:
             atomic_passed, atomic_details = self._describe_atomic_condition_result(clause, data_payload)
-            if atomic_passed:
-                continue
             if atomic_details:
-                failing_details.extend(atomic_details)
+                status = self._condition_status_text(atomic_passed)
+                all_details.append(f"{status} {clause}")
+                all_details.extend(atomic_details)
+                if not atomic_passed:
+                    failing_details.append(f"{status} {clause}")
+                    failing_details.extend(atomic_details)
             else:
-                fallback_details.append(f"Check: {clause}")
+                all_details.append(f"{self._condition_status_text(atomic_passed)} {clause}")
+                if not atomic_passed:
+                    fallback_details.append(f"Check: {clause}")
 
         if passed:
-            return True, [{"label": label, "passed": True, "details": []}]
+            return True, [{"label": label, "passed": True, "details": all_details}]
         return False, [
             {
                 "label": label,
                 "passed": False,
-                "details": failing_details or fallback_details,
+                "details": failing_details or fallback_details or all_details,
             }
         ]
 
