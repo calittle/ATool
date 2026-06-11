@@ -284,11 +284,17 @@ class AToolApp:
 
         data_menu = tk.Menu(menu_bar, tearoff=0)
         map_accelerator = "Cmd+M" if self._is_macos() else "Alt+M"
+        remap_accelerator = "Alt+Cmd+M" if self._is_macos() else "Alt+Ctrl+M"
         convert_and_map_accelerator = "Shift+Cmd+M" if self._is_macos() else "Shift+Ctrl+M"
         data_menu.add_command(
             label="Map...",
             accelerator=map_accelerator,
             command=self.map_data_file,
+        )
+        data_menu.add_command(
+            label="Remap",
+            accelerator=remap_accelerator,
+            command=self.remap_data_file,
         )
         data_menu.add_command(
             label="Convert...",
@@ -525,6 +531,7 @@ class AToolApp:
             text="Map",
             command=self._toggle_mapping_file,
         )
+        self.clear_mapping_button.bind("<Shift-Button-1>", self._remap_button_event)
         self._attach_tooltip(self.clear_mapping_button, "Map a data file or clear the current map.")
 
         self.document_mapping_filter_button = ttk.Button(
@@ -4273,6 +4280,12 @@ class AToolApp:
             enabled = has_mapped_file or self.current_payload is not None
             state = tk.NORMAL if enabled else tk.DISABLED
             self.clear_mapping_button.config(text=text, command=command, state=state)
+            tooltip = (
+                "Clear the current map. Shift-click to reload and remap the current data file."
+                if has_mapped_file
+                else "Map a data file."
+            )
+            self._attach_tooltip(self.clear_mapping_button, tooltip)
             self._relayout_documents_controls()
         if hasattr(self, "document_mapping_filter_button"):
             label = "Show All" if self._show_triggered_documents_only else "Show Triggered"
@@ -7565,6 +7578,10 @@ class AToolApp:
             self.root.bind_all("<Command-S>", self._save_event)
             self.root.bind_all("<Command-m>", self._map_event)
             self.root.bind_all("<Command-M>", self._map_event)
+            self.root.bind_all("<Command-Option-m>", self._remap_event)
+            self.root.bind_all("<Command-Option-M>", self._remap_event)
+            self.root.bind_all("<Command-Alt-m>", self._remap_event)
+            self.root.bind_all("<Command-Alt-M>", self._remap_event)
             self.root.bind_all("<Command-p>", self._preview_event)
             self.root.bind_all("<Command-P>", self._preview_event)
             self.root.bind_all("<Command-Shift-M>", self._convert_and_map_event)
@@ -7578,6 +7595,8 @@ class AToolApp:
             self.root.bind_all("<Alt-S>", self._save_event)
             self.root.bind_all("<Alt-m>", self._map_event)
             self.root.bind_all("<Alt-M>", self._map_event)
+            self.root.bind_all("<Control-Alt-m>", self._remap_event)
+            self.root.bind_all("<Control-Alt-M>", self._remap_event)
             self.root.bind_all("<Control-p>", self._preview_event)
             self.root.bind_all("<Control-P>", self._preview_event)
             self.root.bind_all("<Control-Shift-M>", self._convert_and_map_event)
@@ -7598,6 +7617,10 @@ class AToolApp:
 
     def _map_event(self, event: tk.Event) -> str:
         self.map_data_file()
+        return "break"
+
+    def _remap_event(self, event: tk.Event) -> str:
+        self.remap_data_file()
         return "break"
 
     def _preview_event(self, event: tk.Event) -> str:
@@ -11363,6 +11386,31 @@ class AToolApp:
         self._update_mapping_controls()
         self.root.update_idletasks()
         self.root.after(25, lambda: self._open_data_file_dialog(initial_dir, initial_file))
+
+    def remap_data_file(self) -> None:
+        if self.current_payload is None:
+            messagebox.showinfo("Remap", "Open an assembly template first.")
+            return
+        if self._mapping_in_progress:
+            messagebox.showinfo("Remap", "A mapping run is already in progress.")
+            return
+        if self._mapping_dialog_in_progress:
+            return
+        data_file_path = self.current_data_file_path
+        if not data_file_path:
+            messagebox.showinfo("Remap", "No data file is currently mapped.")
+            return
+        if not os.path.exists(data_file_path):
+            messagebox.showerror("Remap", f"Mapped data file was not found:\n{data_file_path}")
+            return
+        self.clear_mapping()
+        self._map_data_file_path(data_file_path)
+
+    def _remap_button_event(self, _event: tk.Event) -> str:
+        if self.current_data_file_path is not None:
+            self.remap_data_file()
+            return "break"
+        return ""
 
     def _open_data_file_dialog(self, initial_dir: str, initial_file: str) -> None:
         data_file_path = ""

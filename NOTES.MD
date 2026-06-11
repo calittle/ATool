@@ -58,6 +58,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 ## Mapping Results Are Easier To Review
 
 - After mapping a data file, the Documents list now starts in `Show Triggered` mode so matched documents are visible immediately.
+- `Data > Remap` reloads the currently mapped JSON file from disk after clearing the existing map, and is also available with `Alt+Cmd/Ctrl+M` or Shift-click on `Clear Map`.
 - Use `Show All` to inspect the full mapped document list, including failed matches.
 - Triggered documents are shown in blue.
 - Untriggered documents are shown in red.
