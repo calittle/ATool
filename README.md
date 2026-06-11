@@ -212,8 +212,7 @@ sudo dnf install python3-tkinter
    - `Package -> Open Shared Package...`
    - `Package -> Open Local Package...`
    - `Package -> Open Raw AT...`
-   - `Package -> List Packages from Comms...`
-   - `Package -> Get Package from Comms...`
+   - `Package -> Get Packages from Comms...`
    - macOS: `Cmd+O`
    - Windows/Linux: `Alt+O`
 2. Review and edit:

@@ -14,6 +14,10 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Local edit locks now remember the active local edit folder so iterative local saves can be resumed before updating the shared package.
 - Publishing a shared package to Comms now publishes directly from the shared `published/current` folder instead of creating a temporary local publish copy first.
 - The Comms publish dialog labels the package source as `Shared Folder` when it is publishing from the shared package folder.
+- `Package > Get Packages from Comms...` now replaces the separate list/get Comms menu items with one list-first workflow.
+- The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
+- After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
+- Package menu shortcuts were added for Preview (`Cmd/Ctrl+P`), Update Shared Package (`Cmd/Ctrl+U`), and Publish Package to Comms (`Shift+Cmd/Ctrl+U`).
 
 ## Documents And Layouts Panels
 
@@ -78,6 +82,7 @@ Useful interpretation rules:
 
 - The Data menu now includes `Convert and Map...`.
 - This converts an XML bill file to JSON, then maps the generated JSON to the open assembly template automatically.
+- Convert and Map now has a keyboard shortcut: `Shift+Cmd+M` on macOS and `Shift+Ctrl+M` on Windows/Linux.
 - The workflow reuses the existing conversion validation, including multi-Bill-ID confirmation and overwrite prompts.
 - If conversion succeeds but the generated JSON cannot be found, ATool reports the conversion output path instead of silently failing.
 
