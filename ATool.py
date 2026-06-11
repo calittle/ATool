@@ -50,6 +50,7 @@ class AToolApp:
         "occs": {
             "cli_path": "",
             "work_dir": "",
+            "session_alias": "",
             "last_config_id": "",
             "shared_workspace_dir": "",
             "user_name": "",
@@ -4166,6 +4167,7 @@ class AToolApp:
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+        session_alias_var = tk.StringVar(value=self._get_occs_session_alias())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
         preview_program_vars = {
@@ -4223,9 +4225,13 @@ class AToolApp:
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Session Alias:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
+        session_alias_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
-        shared_workspace_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+        shared_workspace_entry.grid(row=3, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
@@ -4239,16 +4245,16 @@ class AToolApp:
                 shared_workspace_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
-            row=2,
+            row=3,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="User Name:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
@@ -4315,6 +4321,7 @@ class AToolApp:
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
+            self._set_occs_session_alias(session_alias_var.get())
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
             for render_type, variable in preview_program_vars.items():
@@ -4354,6 +4361,10 @@ class AToolApp:
     def _set_occs_work_dir(self, work_dir: str) -> None:
         section = self._occs_settings_section()
         section["work_dir"] = str(work_dir or "").strip()
+
+    def _set_occs_session_alias(self, session_alias: str) -> None:
+        section = self._occs_settings_section()
+        section["session_alias"] = str(session_alias or "").strip()
 
     def _set_occs_shared_workspace_dir(self, shared_workspace_dir: str) -> None:
         section = self._occs_settings_section()
@@ -4398,6 +4409,12 @@ class AToolApp:
         if isinstance(section, dict):
             configured = str(section.get("work_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_work_dir())
+
+    def _get_occs_session_alias(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return str(section.get("session_alias", "")).strip()
 
     def _get_occs_shared_workspace_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -4608,7 +4625,7 @@ class AToolApp:
 
         occs = parsed.get("occs")
         if isinstance(occs, dict):
-            for key in ("cli_path", "work_dir", "last_config_id", "shared_workspace_dir", "user_name"):
+            for key in ("cli_path", "work_dir", "session_alias", "last_config_id", "shared_workspace_dir", "user_name"):
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
@@ -8892,9 +8909,25 @@ class AToolApp:
 
     def _build_occs_command(self, args: list[str]) -> list[str]:
         cli_path = os.path.expanduser(self._get_occs_cli_path())
+        args = self._occs_args_with_session_alias(args)
         if cli_path.endswith(".js") or os.path.basename(cli_path) == "occs.js":
             return ["node", cli_path, *args]
         return [cli_path, *args]
+
+    def _occs_args_with_session_alias(self, args: list[str]) -> list[str]:
+        command_args = [str(arg) for arg in args]
+        session_alias = self._get_occs_session_alias()
+        if not session_alias or "--session" in command_args:
+            return command_args
+        if not command_args:
+            return command_args
+
+        command_name = command_args[0]
+        if command_name == "package":
+            return [command_name, "--session", session_alias, *command_args[1:]]
+        if command_name in {"preview", "convertxml", "list-configs"}:
+            return [command_name, "--session", session_alias, *command_args[1:]]
+        return command_args
 
     def _occs_cli_cwd(self) -> str | None:
         cli_path = Path(os.path.expanduser(self._get_occs_cli_path()))

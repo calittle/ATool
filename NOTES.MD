@@ -5,6 +5,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 ## Comms Authentication
 
 - Comms package/config commands now auto-run `occs login` and retry once when OCCS returns a plain HTTP 401 response such as `401 Unauthorized` or `401 Authorization Required`.
+- User Settings now include an OCCS session alias so ATool can consistently run package, preview, conversion, and config-list commands against the intended saved session such as `np`.
 
 ## Shared Package Editing And Comms Publish
 
