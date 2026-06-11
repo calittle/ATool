@@ -62,6 +62,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Use `Show All` to inspect the full mapped document list, including failed matches.
 - Triggered documents are shown in blue.
 - Untriggered documents are shown in red.
+- Field Manager now colors mapped fields blue and unmapped fields red after mapping, and includes a `Show Mapped` / `Show All` toggle while mapped data is active.
 - The status bar shows the total document count and how many documents matched.
 - The short-lived `Mapping: ...` text was removed from the lower status bar.
 - `Clear Map` clears mapping colors, field values, document Match Details, and hides the mapped-result filter.

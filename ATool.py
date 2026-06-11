@@ -128,6 +128,7 @@ class AToolApp:
         self._mapping_in_progress = False
         self._mapping_dialog_in_progress = False
         self._show_triggered_documents_only = False
+        self._show_mapped_fields_only = False
         self._mapping_job_id = 0
         self.is_dirty = False
         self._updating_field_form = False
@@ -882,12 +883,23 @@ class AToolApp:
         )
         self.view_toggle_button.grid(row=0, column=2)
 
+        self.field_mapping_filter_button = ttk.Button(
+            controls,
+            text="Show Mapped",
+            command=self._toggle_mapped_field_filter,
+        )
+        self.field_mapping_filter_button.grid(row=0, column=3, padx=(6, 0))
+        self._attach_tooltip(
+            self.field_mapping_filter_button,
+            "Toggle between all fields and mapped fields only.",
+        )
+
         self.add_field_button = ttk.Button(
             controls,
             text="Add Field",
             command=self.add_field,
         )
-        self.add_field_button.grid(row=0, column=3, padx=(6, 0))
+        self.add_field_button.grid(row=0, column=4, padx=(6, 0))
 
         filter_row = ttk.Frame(panel)
         filter_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -912,6 +924,8 @@ class AToolApp:
 
         tree.tag_configure("mandatory_true", foreground="green4")
         tree.tag_configure("mandatory_false", foreground="blue4")
+        tree.tag_configure("mapped_field", foreground="blue")
+        tree.tag_configure("unmapped_field", foreground="red")
         return panel, tree
 
     def _create_field_details_panel(self, parent: ttk.Frame) -> ttk.Frame:
@@ -1286,6 +1300,7 @@ class AToolApp:
         fields_vertical_pane.add(self.fields_panel, weight=3)
         fields_vertical_pane.add(self.field_details_panel, weight=2)
 
+        self._update_field_mapping_filter_button()
         self._restore_fields_window_geometry()
         self.root.after(0, self._position_fields_window_if_needed)
 
@@ -4269,6 +4284,7 @@ class AToolApp:
 
     def _update_mapping_controls(self) -> None:
         self._update_document_triggered_visibility()
+        self._update_field_mapping_filter_button()
         if hasattr(self, "clear_mapping_button"):
             if self._mapping_dialog_in_progress:
                 self.clear_mapping_button.config(text="Opening...", command=self.map_data_file, state=tk.DISABLED)
@@ -4298,6 +4314,24 @@ class AToolApp:
         self._show_triggered_documents_only = not self._show_triggered_documents_only
         self._update_mapping_controls()
         self._render_documents_tree()
+
+    def _toggle_mapped_field_filter(self) -> None:
+        if self.current_data_payload is None:
+            return
+        self._show_mapped_fields_only = not self._show_mapped_fields_only
+        self._update_field_mapping_filter_button()
+        self._render_fields_tree()
+
+    def _update_field_mapping_filter_button(self) -> None:
+        if not hasattr(self, "field_mapping_filter_button"):
+            return
+        if self.current_data_payload is None:
+            self._show_mapped_fields_only = False
+            self.field_mapping_filter_button.grid_remove()
+            return
+        label = "Show All" if self._show_mapped_fields_only else "Show Mapped"
+        self.field_mapping_filter_button.config(text=label, state=tk.NORMAL)
+        self.field_mapping_filter_button.grid()
 
     def _update_document_context_buttons(self) -> None:
         selected_doc = self._get_selected_document_ref()
@@ -11450,6 +11484,7 @@ class AToolApp:
         self.current_data_payload = None
         self.current_data_file_path = None
         self._show_triggered_documents_only = False
+        self._show_mapped_fields_only = False
         self._triggered_document_names = set()
         self.data_status_text.set("Data: (none)")
         self.mapping_status_text.set("Mapping: Idle")
@@ -12601,7 +12636,11 @@ class AToolApp:
 
     def _insert_field_leaf(self, parent: str, field: dict[str, object]) -> None:
         mandatory = bool(field["mandatory"])
-        tag = "mandatory_true" if mandatory else "mandatory_false"
+        if self.current_data_payload is not None:
+            mapped_values = field.get("mapped_values")
+            tag = "mapped_field" if isinstance(mapped_values, list) and len(mapped_values) > 0 else "unmapped_field"
+        else:
+            tag = "mandatory_true" if mandatory else "mandatory_false"
         suffix = " [mandatory]" if mandatory else ""
         field_node_id = self.fields_tree.insert(
             parent,
@@ -12689,7 +12728,7 @@ class AToolApp:
 
     def _get_filtered_fields(self) -> list[dict[str, object]]:
         base_fields = self._loaded_fields
-        if self.current_data_payload is not None:
+        if self.current_data_payload is not None and self._show_mapped_fields_only:
             base_fields = [
                 field
                 for field in base_fields
