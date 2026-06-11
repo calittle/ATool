@@ -43,6 +43,9 @@ class AToolApp:
     OCCS_LOGIN_TIMEOUT_SECONDS = 120
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     DEFAULT_SETTINGS = {
+        "application": {
+            "confirm_on_quit": True,
+        },
         "document_display": {
             "collapse": False,
         },
@@ -4307,8 +4310,19 @@ class AToolApp:
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
 
+        application_group = ttk.LabelFrame(container, text="Application", padding=10)
+        application_group.grid(row=0, column=0, sticky="ew")
+
+        confirm_on_quit_var = tk.BooleanVar(value=self._get_confirm_on_quit_setting())
+        confirm_on_quit_check = ttk.Checkbutton(
+            application_group,
+            text="Confirm on Quit",
+            variable=confirm_on_quit_var,
+        )
+        confirm_on_quit_check.grid(row=0, column=0, sticky="w")
+
         group = ttk.LabelFrame(container, text="Document Display", padding=10)
-        group.grid(row=0, column=0, sticky="ew")
+        group.grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
         collapse_var = tk.BooleanVar(value=self._get_document_collapse_setting())
         collapse_check = ttk.Checkbutton(
@@ -4319,7 +4333,7 @@ class AToolApp:
         collapse_check.grid(row=0, column=0, sticky="w")
 
         diagnostics_group = ttk.LabelFrame(container, text="Diagnostics", padding=10)
-        diagnostics_group.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        diagnostics_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
         debug_var = tk.BooleanVar(value=self._is_debug_logging_enabled())
         debug_check = ttk.Checkbutton(
@@ -4330,7 +4344,7 @@ class AToolApp:
         debug_check.grid(row=0, column=0, sticky="w")
 
         occs_group = ttk.LabelFrame(container, text="OCCS CLI", padding=10)
-        occs_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        occs_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         occs_group.columnconfigure(1, weight=1)
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
@@ -4425,7 +4439,7 @@ class AToolApp:
         user_name_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
-        preview_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         preview_group.columnconfigure(1, weight=1)
 
         def _browse_preview_program(render_type: str) -> None:
@@ -4476,15 +4490,16 @@ class AToolApp:
             wraplength=520,
             justify=tk.LEFT,
         )
-        path_label.grid(row=4, column=0, sticky="w", pady=(10, 0))
+        path_label.grid(row=5, column=0, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=5, column=0, sticky="e", pady=(14, 0))
+        buttons.grid(row=6, column=0, sticky="e", pady=(14, 0))
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
 
         def _save_settings() -> None:
+            self._set_confirm_on_quit_enabled(bool(confirm_on_quit_var.get()))
             self._set_document_collapse_enabled(bool(collapse_var.get()))
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
@@ -4507,6 +4522,13 @@ class AToolApp:
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _set_confirm_on_quit_enabled(self, enabled: bool) -> None:
+        section = self.user_settings.setdefault("application", {})
+        if not isinstance(section, dict):
+            section = {}
+            self.user_settings["application"] = section
+        section["confirm_on_quit"] = enabled
 
     def _set_document_collapse_enabled(self, enabled: bool) -> None:
         section = self.user_settings.setdefault("document_display", {})
@@ -4752,6 +4774,15 @@ class AToolApp:
             return False
         return bool(document_display.get("collapse"))
 
+    def _get_confirm_on_quit_setting(self) -> bool:
+        application = self.user_settings.get("application")
+        if not isinstance(application, dict):
+            return True
+        value = application.get("confirm_on_quit")
+        if isinstance(value, bool):
+            return value
+        return True
+
     def _is_debug_logging_enabled(self) -> bool:
         diagnostics = self.user_settings.get("diagnostics")
         if not isinstance(diagnostics, dict):
@@ -4778,6 +4809,12 @@ class AToolApp:
 
         if not isinstance(parsed, dict):
             return settings
+
+        application = parsed.get("application")
+        if isinstance(application, dict):
+            confirm_value = application.get("confirm_on_quit")
+            if isinstance(confirm_value, bool):
+                settings["application"]["confirm_on_quit"] = confirm_value
 
         document_display = parsed.get("document_display")
         if isinstance(document_display, dict):
@@ -4907,6 +4944,7 @@ class AToolApp:
                 "node_kind": "iteration",
                 "source_ref": iteration,
             }
+            self._apply_layout_mapping_tag(iter_node_id, self._layout_node_details[iter_node_id])
             self._insert_condition_child(iter_node_id, iteration)
             fields = self._extract_iteration_fields(iteration)
             for field in fields:
@@ -4918,6 +4956,7 @@ class AToolApp:
                     "node_kind": "field",
                     "source_ref": field,
                 }
+                self._apply_layout_mapping_tag(field_node_id, self._layout_node_details[field_node_id])
                 self._insert_condition_child(field_node_id, field)
 
     def _insert_condition_child(self, parent_node: str, source_ref: dict[str, object]) -> None:
@@ -4929,6 +4968,7 @@ class AToolApp:
             "node_kind": "condition",
             "source_ref": source_ref,
         }
+        self._apply_layout_mapping_tag(condition_node_id, self._layout_node_details[condition_node_id])
 
     @staticmethod
     def _extract_contents(layout: dict[str, object]) -> list[dict[str, object]]:
@@ -5025,8 +5065,14 @@ class AToolApp:
         summary = []
         if "Condition" in source_ref:
             summary.append(f"Condition: {source_ref.get('Condition', '')}")
+            if self.current_data_payload is not None:
+                condition_passed = self._layout_condition_passed(source_ref)
+                summary.append(f"Condition evaluation: {self._condition_status_text(condition_passed)}")
         if "Path" in source_ref:
             summary.append(f"Path: {source_ref.get('Path', '')}")
+            if self.current_data_payload is not None:
+                mapping_passed = self._layout_mapping_passed_for_node_details(details)
+                summary.append(f"Mapping: {self._condition_status_text(mapping_passed)}")
         if "Type" in source_ref:
             summary.append(f"Type: {source_ref.get('Type', '')}")
         self.layout_summary_text.set(" | ".join(summary) if summary else "(no additional properties)")
@@ -5048,11 +5094,14 @@ class AToolApp:
         self._updating_layout_form = False
 
     def _apply_layout_mapping_tag(self, node_id: str, details: dict[str, object]) -> None:
-        node_kind = str(details.get("node_kind", ""))
-        if node_kind not in {"layout", "content"} or self.current_data_payload is None:
+        if self.current_data_payload is None:
             self.layouts_tree.item(node_id, tags=())
             return
-        tag = "layout_triggered" if self._layout_node_chain_triggered_for_node(node_id) else "layout_untriggered"
+        state = self._layout_node_data_state(node_id, details)
+        if state is None:
+            self.layouts_tree.item(node_id, tags=())
+            return
+        tag = "layout_triggered" if state else "layout_untriggered"
         self.layouts_tree.item(node_id, tags=(tag,))
 
     def _refresh_layout_mapping_tags(self) -> None:
@@ -5107,12 +5156,79 @@ class AToolApp:
 
         return "-"
 
+    def _layout_node_data_state(self, node_id: str, details: dict[str, object]) -> bool | None:
+        source_ref = details.get("source_ref")
+        if not isinstance(source_ref, dict):
+            return None
+        has_condition = bool(str(source_ref.get("Condition", "")).strip())
+        has_mapping = self._layout_node_has_mapping(details)
+        if not has_condition and not has_mapping:
+            return None
+        if not self._layout_node_parent_chain_triggered_for_node(node_id):
+            return False
+        condition_passed = self._layout_condition_passed(source_ref) if has_condition else True
+        mapping_passed = self._layout_mapping_passed_for_node_details(details) if has_mapping else True
+        return condition_passed and mapping_passed
+
+    def _layout_node_has_mapping(self, details: dict[str, object]) -> bool:
+        source_ref = details.get("source_ref")
+        if not isinstance(source_ref, dict):
+            return False
+        node_kind = str(details.get("node_kind", ""))
+        return node_kind in {"iteration", "field"} and bool(str(source_ref.get("Path", "")).strip())
+
+    def _layout_condition_passed(self, source_ref: dict[str, object]) -> bool:
+        if self.current_data_payload is None:
+            return False
+        condition_text = str(source_ref.get("Condition", "")).strip()
+        if not condition_text:
+            return True
+        return self._evaluate_document_condition(condition_text, self.current_data_payload)
+
+    def _layout_mapping_passed_for_node_details(self, details: dict[str, object]) -> bool:
+        if self.current_data_payload is None:
+            return False
+        source_ref = details.get("source_ref")
+        if not isinstance(source_ref, dict):
+            return False
+        path = str(source_ref.get("Path", "")).strip()
+        if not path:
+            return False
+        node_kind = str(details.get("node_kind", ""))
+        if node_kind == "iteration":
+            return bool(self._extract_values_by_path(self.current_data_payload, path))
+        if node_kind == "field":
+            iteration_details = self._find_iteration_details_for_layout_details(details)
+            if not iteration_details:
+                return bool(self._extract_values_by_path(self.current_data_payload, path))
+            iteration_ref = iteration_details.get("source_ref")
+            if not isinstance(iteration_ref, dict):
+                return False
+            iteration_path = str(iteration_ref.get("Path", "")).strip()
+            if not iteration_path:
+                return False
+            iteration_items = self._extract_values_by_path(self.current_data_payload, iteration_path)
+            return any(self._extract_values_by_path(item, path) for item in iteration_items)
+        return False
+
     def _layout_node_chain_triggered(self, details: dict[str, object]) -> bool:
         if self._active_layout_node_id is None:
             return False
         return self._layout_node_chain_triggered_for_node(self._active_layout_node_id)
 
     def _layout_node_chain_triggered_for_node(self, node_id: str) -> bool:
+        if not self._layout_node_parent_chain_triggered_for_node(node_id):
+            return False
+        node_details = self._layout_node_details.get(node_id)
+        if isinstance(node_details, dict):
+            source_ref = node_details.get("source_ref")
+            if isinstance(source_ref, dict):
+                condition_text = str(source_ref.get("Condition", "")).strip()
+                if condition_text and not self._evaluate_document_condition(condition_text, self.current_data_payload):
+                    return False
+        return True
+
+    def _layout_node_parent_chain_triggered_for_node(self, node_id: str) -> bool:
         document_ref = self._get_selected_document_ref()
         if document_ref is None:
             return False
@@ -5120,6 +5236,7 @@ class AToolApp:
             return False
         if not bool(document_ref.get("triggered", False)):
             return False
+        node_id = self.layouts_tree.parent(node_id)
         while node_id:
             node_details = self._layout_node_details.get(node_id)
             if isinstance(node_details, dict):
@@ -5134,7 +5251,15 @@ class AToolApp:
     def _find_iteration_details_for_layout_node(self) -> dict[str, object] | None:
         if self._active_layout_node_id is None:
             return None
-        node_id = self._active_layout_node_id
+        return self._find_iteration_details_for_node(self._active_layout_node_id)
+
+    def _find_iteration_details_for_layout_details(self, target_details: dict[str, object]) -> dict[str, object] | None:
+        for node_id, details in self._layout_node_details.items():
+            if details is target_details:
+                return self._find_iteration_details_for_node(node_id)
+        return None
+
+    def _find_iteration_details_for_node(self, node_id: str) -> dict[str, object] | None:
         while node_id:
             details = self._layout_node_details.get(node_id)
             if isinstance(details, dict) and str(details.get("node_kind", "")) == "iteration":
@@ -7220,6 +7345,12 @@ class AToolApp:
 
     def _bind_shortcuts(self) -> None:
         if self._is_macos():
+            try:
+                self.root.createcommand("tk::mac::Quit", self._on_close)
+            except tk.TclError:
+                pass
+            self.root.bind_all("<Command-q>", self._quit_event)
+            self.root.bind_all("<Command-Q>", self._quit_event)
             self.root.bind_all("<Command-o>", self._open_event)
             self.root.bind_all("<Command-O>", self._open_event)
             self.root.bind_all("<Command-s>", self._save_event)
@@ -7258,6 +7389,10 @@ class AToolApp:
 
     def _preview_event(self, event: tk.Event) -> str:
         self.preview_occs_package()
+        return "break"
+
+    def _quit_event(self, event: tk.Event) -> str:
+        self._on_close()
         return "break"
 
     def _convert_and_map_event(self, event: tk.Event) -> str:
@@ -12020,6 +12155,14 @@ class AToolApp:
         self._status_note_job = self.root.after(duration_ms, self._restore_default_status_text)
 
     def _on_close(self) -> None:
+        if self._get_confirm_on_quit_setting():
+            should_quit = messagebox.askokcancel(
+                "Quit ATool",
+                "Quit ATool?",
+                parent=self.root,
+            )
+            if not should_quit:
+                return
         if not self._prompt_save_if_dirty():
             return
         self._persist_window_geometry()

@@ -7,6 +7,14 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Comms package/config commands now auto-run `occs login` and retry once when OCCS returns a plain HTTP 401 response such as `401 Unauthorized` or `401 Authorization Required`.
 - User Settings now include an OCCS session alias so ATool can consistently run package, preview, conversion, and config-list commands against the intended saved session such as `np`.
 
+## User Settings
+
+- User Settings now include `Confirm on Quit`, enabled by default. When enabled, ATool asks for confirmation before quitting from Cmd+Q, File > Exit, or the window close control.
+
+## Layout Mapping Diagnostics
+
+- The Layouts panel now colors every item with a mapped path or condition: blue when the data satisfies it, red when it does not. Layout Properties also show PASS/FAIL status for condition evaluation and mapping status in Summary, while mapped iterations and fields continue to show their current mapped values under Mapped.
+
 ## Shared Package Editing And Comms Publish
 
 - Opening a shared package version no longer asks whether to check Comms for a newer copy before opening.
