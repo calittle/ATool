@@ -136,6 +136,7 @@ class AToolApp:
         self._active_document_node_id: str | None = None
         self._updating_layout_form = False
         self._active_layout_node_id: str | None = None
+        self._layout_clipboard: list[dict[str, object]] = []
         self.root.title("ATool")
         self._restore_window_geometry()
 
@@ -454,6 +455,12 @@ class AToolApp:
 
         self.documents_panel, self.documents_tree = self._create_documents_panel(self.left_vertical_pane)
         self.documents_tree.bind("<<TreeviewSelect>>", self._on_document_tree_select)
+        if self._is_macos():
+            self.documents_tree.bind("<Command-v>", self._paste_copied_layouts_event)
+            self.documents_tree.bind("<Command-V>", self._paste_copied_layouts_event)
+        else:
+            self.documents_tree.bind("<Control-v>", self._paste_copied_layouts_event)
+            self.documents_tree.bind("<Control-V>", self._paste_copied_layouts_event)
         self.document_details_panel = self._create_document_details_panel(self.left_vertical_pane)
         self.left_vertical_pane.add(self.documents_panel, weight=3)
         self.left_vertical_pane.add(self.document_details_panel, weight=2)
@@ -687,11 +694,21 @@ class AToolApp:
         self.layouts_tree_panel = ttk.Frame(self.layouts_vertical_pane)
         self.layouts_tree_panel.columnconfigure(0, weight=1)
         self.layouts_tree_panel.rowconfigure(0, weight=1)
-        self.layouts_tree = ttk.Treeview(self.layouts_tree_panel, show="tree")
+        self.layouts_tree = ttk.Treeview(self.layouts_tree_panel, show="tree", selectmode="extended")
         self.layouts_tree.grid(row=0, column=0, sticky="nsew")
         self.layouts_tree.bind("<<TreeviewSelect>>", self._on_layout_tree_select)
         self.layouts_tree.bind("<Delete>", self._remove_selected_layout_item_event)
         self.layouts_tree.bind("<BackSpace>", self._remove_selected_layout_item_event)
+        if self._is_macos():
+            self.layouts_tree.bind("<Command-c>", self._copy_selected_layouts_event)
+            self.layouts_tree.bind("<Command-C>", self._copy_selected_layouts_event)
+            self.layouts_tree.bind("<Command-v>", self._paste_copied_layouts_event)
+            self.layouts_tree.bind("<Command-V>", self._paste_copied_layouts_event)
+        else:
+            self.layouts_tree.bind("<Control-c>", self._copy_selected_layouts_event)
+            self.layouts_tree.bind("<Control-C>", self._copy_selected_layouts_event)
+            self.layouts_tree.bind("<Control-v>", self._paste_copied_layouts_event)
+            self.layouts_tree.bind("<Control-V>", self._paste_copied_layouts_event)
         self.layouts_tree.tag_configure("layout_triggered", foreground="blue")
         self.layouts_tree.tag_configure("layout_untriggered", foreground="red")
         layouts_scroll = ttk.Scrollbar(self.layouts_tree_panel, orient=tk.VERTICAL, command=self.layouts_tree.yview)
@@ -5516,6 +5533,137 @@ class AToolApp:
         self._set_dirty(True)
         self._refresh_layouts_for_active_document()
         self._select_layout_node_for_source(layout, preferred_kind="layout")
+
+    def _copy_selected_layouts_event(self, _event: tk.Event) -> str:
+        self.copy_selected_layouts()
+        return "break"
+
+    def _paste_copied_layouts_event(self, _event: tk.Event) -> str:
+        self.paste_copied_layouts()
+        return "break"
+
+    def copy_selected_layouts(self) -> None:
+        selected_layouts = self._get_selected_layout_sources_in_tree_order()
+        if not selected_layouts:
+            self._show_temporary_status("Select one or more layouts to copy.", duration_ms=3000)
+            return
+        self._layout_clipboard = [copy.deepcopy(layout) for layout in selected_layouts]
+        layout_count = len(self._layout_clipboard)
+        noun = "layout" if layout_count == 1 else "layouts"
+        self._show_temporary_status(f"Copied {layout_count} {noun}.", duration_ms=3000)
+
+    def paste_copied_layouts(self) -> None:
+        if not self._layout_clipboard:
+            self._show_temporary_status("No copied layouts to paste.", duration_ms=3000)
+            return
+        document_ref = self._get_selected_document_ref()
+        if document_ref is None:
+            self._show_temporary_status("Select a document before pasting layouts.", duration_ms=3000)
+            return
+        source = document_ref.get("source")
+        if not isinstance(source, dict):
+            return
+        layouts = source.get("Layouts")
+        if not isinstance(layouts, list):
+            layouts = []
+            source["Layouts"] = layouts
+
+        insertion_index = self._layout_paste_insertion_index(layouts)
+        existing_layout_names = self._existing_layout_identity_values(layouts)
+        pasted_layouts: list[dict[str, object]] = []
+        for clipboard_layout in self._layout_clipboard:
+            pasted_layout = copy.deepcopy(clipboard_layout)
+            self._deduplicate_pasted_layout_identity(pasted_layout, existing_layout_names)
+            pasted_layouts.append(pasted_layout)
+
+        layouts[insertion_index:insertion_index] = pasted_layouts
+        self._touch_selected_document_updated()
+        self._set_dirty(True)
+        self._refresh_layouts_for_active_document()
+        if pasted_layouts:
+            self._select_layout_node_for_source(pasted_layouts[0], preferred_kind="layout")
+        layout_count = len(pasted_layouts)
+        noun = "layout" if layout_count == 1 else "layouts"
+        self._show_temporary_status(f"Pasted {layout_count} {noun}.", duration_ms=3000)
+
+    def _get_selected_layout_sources_in_tree_order(self) -> list[dict[str, object]]:
+        selected_node_ids = set(self.layouts_tree.selection())
+        if not selected_node_ids and self._active_layout_node_id:
+            selected_node_ids.add(self._active_layout_node_id)
+
+        selected_layouts: list[dict[str, object]] = []
+        for node_id in self.layouts_tree.get_children(""):
+            if node_id not in selected_node_ids:
+                continue
+            details = self._layout_node_details.get(node_id)
+            if not details or str(details.get("node_kind", "")) != "layout":
+                continue
+            source_ref = details.get("source_ref")
+            if isinstance(source_ref, dict):
+                selected_layouts.append(source_ref)
+        return selected_layouts
+
+    def _layout_paste_insertion_index(self, layouts: list[object]) -> int:
+        active_layout = self._get_active_or_parent_layout_source()
+        if active_layout is None:
+            return len(layouts)
+        index = self._index_of_identity(layouts, active_layout)
+        if index < 0:
+            return len(layouts)
+        return index + 1
+
+    def _get_active_or_parent_layout_source(self) -> dict[str, object] | None:
+        node_id = self._active_layout_node_id or ""
+        while node_id:
+            details = self._layout_node_details.get(node_id)
+            if isinstance(details, dict) and str(details.get("node_kind", "")) == "layout":
+                source_ref = details.get("source_ref")
+                if isinstance(source_ref, dict):
+                    return source_ref
+            node_id = self.layouts_tree.parent(node_id)
+        return None
+
+    @staticmethod
+    def _existing_layout_identity_values(layouts: list[object]) -> set[str]:
+        values: set[str] = set()
+        for layout in layouts:
+            if not isinstance(layout, dict):
+                continue
+            for key in ("$$Id", "Name", "Id"):
+                value = str(layout.get(key, "")).strip()
+                if value:
+                    values.add(value)
+        return values
+
+    def _deduplicate_pasted_layout_identity(
+        self,
+        layout: dict[str, object],
+        existing_layout_names: set[str],
+    ) -> None:
+        identity_key = next((key for key in ("$$Id", "Name", "Id") if str(layout.get(key, "")).strip()), "")
+        if not identity_key:
+            return
+        base_name = str(layout.get(identity_key, "")).strip()
+        if not base_name:
+            return
+        if base_name not in existing_layout_names:
+            existing_layout_names.add(base_name)
+            return
+        copied_name = self._unique_copied_layout_identity(base_name, existing_layout_names)
+        layout[identity_key] = copied_name
+        existing_layout_names.add(copied_name)
+
+    @staticmethod
+    def _unique_copied_layout_identity(base_name: str, existing_layout_names: set[str]) -> str:
+        candidate = f"{base_name} Copy"
+        if candidate not in existing_layout_names:
+            return candidate
+        counter = 2
+        while True:
+            candidate = f"{base_name} Copy {counter}"
+            if candidate not in existing_layout_names:
+                return candidate
+            counter += 1
 
     def generate_sample_input_for_selected_document(self) -> None:
         document_ref = self._get_selected_document_ref()
@@ -11159,6 +11307,7 @@ class AToolApp:
             document.pop("triggered", None)
             document.pop("condition_warnings", None)
             document.pop("condition_breakdown", None)
+            document.pop("condition_match_details", None)
         self._render_documents_tree()
         self._render_fields_tree()
         self.document_count_text.set(f"Documents: {len(self._loaded_documents)}")

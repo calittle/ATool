@@ -38,6 +38,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The Layouts panel now places `+Layout` to the left of `+Content`.
 - Layout controls now use shorter labels: `+Content`, `Up`, `Down`, `+Iteration`, and `+Field`.
 - Layouts now opens in its own window, is available from `Window > Show Layouts`, and remembers its window size and position.
+- Layouts can now be copied and pasted between documents with Cmd/Ctrl+C and Cmd/Ctrl+V, including multi-selected layouts and their nested contents.
 - The document toolbar `Sample` button was removed; sample input generation is now available from `Data > Generate Sample...`.
 
 ## Document Details Panel
@@ -59,7 +60,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Untriggered documents are shown in red.
 - The status bar shows the total document count and how many documents matched.
 - The short-lived `Mapping: ...` text was removed from the lower status bar.
-- `Clear Map` clears mapping colors/details and hides the mapped-result filter.
+- `Clear Map` clears mapping colors, field values, document Match Details, and hides the mapped-result filter.
 
 ## Unmatched Documents Explain Why They Failed
 
