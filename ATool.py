@@ -57,6 +57,7 @@ class AToolApp:
             "work_dir": "",
             "session_alias": "",
             "last_config_id": "",
+            "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
             "user_name": "",
             "package_mru": [],
@@ -4658,6 +4659,16 @@ class AToolApp:
         if normalized:
             programs[normalized] = str(program or "").strip()
 
+    def _set_last_occs_preview_options(self, render_types: list[str], timeout_seconds: int) -> None:
+        section = self._occs_settings_section()
+        normalized_render_types = self._normalize_preview_render_types(render_types)
+        section["last_preview_render_types"] = normalized_render_types
+        section["last_preview_timeout_seconds"] = min(
+            max(int(timeout_seconds), 1),
+            self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS,
+        )
+        self._save_user_settings()
+
     def _set_last_occs_config_id(self, config_id: str) -> None:
         section = self._occs_settings_section()
         section["last_config_id"] = str(config_id or "").strip()
@@ -4711,6 +4722,26 @@ class AToolApp:
         if not isinstance(programs, dict):
             return ""
         return str(programs.get(self._normalize_preview_render_type(render_type), "")).strip()
+
+    def _get_last_occs_preview_render_types(self) -> list[str]:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ["PDF"]
+        return self._normalize_preview_render_types(section.get("last_preview_render_types"))
+
+    def _has_last_occs_preview_timeout_seconds(self) -> bool:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return False
+        return self._safe_int(section.get("last_preview_timeout_seconds")) is not None
+
+    def _get_last_occs_preview_timeout_seconds(self, render_types: list[str]) -> int:
+        section = self.user_settings.get("occs")
+        if isinstance(section, dict):
+            timeout_seconds = self._safe_int(section.get("last_preview_timeout_seconds"))
+            if timeout_seconds is not None and timeout_seconds > 0:
+                return min(timeout_seconds, self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS)
+        return self._default_preview_timeout_seconds(render_types)
 
     def _get_occs_package_mru(self) -> list[dict[str, str]]:
         section = self.user_settings.get("occs")
@@ -4824,6 +4855,18 @@ class AToolApp:
                 defaults[render_type] = value
         return defaults
 
+    def _normalize_preview_render_types(self, raw_render_types: object) -> list[str]:
+        if not isinstance(raw_render_types, list):
+            return ["PDF"]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_render_type in raw_render_types:
+            render_type = self._normalize_preview_render_type(str(raw_render_type))
+            if render_type and render_type not in seen:
+                normalized.append(render_type)
+                seen.add(render_type)
+        return normalized or ["PDF"]
+
     def _normalize_preview_render_type(self, render_type: str) -> str:
         normalized = str(render_type or "").strip().upper()
         return normalized if normalized in self.OCCS_PREVIEW_RENDER_TYPES else ""
@@ -4918,6 +4961,15 @@ class AToolApp:
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
+            settings["occs"]["last_preview_render_types"] = self._normalize_preview_render_types(
+                occs.get("last_preview_render_types")
+            )
+            timeout_seconds = self._safe_int(occs.get("last_preview_timeout_seconds"))
+            if timeout_seconds is not None and timeout_seconds > 0:
+                settings["occs"]["last_preview_timeout_seconds"] = min(
+                    timeout_seconds,
+                    self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS,
+                )
             settings["occs"]["package_mru"] = self._normalize_occs_package_mru(occs.get("package_mru"))
             settings["occs"]["preview_open_programs"] = self._normalize_occs_preview_open_programs(
                 occs.get("preview_open_programs")
@@ -8162,8 +8214,11 @@ class AToolApp:
         render_group = ttk.LabelFrame(container, text="Render Types", padding=10)
         render_group.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
 
+        initial_render_types = self._get_last_occs_preview_render_types()
+        has_saved_timeout = self._has_last_occs_preview_timeout_seconds()
+        initial_timeout_seconds = self._get_last_occs_preview_timeout_seconds(initial_render_types)
         render_vars = {
-            render_type: tk.BooleanVar(value=(render_type == "PDF"))
+            render_type: tk.BooleanVar(value=(render_type in initial_render_types))
             for render_type in self.OCCS_PREVIEW_RENDER_TYPES
         }
         for index, render_type in enumerate(self.OCCS_PREVIEW_RENDER_TYPES):
@@ -8179,8 +8234,8 @@ class AToolApp:
                 pady=(0 if index < 3 else 6, 0),
             )
 
-        timeout_var = tk.StringVar(value=str(self._default_preview_timeout_seconds(["PDF"])))
-        timeout_user_modified = False
+        timeout_var = tk.StringVar(value=str(initial_timeout_seconds))
+        timeout_user_modified = has_saved_timeout
         updating_timeout_default = False
 
         def _selected_render_types() -> list[str]:
@@ -8255,6 +8310,8 @@ class AToolApp:
                     parent=dialog,
                 )
                 return
+
+            self._set_last_occs_preview_options(render_types, timeout_seconds)
 
             unpublished_reasons = self._occs_preview_unpublished_change_reasons()
             if unpublished_reasons:

@@ -110,6 +110,7 @@ Useful interpretation rules:
 
 - `Preview...` is now the final item in the Package menu, separated from package management commands by a divider.
 - The Preview dialog now focuses the `Preview` button by default, so pressing Enter starts the preview.
+- The Preview dialog now remembers the last submitted render type selection and timeout.
 - When preview output is opened automatically, ATool no longer shows an extra completion popup first.
 - Preview still reports output paths when automatic opening is disabled or no output file is available to open.
 
