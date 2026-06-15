@@ -37,6 +37,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 ## Documents And Layouts Panels
 
 - The Documents panel now has a `+Document` button for adding documents directly.
+- The Documents panel now has a `-Document` button that confirms before removing the selected document and its child documents from the assembly template.
 - Document movement supports multi-select in flat view.
 - Document movement adds `Top`, `Bottom`, and `Auto Move` controls.
 - `Auto Move` places selected documents near similarly named documents.

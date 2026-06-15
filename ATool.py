@@ -576,6 +576,16 @@ class AToolApp:
         )
         self._attach_tooltip(self.add_document_button, "Add a document to the assembly template.")
 
+        self.remove_document_button = ttk.Button(
+            controls,
+            text="-Document",
+            command=self.remove_selected_document,
+        )
+        self._attach_tooltip(
+            self.remove_document_button,
+            "Remove the selected document and its child documents from the assembly template.",
+        )
+
         self.move_document_up_button = ttk.Button(
             controls,
             text="Up",
@@ -634,6 +644,7 @@ class AToolApp:
             self.clear_mapping_button,
             self.document_mapping_filter_button,
             self.add_document_button,
+            self.remove_document_button,
             self.move_document_top_button,
             self.move_document_up_button,
             self.move_document_down_button,
@@ -4363,6 +4374,8 @@ class AToolApp:
         selected_state = tk.NORMAL if selected_doc is not None else tk.DISABLED
         if hasattr(self, "add_document_button"):
             self.add_document_button.config(state=document_state)
+        if hasattr(self, "remove_document_button"):
+            self.remove_document_button.config(state=selected_state)
         if hasattr(self, "add_layout_button"):
             self.add_layout_button.config(state=selected_state)
         if hasattr(self, "move_document_top_button"):
@@ -5729,6 +5742,104 @@ class AToolApp:
         self._set_dirty(True)
         self._render_documents_tree()
         self._select_document_node_for_source(source_document)
+
+    def remove_selected_document(self) -> None:
+        document_ref = self._get_selected_document_ref()
+        if document_ref is None:
+            return
+        if not isinstance(self.current_payload, dict):
+            return
+        documents = self.current_payload.get("Documents")
+        if not isinstance(documents, list):
+            return
+
+        selected_name = str(document_ref.get("name", "")).strip()
+        selected_source = document_ref.get("source")
+        if not selected_name or not isinstance(selected_source, dict):
+            return
+
+        all_document_names = {
+            str(document.get("$$Id", "")).strip()
+            for document in documents
+            if isinstance(document, dict) and str(document.get("$$Id", "")).strip()
+        }
+        names_to_remove = self._document_names_with_descendants(selected_name, all_document_names)
+        child_count = max(0, len(names_to_remove) - 1)
+        preview_names = sorted(names_to_remove)
+        preview_text = "\n".join(preview_names[:12])
+        if len(preview_names) > 12:
+            preview_text += f"\n...and {len(preview_names) - 12} more"
+
+        message = (
+            f"Remove document '{selected_name}'"
+            f"{' and ' + str(child_count) + ' child document(s)' if child_count else ''}?\n\n"
+            "This removes the document record(s) from the assembly template.\n\n"
+            f"{preview_text}"
+        )
+        if not messagebox.askyesno("Remove Document", message):
+            return
+
+        source_documents = [document for document in documents if isinstance(document, dict)]
+        selected_index = source_documents.index(selected_source) if selected_source in source_documents else -1
+
+        kept_documents: list[object] = []
+        removed_count = 0
+        for document in documents:
+            if isinstance(document, dict) and str(document.get("$$Id", "")).strip() in names_to_remove:
+                removed_count += 1
+                continue
+            kept_documents.append(document)
+        if removed_count == 0:
+            return
+        documents[:] = kept_documents
+
+        self._loaded_documents = self._extract_documents(self.current_payload)
+        if self.current_data_payload is not None:
+            self._triggered_document_names = set()
+            for document in self._loaded_documents:
+                self._refresh_document_condition_mapping(document)
+            self.document_count_text.set(
+                f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
+            )
+        else:
+            self._triggered_document_names.difference_update(names_to_remove)
+            self.document_count_text.set(f"Documents: {len(self._loaded_documents)}")
+
+        self._set_dirty(True)
+        self._render_documents_tree()
+        next_source = self._document_source_near_index(selected_index)
+        if next_source is not None:
+            self._select_document_node_for_source(next_source)
+        else:
+            self._clear_document_details()
+            self._set_empty_layouts_tree("No document selected")
+            self._update_document_context_buttons()
+
+    @staticmethod
+    def _document_names_with_descendants(selected_name: str, all_document_names: set[str]) -> set[str]:
+        names_to_remove = {selected_name}
+        changed = True
+        while changed:
+            changed = False
+            for candidate in all_document_names:
+                if candidate in names_to_remove:
+                    continue
+                parent = AToolApp._find_document_parent(candidate, all_document_names)
+                while parent:
+                    if parent in names_to_remove:
+                        names_to_remove.add(candidate)
+                        changed = True
+                        break
+                    parent = AToolApp._find_document_parent(parent, all_document_names)
+        return names_to_remove
+
+    def _document_source_near_index(self, removed_index: int) -> dict[str, object] | None:
+        if removed_index < 0 or not self._loaded_documents:
+            return None
+        next_index = min(removed_index, len(self._loaded_documents) - 1)
+        document = self._loaded_documents[next_index]
+        source = document.get("source")
+        return source if isinstance(source, dict) else None
 
     def add_layout_to_selected_document(self) -> None:
         document_ref = self._get_selected_document_ref()
