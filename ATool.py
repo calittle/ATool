@@ -8525,6 +8525,12 @@ class AToolApp:
 
         if self.current_occs_shared_package_dir is not None:
             if self.current_occs_shared_mode == "edit":
+                if self._current_local_copy_matches_shared():
+                    lock_warning = self._refresh_current_shared_lock_baseline()
+                    if lock_warning:
+                        messagebox.showwarning("Publish Package to Comms", lock_warning)
+                    self.save_occs_package()
+                    return
                 if not messagebox.askyesno(
                     "Publish Package to Comms",
                     "You are editing this package version locally.\n\n"
@@ -8634,6 +8640,17 @@ class AToolApp:
                     f"Shared package folder was updated, but the lock could not be released.\n\nDetails: {error}",
                 )
                 release_lock = False
+        else:
+            try:
+                updated_lock_payload = self._build_shared_lock_payload(context, owner)
+                if isinstance(existing_lock, dict):
+                    created_at = str(existing_lock.get("createdAt", "")).strip()
+                    if created_at:
+                        updated_lock_payload["createdAt"] = created_at
+                with open(lock_path, "w", encoding="utf-8") as target:
+                    json.dump(updated_lock_payload, target, indent=2)
+            except (OSError, ValueError) as error:
+                baseline_warning = str(error)
 
         self._show_temporary_status("Updated shared package version", duration_ms=5000)
         self._record_occs_package_mru(
@@ -8648,6 +8665,45 @@ class AToolApp:
                 f"Updated shared package version:\n{published_dir}\n\nLock: {lock_text}{warning_text}",
             )
         return True
+
+    def _current_local_copy_matches_shared(self) -> bool:
+        if not self.current_occs_bundle_dir or not self.current_occs_shared_package_dir:
+            return False
+        entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
+        if entry is None:
+            return False
+        try:
+            manifest = self._read_occs_manifest(self.current_occs_bundle_dir)
+            local_hashes = self._occs_bundle_current_hashes(Path(self.current_occs_bundle_dir), manifest)
+            shared_hashes = self._shared_current_hashes_for_entry(entry)
+        except ValueError:
+            return False
+        return self._shared_hashes_match(local_hashes, shared_hashes)
+
+    def _refresh_current_shared_lock_baseline(self) -> str:
+        context = self._current_occs_shared_context(show_errors=False)
+        if context is None:
+            return ""
+        package_dir = context.get("package_dir")
+        if not isinstance(package_dir, Path):
+            return ""
+        lock_path = self._shared_lock_path(package_dir)
+        existing_lock = self._read_shared_lock(lock_path)
+        if not isinstance(existing_lock, dict):
+            return ""
+        owner = self._current_shared_user_identity()
+        if not self._is_shared_lock_owner(existing_lock, owner):
+            return ""
+        try:
+            updated_lock_payload = self._build_shared_lock_payload(context, owner)
+            created_at = str(existing_lock.get("createdAt", "")).strip()
+            if created_at:
+                updated_lock_payload["createdAt"] = created_at
+            with open(lock_path, "w", encoding="utf-8") as target:
+                json.dump(updated_lock_payload, target, indent=2)
+        except (OSError, ValueError) as error:
+            return f"Could not refresh the shared package lock before publishing.\n\nDetails: {error}"
+        return ""
 
     def open_shared_published_bundle(self) -> None:
         workspace_dir = self._ensure_occs_shared_workspace_dir()
