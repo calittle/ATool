@@ -56,6 +56,7 @@ class AToolApp:
             "cli_path": "",
             "work_dir": "",
             "session_alias": "",
+            "config_id_filter": "",
             "last_config_id": "",
             "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
@@ -4435,6 +4436,7 @@ class AToolApp:
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
         session_alias_var = tk.StringVar(value=self._get_occs_session_alias())
+        config_id_filter_var = tk.StringVar(value=self._get_occs_config_id_filter())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
         preview_program_vars = {
@@ -4496,9 +4498,13 @@ class AToolApp:
         session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
         session_alias_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Config ID Filter:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
+        config_id_filter_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
-        shared_workspace_entry.grid(row=3, column=1, sticky="ew", pady=(8, 0))
+        shared_workspace_entry.grid(row=4, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
@@ -4512,16 +4518,16 @@ class AToolApp:
                 shared_workspace_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
-            row=3,
+            row=4,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="User Name:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
@@ -4584,12 +4590,24 @@ class AToolApp:
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
 
         def _save_settings() -> None:
+            config_id_filter = config_id_filter_var.get().strip()
+            if config_id_filter:
+                try:
+                    re.compile(config_id_filter)
+                except re.error as error:
+                    messagebox.showerror(
+                        "User Settings",
+                        f"Config ID Filter is not a valid regular expression.\n\nDetails: {error}",
+                        parent=dialog,
+                    )
+                    return
             self._set_confirm_on_quit_enabled(bool(confirm_on_quit_var.get()))
             self._set_document_collapse_enabled(bool(collapse_var.get()))
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
             self._set_occs_session_alias(session_alias_var.get())
+            self._set_occs_config_id_filter(config_id_filter)
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
             for render_type, variable in preview_program_vars.items():
@@ -4640,6 +4658,10 @@ class AToolApp:
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
         section["session_alias"] = str(session_alias or "").strip()
+
+    def _set_occs_config_id_filter(self, config_id_filter: str) -> None:
+        section = self._occs_settings_section()
+        section["config_id_filter"] = str(config_id_filter or "").strip()
 
     def _set_occs_shared_workspace_dir(self, shared_workspace_dir: str) -> None:
         section = self._occs_settings_section()
@@ -4700,6 +4722,12 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("session_alias", "")).strip()
+
+    def _get_occs_config_id_filter(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return str(section.get("config_id_filter", "")).strip()
 
     def _get_occs_shared_workspace_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -4957,7 +4985,15 @@ class AToolApp:
 
         occs = parsed.get("occs")
         if isinstance(occs, dict):
-            for key in ("cli_path", "work_dir", "session_alias", "last_config_id", "shared_workspace_dir", "user_name"):
+            for key in (
+                "cli_path",
+                "work_dir",
+                "session_alias",
+                "config_id_filter",
+                "last_config_id",
+                "shared_workspace_dir",
+                "user_name",
+            ):
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
@@ -7397,9 +7433,9 @@ class AToolApp:
             if len(parent_values) == 0:
                 if comms_compatible and expect_empty and self._path_has_filter(normalized_path):
                     return (
-                        False,
+                        True,
                         "filtered parent path missing: "
-                        f"{parent_path}; Comms-compatible check treats this as not empty",
+                        f"{parent_path}; Comms-compatible check treats this as empty",
                     )
                 passed = expect_empty
                 return passed, f"parent path missing: {parent_path}"
@@ -9126,6 +9162,7 @@ class AToolApp:
             justify=tk.LEFT,
         ).grid(row=1, column=1, sticky="w", pady=(8, 0))
 
+        configs = self._filter_occs_configs_for_display(configs, parent=dialog)
         labels = [self._format_occs_config_label(config) for config in configs]
         config_by_label = {
             label: config
@@ -10922,6 +10959,47 @@ class AToolApp:
             config.get("id", ""),
         ]
         return " - ".join([part for part in parts if part])
+
+    def _filter_occs_configs_for_display(
+        self,
+        configs: list[dict[str, str]],
+        parent: tk.Misc | None = None,
+    ) -> list[dict[str, str]]:
+        open_configs = [
+            config
+            for config in configs
+            if not self._is_closed_occs_config(config)
+        ]
+        pattern = self._get_occs_config_id_filter()
+        if not pattern:
+            return open_configs
+        try:
+            config_filter = re.compile(pattern)
+        except re.error as error:
+            messagebox.showwarning(
+                "Config ID Filter",
+                f"Config ID Filter is not a valid regular expression, so all Config IDs will be shown.\n\nDetails: {error}",
+                parent=parent,
+            )
+            return open_configs
+
+        filtered: list[dict[str, str]] = []
+        for config in open_configs:
+            searchable_text = " ".join(
+                [
+                    config.get("shortName", ""),
+                    config.get("name", ""),
+                    config.get("id", ""),
+                    self._format_occs_config_label(config),
+                ]
+            )
+            if config_filter.search(searchable_text):
+                filtered.append(config)
+        return filtered
+
+    @staticmethod
+    def _is_closed_occs_config(config: dict[str, str]) -> bool:
+        return str(config.get("status", "")).strip().lower() == "closed"
 
     def _initial_occs_config_selection(
         self,
@@ -13378,13 +13456,7 @@ class AToolApp:
         parent_values = self._extract_values_by_path(data_payload, parent_path)
         if len(parent_values) == 0:
             if comms_compatible and expect_empty and self._path_has_filter(normalized_full_path):
-                if warnings is not None:
-                    self._append_condition_warning(
-                        warnings,
-                        "Filtered empty check has a missing parent path: "
-                        f"{parent_path}. Comms may require an explicit null/empty guard or an empty array.",
-                    )
-                return False
+                return True
             return expect_empty
 
         full_values = self._extract_values_by_path(data_payload, normalized_full_path)

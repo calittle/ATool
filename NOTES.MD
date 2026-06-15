@@ -10,6 +10,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 ## User Settings
 
 - User Settings now include `Confirm on Quit`, enabled by default. When enabled, ATool asks for confirmation before quitting from Cmd+Q, File > Exit, or the window close control.
+- User Settings now include an OCCS `Config ID Filter` regular expression. When set, the Publish Package to Comms Config ID dropdown only shows matching Config IDs, names, or labels.
 
 ## Layout Mapping Diagnostics
 
@@ -23,6 +24,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Local edit locks now remember the active local edit folder so iterative local saves can be resumed before updating the shared package.
 - Publishing a shared package to Comms now publishes directly from the shared `published/current` folder instead of creating a temporary local publish copy first.
 - The Comms publish dialog labels the package source as `Shared Folder` when it is publishing from the shared package folder.
+- The Comms publish Config ID picker now hides closed Config IDs before applying the optional Config ID filter.
 - `Package > Get Packages from Comms...` now replaces the separate list/get Comms menu items with one list-first workflow.
 - The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
@@ -129,6 +131,8 @@ ATool now recognizes top-level `size` checks in document conditions, matching Co
 ```
 
 This fixes cases where Comms triggered a document but ATool showed a failed clause because it treated `size 1` like part of the JSONPath. The mapping diagnostics now report the resolved value count, matched values, and expected size.
+
+Filtered empty checks now treat a missing filtered parent path as empty in Comms-compatible evaluation, matching the local condition result to the intended empty-filter behavior.
 
 ## Map Button Feedback
 
