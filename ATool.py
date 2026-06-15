@@ -258,6 +258,28 @@ class AToolApp:
         self._style_window_background(window)
         return window
 
+    def _run_file_dialog(self, dialog_func: object, owner: tk.Misc | None = None, **options: object) -> str:
+        if owner is not None:
+            options["parent"] = self.root
+        current_grab = self.root.grab_current()
+        released_grab = current_grab if owner is not None and current_grab is not None else None
+        if released_grab is not None:
+            try:
+                released_grab.grab_release()
+            except tk.TclError:
+                released_grab = None
+        try:
+            result = dialog_func(**options)
+        finally:
+            if released_grab is not None:
+                try:
+                    released_grab.grab_set()
+                    released_grab.lift()
+                    released_grab.focus_force()
+                except tk.TclError:
+                    pass
+        return str(result or "")
+
     def _create_menu(self) -> None:
         self._attach_app_menu(self.root)
 
@@ -4451,8 +4473,9 @@ class AToolApp:
         def _browse_cli_path() -> None:
             current_path = cli_path_var.get().strip()
             initial_dir = os.path.dirname(current_path) if current_path else str(Path.home())
-            selected_path = filedialog.askopenfilename(
-                parent=dialog,
+            selected_path = self._run_file_dialog(
+                filedialog.askopenfilename,
+                dialog,
                 title="Select OCCS CLI",
                 initialdir=initial_dir or None,
                 filetypes=[
@@ -4478,8 +4501,9 @@ class AToolApp:
         def _browse_work_dir() -> None:
             current_path = work_dir_var.get().strip()
             initial_dir = current_path if current_path else str(Path.home())
-            selected_dir = filedialog.askdirectory(
-                parent=dialog,
+            selected_dir = self._run_file_dialog(
+                filedialog.askdirectory,
+                dialog,
                 title="Select Local Package Folder",
                 initialdir=initial_dir or None,
             )
@@ -4509,8 +4533,9 @@ class AToolApp:
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
             initial_dir = current_path if current_path else str(Path.home())
-            selected_dir = filedialog.askdirectory(
-                parent=dialog,
+            selected_dir = self._run_file_dialog(
+                filedialog.askdirectory,
+                dialog,
                 title="Select Shared Package Folder",
                 initialdir=initial_dir or None,
             )
@@ -4536,8 +4561,9 @@ class AToolApp:
         def _browse_preview_program(render_type: str) -> None:
             current_path = preview_program_vars[render_type].get().strip()
             initial_dir = os.path.dirname(current_path) if current_path else str(Path.home())
-            selected_path = filedialog.askopenfilename(
-                parent=dialog,
+            selected_path = self._run_file_dialog(
+                filedialog.askopenfilename,
+                dialog,
                 title=f"Select {render_type} Open Program",
                 initialdir=initial_dir or None,
                 filetypes=[
@@ -5998,8 +6024,9 @@ class AToolApp:
 
         def _save_generated() -> None:
             default_name = f"{self._slugify(document_name)}_sample_input.json"
-            path = filedialog.asksaveasfilename(
-                parent=dialog,
+            path = self._run_file_dialog(
+                filedialog.asksaveasfilename,
+                dialog,
                 title="Save Generated Sample Input",
                 defaultextension=".json",
                 initialfile=default_name,
@@ -8227,8 +8254,9 @@ class AToolApp:
         data_file_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_json_file() -> None:
-            selected_path = filedialog.askopenfilename(
-                parent=dialog,
+            selected_path = self._run_file_dialog(
+                filedialog.askopenfilename,
+                dialog,
                 title="Select JSON File",
                 filetypes=[
                     ("JSON Files", "*.json"),
@@ -8497,18 +8525,23 @@ class AToolApp:
 
         if self.current_occs_shared_package_dir is not None:
             if self.current_occs_shared_mode == "edit":
-                if messagebox.askyesno(
+                if not messagebox.askyesno(
                     "Publish Package to Comms",
                     "You are editing this package version locally.\n\n"
                     "Update the shared package folder before publishing to Comms?",
                 ):
-                    if not self._update_shared_from_current(release_lock_after=False, show_message=False):
-                        return
-                else:
                     messagebox.showinfo(
                         "Publish Package to Comms",
-                        "Publishing uses the shared package folder, not unsynced local edits.",
+                        "Publish canceled. Update the shared package folder first so Comms receives the package you are editing.",
                     )
+                    return
+                if not self._update_shared_from_current(release_lock_after=False, show_message=False):
+                    return
+                self.save_occs_package()
+                return
+            if self.current_occs_shared_mode != "publish":
+                self.save_occs_package()
+                return
             entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
             if entry is None:
                 messagebox.showerror(
@@ -11287,8 +11320,9 @@ class AToolApp:
         xml_file_entry.grid(row=0, column=1, sticky="ew")
 
         def _browse_xml_file() -> None:
-            selected_path = filedialog.askopenfilename(
-                parent=dialog,
+            selected_path = self._run_file_dialog(
+                filedialog.askopenfilename,
+                dialog,
                 title="Select XML File",
                 filetypes=[
                     ("XML Files", "*.xml *.XML"),
@@ -11644,6 +11678,9 @@ class AToolApp:
             messagebox.showinfo("Save", "No assembly template is currently loaded.")
             return False
 
+        if self.current_occs_shared_mode == "publish" and self.current_occs_shared_package_dir is not None:
+            return self._save_publish_mode_changes_as_edit_copy()
+
         if not self._sync_active_field_form_to_model():
             return False
         self._sync_active_document_form_to_model()
@@ -11700,6 +11737,75 @@ class AToolApp:
                 f"Saved. Backup: {os.path.basename(backup_path)}",
                 duration_ms=5000,
             )
+        return True
+
+    def _save_publish_mode_changes_as_edit_copy(self) -> bool:
+        if not self.current_occs_bundle_dir or not self.current_occs_shared_package_dir or self.current_payload is None:
+            messagebox.showinfo("Save", "No package version is currently loaded for publish.")
+            return False
+        if not self._sync_active_field_form_to_model():
+            return False
+        self._sync_active_document_form_to_model()
+        self._sync_active_layout_form_to_model()
+        self._sync_all_fields_to_payload()
+        self._sync_condition_library_to_payload()
+
+        entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
+        if entry is None:
+            messagebox.showerror(
+                "Save",
+                "Could not find the shared package version for the currently open publish package.",
+            )
+            return False
+        package_dir = entry.get("package_dir")
+        if not isinstance(package_dir, Path):
+            messagebox.showerror("Save", "The shared package version is missing folder metadata.")
+            return False
+
+        lock_path = self._shared_lock_path(package_dir)
+        existing_lock = self._read_shared_lock(lock_path)
+        owner = self._current_shared_user_identity()
+        if existing_lock and not self._is_shared_lock_owner(existing_lock, owner):
+            if not messagebox.askyesno(
+                "Save",
+                "This package/version is already locked.\n\n"
+                f"{self._format_shared_lock(existing_lock)}\n\n"
+                "Create a local edit copy and replace this lock?",
+            ):
+                return False
+
+        work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
+        try:
+            work_dir.mkdir(parents=True, exist_ok=True)
+            local_dir = self._build_occs_local_copy_path(
+                work_dir,
+                str(entry.get("package_name", "")),
+                str(entry.get("version_name", "")),
+                "edit",
+            )
+            shutil.copytree(Path(self.current_occs_bundle_dir), local_dir)
+            manifest = self._read_occs_manifest(str(local_dir))
+            local_assembly_path = self._occs_bundle_assembly_template_path(str(local_dir), manifest)
+            with open(local_assembly_path, "w", encoding="utf-8") as output_target:
+                json.dump(self.current_payload, output_target, indent=2)
+            self._write_shared_baseline_for_local_copy(local_dir, entry, reason="opened-edit")
+            self._write_shared_edit_lock_for_local_copy(entry, local_dir)
+        except (OSError, ValueError) as error:
+            messagebox.showerror(
+                "Save",
+                f"Could not create a local edit copy for the publish package.\n\nDetails: {error}",
+            )
+            return False
+
+        if not self._load_occs_bundle(str(local_dir), shared_package_dir=package_dir, shared_mode="edit"):
+            return False
+        self._set_dirty(False)
+        self._show_temporary_status("Saved changes into a local edit copy", duration_ms=7000)
+        messagebox.showinfo(
+            "Save",
+            "Your changes were moved into a local edit copy and locked for editing.\n\n"
+            f"Local folder:\n{local_dir}",
+        )
         return True
 
     def _sync_all_fields_to_payload(self) -> None:

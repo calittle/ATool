@@ -25,6 +25,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Publishing a shared package to Comms now publishes directly from the shared `published/current` folder instead of creating a temporary local publish copy first.
 - The Comms publish dialog labels the package source as `Shared Folder` when it is publishing from the shared package folder.
 - The Comms publish Config ID picker now hides closed Config IDs before applying the optional Config ID filter.
+- Publishing to Comms from an editable shared package no longer leaves the open package stranded in publish mode; if that state already exists, Save now moves the in-memory changes into a local edit copy and locks it for editing.
 - `Package > Get Packages from Comms...` now replaces the separate list/get Comms menu items with one list-first workflow.
 - The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
@@ -121,6 +122,7 @@ Useful interpretation rules:
 - ATool now applies explicit light backgrounds and selection colors on macOS.
 - Main windows, managers, dialogs, popups, and tooltips use the same styled toplevel creation path.
 - Text boxes, list boxes, tree views, entries, and combo boxes are styled to avoid dark-mode readability issues.
+- Browse/Open/Save native file dialogs launched from child dialogs now attach to the main ATool window and restore focus to the child dialog afterward, avoiding window jostling on macOS.
 
 ## Comms-Style Size Conditions Now Map Correctly
 
