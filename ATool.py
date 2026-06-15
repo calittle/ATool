@@ -8754,6 +8754,8 @@ class AToolApp:
         else:
             try:
                 updated_lock_payload = self._build_shared_lock_payload(context, owner)
+                if updated_entry is not None:
+                    updated_lock_payload["sharedBaselineHashes"] = self._shared_current_hashes_for_entry(updated_entry)
                 if isinstance(existing_lock, dict):
                     created_at = str(existing_lock.get("createdAt", "")).strip()
                     if created_at:
@@ -8807,6 +8809,9 @@ class AToolApp:
             return ""
         try:
             updated_lock_payload = self._build_shared_lock_payload(context, owner)
+            entry = self._shared_package_entry_from_package_dir(package_dir)
+            if entry is not None:
+                updated_lock_payload["sharedBaselineHashes"] = self._shared_current_hashes_for_entry(entry)
             created_at = str(existing_lock.get("createdAt", "")).strip()
             if created_at:
                 updated_lock_payload["createdAt"] = created_at
@@ -9097,6 +9102,8 @@ class AToolApp:
 
         lock_hashes = lock_payload.get("sharedBaselineHashes") if isinstance(lock_payload, dict) else None
         if isinstance(lock_hashes, dict) and lock_hashes and not self._shared_hashes_match(lock_hashes, current_shared_hashes):
+            if self._refresh_stale_owned_shared_lock(lock_payload, context, current_shared_hashes, title):
+                return True
             messagebox.showerror(
                 title,
                 "Cannot update the shared package folder because the shared package changed after this edit lock was acquired.\n\n"
@@ -9104,6 +9111,37 @@ class AToolApp:
             )
             return False
 
+        return True
+
+    def _refresh_stale_owned_shared_lock(
+        self,
+        lock_payload: dict[str, object],
+        context: dict[str, object],
+        current_shared_hashes: dict[str, str],
+        title: str,
+    ) -> bool:
+        owner = self._current_shared_user_identity()
+        if not self._is_shared_lock_owner(lock_payload, owner):
+            return False
+        package_dir = context.get("package_dir")
+        if not isinstance(package_dir, Path):
+            return False
+        try:
+            updated_lock_payload = self._build_shared_lock_payload(context, owner)
+            updated_lock_payload["sharedBaselineHashes"] = dict(current_shared_hashes)
+            created_at = str(lock_payload.get("createdAt", "")).strip()
+            if created_at:
+                updated_lock_payload["createdAt"] = created_at
+            lock_path = self._shared_lock_path(package_dir)
+            with open(lock_path, "w", encoding="utf-8") as target:
+                json.dump(updated_lock_payload, target, indent=2)
+        except (OSError, ValueError) as error:
+            messagebox.showerror(
+                title,
+                "The shared lock baseline is stale and could not be refreshed.\n\n"
+                f"Details: {error}",
+            )
+            return False
         return True
 
     def _prompt_lock_and_open_shared_entry(self, entry: dict[str, object]) -> None:
@@ -9264,7 +9302,7 @@ class AToolApp:
         baseline = self._read_shared_baseline_for_local_copy(bundle_dir)
         if not isinstance(baseline, dict):
             return False
-        if str(baseline.get("reason", "")).strip() != "opened-edit":
+        if str(baseline.get("reason", "")).strip() not in {"opened-edit", "updatedShared", "publishedToComms"}:
             return False
         if str(baseline.get("package", "")).strip() != str(entry.get("package_name", "")).strip():
             return False
