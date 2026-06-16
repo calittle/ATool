@@ -59,6 +59,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - When either Condition or Match Details is collapsed, the still-open section expands to use the available details-panel space.
 - Match Details now appears under Condition in Document Details instead of in a separate resizable panel.
 - Match Details now shows a simplified clause list: passing clauses are blue, failing clauses are red, and hovering a clause shows the matched values or failure reason.
+- Match Details now preserves composed `AND` / `OR` grouping so related scenario clauses are shown under their parent logic instead of as a flat ambiguous list.
 - The condition ellipsis button was removed because selecting a document already populates Clause Manager.
 
 ## Mapping Results Are Easier To Review
@@ -138,6 +139,8 @@ ATool now recognizes top-level `size` checks in document conditions, matching Co
 This fixes cases where Comms triggered a document but ATool showed a failed clause because it treated `size 1` like part of the JSONPath. The mapping diagnostics now report the resolved value count, matched values, and expected size.
 
 Filtered empty checks now treat a missing filtered parent path as empty in Comms-compatible evaluation, matching the local condition result to the intended empty-filter behavior.
+
+Missing scalar leaf checks now match OCCS more closely: a missing leaf path such as `@.developerAccount empty true` no longer passes locally. Use a parent-object filter such as `@.cmElements[?(@.developerAccount == 'Y')] empty true` when a condition needs to pass for missing non-developer flags.
 
 ## Map Button Feedback
 

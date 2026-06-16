@@ -5625,7 +5625,7 @@ class AToolApp:
                 source_ref["Type"] = normalized
                 changed = True
 
-        if mandatory is not None and "Mandatory" in source_ref:
+        if mandatory is not None and node_kind == "field":
             normalized_mandatory = bool(mandatory)
             if normalized_mandatory != self._mandatory_to_bool(source_ref.get("Mandatory")):
                 source_ref["Mandatory"] = normalized_mandatory
@@ -7360,22 +7360,43 @@ class AToolApp:
             if tag_name.startswith("match_detail_"):
                 widget.tag_delete(tag_name)
 
-        for index, detail in enumerate(details):
-            if not isinstance(detail, dict):
-                continue
+        detail_index = 0
+
+        def render_detail(detail: dict[str, object], depth: int = 0) -> None:
+            nonlocal detail_index
+            children = detail.get("children")
+            operator = str(detail.get("operator", "")).strip().upper()
             passed = bool(detail.get("passed"))
             status = "PASS" if passed else "FAIL"
+            indent = "  " * depth
+            status_tag = "match_pass" if passed else "match_fail"
+
+            if isinstance(children, list) and children:
+                label = operator if operator in {"AND", "OR"} else str(detail.get("label", "Group")).strip() or "Group"
+                widget.insert(tk.INSERT, f"{indent}{status} {label} (\n", status_tag)
+                for child in children:
+                    if isinstance(child, dict):
+                        render_detail(child, depth + 1)
+                widget.insert(tk.INSERT, f"{indent})\n", "match_info")
+                return
+
             label = str(detail.get("label", "")).strip() or "(unnamed clause)"
             line_start = widget.index(tk.INSERT)
-            widget.insert(tk.INSERT, f"{status} {label}\n", "match_pass" if passed else "match_fail")
+            widget.insert(tk.INSERT, f"{indent}{status} {label}\n", status_tag)
             line_end = widget.index(tk.INSERT)
             tooltip_text = self._format_match_detail_tooltip(detail)
             if tooltip_text:
-                detail_tag = f"match_detail_{index}"
+                detail_tag = f"match_detail_{detail_index}"
+                detail_index += 1
                 widget.tag_add(detail_tag, line_start, line_end)
                 widget.tag_bind(detail_tag, "<Enter>", lambda event, text=tooltip_text: self._show_tooltip(event, text))
                 widget.tag_bind(detail_tag, "<Leave>", lambda _event: self._hide_tooltip())
                 widget.tag_bind(detail_tag, "<ButtonPress>", lambda _event: self._hide_tooltip())
+
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            render_detail(detail)
 
         widget.configure(state=tk.DISABLED)
 
@@ -7579,6 +7600,8 @@ class AToolApp:
                 return passed, f"parent path missing: {parent_path}"
             full_values = self._extract_values_by_path(data_payload, normalized_path)
             is_empty = len(full_values) == 0
+            if comms_compatible and expect_empty and is_empty and not self._path_has_filter(normalized_path):
+                return False, f"missing leaf path: {normalized_path}"
             passed = is_empty if expect_empty else not is_empty
             return passed, f"values={self._format_mapped_nodeset_preview(full_values)}"
 
@@ -7609,18 +7632,10 @@ class AToolApp:
                 )
                 if missing_result is not None:
                     passed, side, present_values = missing_result
-                    if operator == "==" and passed:
-                        return True, f"{side} missing; treated as null-equivalent"
-                    if operator == "!=" and passed:
-                        return (
-                            True,
-                            f"{side} missing; treated as not-equal to "
-                            f"{self._format_mapped_nodeset_preview(present_values)}",
-                        )
                     return (
-                        False,
-                        f"{side} missing; treated as null-equivalent to "
-                        f"{self._format_mapped_nodeset_preview(present_values)}",
+                        passed,
+                        f"{side} missing; comparison has no matching value "
+                        f"against {self._format_mapped_nodeset_preview(present_values)}",
                     )
             if not left_values or not right_values:
                 return False, f"left={len(left_values)} right={len(right_values)}"
@@ -13031,6 +13046,8 @@ class AToolApp:
 
     @staticmethod
     def _mandatory_to_bool(value: object) -> bool:
+        if value is None:
+            return True
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -13335,12 +13352,12 @@ class AToolApp:
             )
             if compose_text:
                 parsed_tree = self._parse_composed_condition_tree(compose_text)
-                _passed, leaf_results = self._collect_condition_leaf_results(
+                match_tree = self._collect_condition_match_detail_tree(
                     parsed_tree,
                     data_payload,
                     library_entries,
                 )
-                return leaf_results
+                return [match_tree]
         except ValueError:
             pass
 
@@ -13448,6 +13465,69 @@ class AToolApp:
                 "details": [],
             }
         ]
+
+    def _collect_condition_match_detail_tree(
+        self,
+        node: tuple[str, object],
+        data_payload: object,
+        entries: list[dict[str, str]],
+    ) -> dict[str, object]:
+        kind, value = node
+        if kind in {"AND", "OR"}:
+            assert isinstance(value, list)
+            children = [
+                self._collect_condition_match_detail_tree(child, data_payload, entries)
+                for child in value
+            ]
+            if kind == "AND":
+                passed = all(bool(child.get("passed")) for child in children)
+            else:
+                passed = any(bool(child.get("passed")) for child in children)
+            return {
+                "label": kind,
+                "operator": kind,
+                "passed": passed,
+                "children": children,
+            }
+
+        if kind == "NAME":
+            clause_name = str(value)
+            try:
+                clause_expression = self._resolve_clause_expression_by_name_from_entries(entries, clause_name)
+            except ValueError as error:
+                return {
+                    "label": clause_name,
+                    "passed": False,
+                    "details": [f"Reason: {error}"],
+                }
+            _passed, leaves = self._collect_condition_leaf_result(clause_name, clause_expression, data_payload)
+            if len(leaves) == 1 and isinstance(leaves[0], dict):
+                return leaves[0]
+            passed = all(bool(leaf.get("passed")) for leaf in leaves)
+            return {
+                "label": clause_name,
+                "operator": "AND",
+                "passed": passed,
+                "children": leaves,
+            }
+
+        if kind == "RAW":
+            leaves = self._collect_raw_condition_leaf_results(str(value), data_payload)
+            if len(leaves) == 1 and isinstance(leaves[0], dict):
+                return leaves[0]
+            passed = all(bool(leaf.get("passed")) for leaf in leaves) if leaves else True
+            return {
+                "label": "RAW",
+                "operator": "AND",
+                "passed": passed,
+                "children": leaves,
+            }
+
+        return {
+            "label": f"Unknown condition node: {kind}",
+            "passed": False,
+            "details": [],
+        }
 
     def _collect_raw_condition_leaf_results(
         self,
@@ -13772,6 +13852,8 @@ class AToolApp:
 
         full_values = self._extract_values_by_path(data_payload, normalized_full_path)
         is_empty = len(full_values) == 0
+        if comms_compatible and expect_empty and is_empty and not self._path_has_filter(normalized_full_path):
+            return False
         return is_empty if expect_empty else not is_empty
 
     @staticmethod
@@ -13832,16 +13914,12 @@ class AToolApp:
         present_values = right_values if not left_values else left_values
 
         if operator == "!=":
-            return self._missing_left_satisfies_not_equal(present_values), missing_side, present_values
+            return False, missing_side, present_values
 
         if operator == "==" and comms_compatible:
-            return all(value is None for value in present_values), missing_side, present_values
+            return False, missing_side, present_values
 
         return None
-
-    @staticmethod
-    def _missing_left_satisfies_not_equal(right_values: list[object]) -> bool:
-        return all(value is not None for value in right_values)
 
     @staticmethod
     def _compare_single_condition_value(value: object, operator: str, rhs: object) -> bool:
@@ -14252,7 +14330,7 @@ class AToolApp:
                     if isinstance(current, list):
                         candidates = list(current)
                     elif isinstance(current, dict):
-                        candidates = list(current.values())
+                        candidates = [current]
                     for candidate in candidates:
                         if self._evaluate_condition_expression(filter_expression, candidate):
                             next_nodes.append(candidate)
