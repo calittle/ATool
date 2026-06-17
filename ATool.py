@@ -1866,14 +1866,17 @@ class AToolApp:
         return True
 
     def _condition_library_form_item(self) -> dict[str, str] | None:
-        name = self.condition_library_name_var.get().strip()
+        name = self._sanitize_package_text(self.condition_library_name_var.get()).strip()
         if not name:
             messagebox.showerror("Clause Manager", "Name is required.")
             return None
-        expression = self.condition_library_expr.get("1.0", tk.END).rstrip("\n")
+        description = self._sanitize_package_text(self.condition_library_descr_var.get()).strip()
+        expression = self._sanitize_package_text(
+            self.condition_library_expr.get("1.0", tk.END).rstrip("\n")
+        )
         return {
             "name": name,
-            "description": self.condition_library_descr_var.get().strip(),
+            "description": description,
             "expression": expression.strip(),
         }
 
@@ -3027,6 +3030,35 @@ class AToolApp:
             return text
         return text[: max(0, limit - 3)] + "..."
 
+    @staticmethod
+    def _sanitize_package_text(value: object) -> str:
+        return str(value or "").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+    @classmethod
+    def _sanitize_package_text_object(cls, value: object) -> bool:
+        changed = False
+        if isinstance(value, dict):
+            for key, item in list(value.items()):
+                if isinstance(item, str):
+                    sanitized = cls._sanitize_package_text(item)
+                    if sanitized != item:
+                        value[key] = sanitized
+                        changed = True
+                elif isinstance(item, (dict, list)):
+                    changed = cls._sanitize_package_text_object(item) or changed
+            return changed
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                if isinstance(item, str):
+                    sanitized = cls._sanitize_package_text(item)
+                    if sanitized != item:
+                        value[index] = sanitized
+                        changed = True
+                elif isinstance(item, (dict, list)):
+                    changed = cls._sanitize_package_text_object(item) or changed
+            return changed
+        return False
+
     def _delete_condition_library_entry(self) -> None:
         if self._active_condition_library_index is None:
             return
@@ -3294,21 +3326,22 @@ class AToolApp:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            name = str(entry.get("name", "")).strip()
+            name = cls._sanitize_package_text(entry.get("name", "")).strip()
             if not name:
                 continue
-            expression = str(entry.get("expression", "")).strip()
+            expression = cls._sanitize_package_text(entry.get("expression", "")).strip()
+            description = cls._sanitize_package_text(entry.get("description", "")).strip()
             serialized.append(
                 {
                     "name": name,
-                    "description": str(entry.get("description", "")).strip()
+                    "description": description
                     or cls._infer_clause_description(
                         expression,
                         name,
                     ),
                     "expression": expression,
-                    "updated_at": str(entry.get("updated_at", "")).strip(),
-                    "expression_hash": str(entry.get("expression_hash", "")).strip(),
+                    "updated_at": cls._sanitize_package_text(entry.get("updated_at", "")).strip(),
+                    "expression_hash": cls._sanitize_package_text(entry.get("expression_hash", "")).strip(),
                 }
             )
         for item in serialized:
@@ -5579,7 +5612,7 @@ class AToolApp:
         changed = False
 
         if name is not None:
-            normalized = name.strip()
+            normalized = self._sanitize_package_text(name).strip()
             if node_kind == "condition":
                 pass
             elif "$$Id" in source_ref:
@@ -5592,26 +5625,26 @@ class AToolApp:
                     changed = True
 
         if condition is not None and node_kind in {"layout", "content", "iteration", "field", "condition"}:
-            normalized = condition.strip()
+            normalized = self._sanitize_package_text(condition).strip()
             current_condition = str(source_ref.get("Condition", ""))
             if normalized != current_condition:
                 source_ref["Condition"] = normalized
                 changed = True
 
         if iteration is not None and "Iteration" in source_ref and not isinstance(source_ref.get("Iteration"), dict):
-            normalized = iteration.strip()
+            normalized = self._sanitize_package_text(iteration).strip()
             if normalized != str(source_ref.get("Iteration", "")):
                 source_ref["Iteration"] = normalized
                 changed = True
 
         if path is not None and "Path" in source_ref:
-            normalized = path.strip()
+            normalized = self._sanitize_package_text(path).strip()
             if normalized != str(source_ref.get("Path", "")):
                 source_ref["Path"] = normalized
                 changed = True
 
         if type_value is not None and "Type" in source_ref:
-            normalized = type_value.strip()
+            normalized = self._sanitize_package_text(type_value).strip()
             if node_kind == "iteration" and normalized and normalized not in {"Iterator", "Spliterator"}:
                 messagebox.showerror(
                     "Invalid Iteration Type",
@@ -7459,24 +7492,38 @@ class AToolApp:
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if name is not None:
-            normalized_name = name.strip()
+            normalized_name = self._sanitize_package_text(name).strip()
             if normalized_name and normalized_name != str(document.get("name", "")):
                 document["name"] = normalized_name
                 details["name"] = normalized_name
                 changed = True
 
         if condition is not None:
-            normalized_condition = condition.strip()
+            normalized_condition = self._sanitize_package_text(condition).strip()
             if normalized_condition != str(document.get("condition", "")):
                 document["condition"] = normalized_condition
                 details["condition"] = normalized_condition
                 changed = True
                 condition_changed = True
 
-        if descr is not None and descr != str(document.get("descr", "")):
-            document["descr"] = descr
-            details["descr"] = descr
-            changed = True
+        if descr is not None:
+            normalized_descr = self._sanitize_package_text(descr)
+            if normalized_descr != str(document.get("descr", "")):
+                document["descr"] = normalized_descr
+                details["descr"] = normalized_descr
+                changed = True
+
+        if name is not None or condition is not None or descr is not None:
+            self._updating_document_form = True
+            if name is not None and self.edit_document_name_var.get() != str(document.get("name", "")):
+                self.edit_document_name_var.set(str(document.get("name", "")))
+            if descr is not None and self.document_descr_edit_text.get() != str(document.get("descr", "")):
+                self.document_descr_edit_text.set(str(document.get("descr", "")))
+            if condition is not None and hasattr(self, "document_condition_widget"):
+                current_condition = self.document_condition_widget.get("1.0", tk.END).rstrip("\n")
+                if current_condition != str(document.get("condition", "")):
+                    self._set_text_widget_value(self.document_condition_widget, str(document.get("condition", "")))
+            self._updating_document_form = False
 
         if not changed:
             return
@@ -7531,10 +7578,14 @@ class AToolApp:
         source = document.get("source")
         if not isinstance(source, dict):
             return
-        id_value = str(document.get("name", ""))
-        updated_value = str(document.get("updated", ""))
-        descr_value = str(document.get("descr", ""))
-        condition_value = str(document.get("condition", ""))
+        id_value = AToolApp._sanitize_package_text(document.get("name", ""))
+        updated_value = AToolApp._sanitize_package_text(document.get("updated", ""))
+        descr_value = AToolApp._sanitize_package_text(document.get("descr", ""))
+        condition_value = AToolApp._sanitize_package_text(document.get("condition", ""))
+        document["name"] = id_value
+        document["updated"] = updated_value
+        document["descr"] = descr_value
+        document["condition"] = condition_value
 
         source["$$Id"] = id_value
         source["Updated"] = updated_value
@@ -7685,7 +7736,7 @@ class AToolApp:
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if name is not None:
-            normalized_name = name.strip()
+            normalized_name = self._sanitize_package_text(name).strip()
             if normalized_name and normalized_name != str(field.get("name", "")):
                 field["name"] = normalized_name
                 changed = True
@@ -7695,7 +7746,7 @@ class AToolApp:
             changed = True
 
         if path is not None:
-            normalized_path = self._normalize_path_expression(path.strip())
+            normalized_path = self._normalize_path_expression(self._sanitize_package_text(path).strip())
             if normalized_path and normalized_path != str(field.get("path", "")):
                 valid, reason = self._validate_field_path(normalized_path)
                 if not valid:
@@ -7714,9 +7765,21 @@ class AToolApp:
                 field["path_segments"] = self._path_to_segments(str(field["true_path"]))
                 changed = True
 
-        if descr is not None and descr != str(field.get("descr", "")):
-            field["descr"] = descr
-            changed = True
+        if descr is not None:
+            normalized_descr = self._sanitize_package_text(descr)
+            if normalized_descr != str(field.get("descr", "")):
+                field["descr"] = normalized_descr
+                changed = True
+
+        if name is not None or path is not None or descr is not None:
+            self._updating_field_form = True
+            if name is not None and self.edit_field_name_var.get() != str(field.get("name", "")):
+                self.edit_field_name_var.set(str(field.get("name", "")))
+            if path is not None and self.edit_field_path_var.get() != str(field.get("path", "")):
+                self.edit_field_path_var.set(str(field.get("path", "")))
+            if descr is not None and self.field_descr_text.get() != str(field.get("descr", "")):
+                self.field_descr_text.set(str(field.get("descr", "")))
+            self._updating_field_form = False
 
         if not changed:
             return True
@@ -7736,11 +7799,14 @@ class AToolApp:
         source = field.get("source")
         if not isinstance(source, dict):
             return
-        name_value = str(field.get("name", ""))
-        updated_value = str(field.get("updated", ""))
-        descr_value = str(field.get("descr", ""))
+        name_value = self._sanitize_package_text(field.get("name", ""))
+        updated_value = self._sanitize_package_text(field.get("updated", ""))
+        descr_value = self._sanitize_package_text(field.get("descr", ""))
         mandatory_value = bool(field.get("mandatory", False))
-        path_value = self._normalize_path_expression(str(field.get("path", "")))
+        path_value = self._normalize_path_expression(self._sanitize_package_text(field.get("path", "")))
+        field["name"] = name_value
+        field["updated"] = updated_value
+        field["descr"] = descr_value
         field["path"] = path_value
 
         source["Name"] = name_value
@@ -11907,6 +11973,7 @@ class AToolApp:
         self._sync_active_layout_form_to_model()
         self._sync_all_fields_to_payload()
         self._sync_condition_library_to_payload()
+        self._sanitize_package_text_object(self.current_payload)
         backup_path = self._build_backup_path(self.current_file_path)
         source_backup_path: str | None = None
         wrote_source_file = False
@@ -11969,6 +12036,7 @@ class AToolApp:
         self._sync_active_layout_form_to_model()
         self._sync_all_fields_to_payload()
         self._sync_condition_library_to_payload()
+        self._sanitize_package_text_object(self.current_payload)
 
         entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
         if entry is None:
@@ -12037,7 +12105,12 @@ class AToolApp:
             return True
         if not self._active_field_node_id:
             return True
-        return self._apply_field_form_change(path=self.edit_field_path_var.get())
+        return self._apply_field_form_change(
+            name=self.edit_field_name_var.get(),
+            path=self.edit_field_path_var.get(),
+            descr=self.field_descr_text.get(),
+            mandatory=bool(self.edit_field_mandatory_var.get()),
+        )
 
     def _sync_active_layout_form_to_model(self) -> None:
         if self._updating_layout_form:
@@ -12100,6 +12173,7 @@ class AToolApp:
             )
             return
 
+        sanitized_loaded_text = self._sanitize_package_text_object(payload)
         package_name = str(payload.get("$$Id", "(unknown)"))
         self.current_payload = payload
         self.current_file_path = loaded_path
@@ -12142,7 +12216,12 @@ class AToolApp:
             fields=fields,
         )
         self._write_app_state(last_opened_file=loaded_path, package_name=package_name)
-        self._set_dirty(False)
+        self._set_dirty(sanitized_loaded_text)
+        if sanitized_loaded_text:
+            self._show_temporary_status(
+                "Removed unsupported line breaks from package text; save before publishing.",
+                duration_ms=7000,
+            )
 
         if correction_message:
             messagebox.showwarning("JSON Auto-Correction Applied", correction_message)
@@ -14522,9 +14601,44 @@ class AToolApp:
         if start < 0:
             return ""
         end = len(expr)
+        in_string = ""
+        escaped = False
+        paren_depth = 0
+        bracket_depth = 0
         for index in range(start, len(expr)):
             char = expr[index]
-            if char in {",", "+"}:
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == in_string:
+                    in_string = ""
+                continue
+
+            if char in {"'", '"'}:
+                in_string = char
+                continue
+            if char == "[":
+                bracket_depth += 1
+                continue
+            if char == "]":
+                if bracket_depth > 0:
+                    bracket_depth -= 1
+                continue
+            if char == "(":
+                paren_depth += 1
+                continue
+            if char == ")":
+                if paren_depth > 0:
+                    paren_depth -= 1
+                    continue
+                if bracket_depth == 0:
+                    end = index
+                    break
+            if char in {",", "+"} and paren_depth == 0 and bracket_depth == 0:
                 end = index
                 break
         return expr[start:end].strip()

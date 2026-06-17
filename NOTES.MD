@@ -74,6 +74,8 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The short-lived `Mapping: ...` text was removed from the lower status bar.
 - `Clear Map` clears mapping colors, field values, document Match Details, and hides the mapped-result filter.
 - New fields added while a data file is mapped now default to a placeholder path such as `$.NewField1` instead of `$`, preventing the Mapped Value panel from filling with the entire JSON payload.
+- Count mappings that wrap filtered JSONPaths, such as `$.length($..billCalcLineList[?(@.cmElements.chargeType == 'FCC')].cmElements).length())`, now ignore trailing wrapper parentheses so the mapped field shows the matched count instead of no value.
+- ATool now strips embedded line breaks from package text values entered in editable fields and from existing package text values on load, preventing newline characters in assembly-template strings from breaking Comms.
 
 ## Unmatched Documents Explain Why They Failed
 
