@@ -13141,11 +13141,12 @@ class AToolApp:
                 break
             counter += 1
 
+        default_path = f"$.{candidate}"
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         source_field = {
             "Name": candidate,
             "Mandatory": False,
-            "Path": "$",
+            "Path": default_path,
             "Updated": now_text,
             "Descr": "",
         }
@@ -13153,16 +13154,19 @@ class AToolApp:
 
         new_field = {
             "name": candidate,
-            "path": "$",
+            "path": default_path,
             "mandatory": False,
-            "true_path": "$",
-            "path_segments": self._path_to_segments("$"),
+            "true_path": default_path,
+            "path_segments": self._path_to_segments(default_path),
             "updated": now_text,
             "descr": "",
             "source": source_field,
         }
         if self.current_data_payload is not None:
-            new_field["mapped_values"] = self._extract_values_by_path(self.current_data_payload, "$")
+            new_field["mapped_values"] = self._extract_values_by_path(
+                self.current_data_payload,
+                default_path,
+            )
         self._loaded_fields.append(new_field)
         self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
         self._set_dirty(True)
@@ -13913,8 +13917,11 @@ class AToolApp:
         missing_side = "left" if not left_values else "right"
         present_values = right_values if not left_values else left_values
 
+        if operator == "!=" and comms_compatible:
+            return True, missing_side, present_values
+
         if operator == "!=":
-            return False, missing_side, present_values
+            return None
 
         if operator == "==" and comms_compatible:
             return False, missing_side, present_values

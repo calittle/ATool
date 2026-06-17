@@ -73,6 +73,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The status bar shows the total document count and how many documents matched.
 - The short-lived `Mapping: ...` text was removed from the lower status bar.
 - `Clear Map` clears mapping colors, field values, document Match Details, and hides the mapped-result filter.
+- New fields added while a data file is mapped now default to a placeholder path such as `$.NewField1` instead of `$`, preventing the Mapped Value panel from filling with the entire JSON payload.
 
 ## Unmatched Documents Explain Why They Failed
 
@@ -141,6 +142,8 @@ This fixes cases where Comms triggered a document but ATool showed a failed clau
 Filtered empty checks now treat a missing filtered parent path as empty in Comms-compatible evaluation, matching the local condition result to the intended empty-filter behavior.
 
 Missing scalar leaf checks now match OCCS more closely: a missing leaf path such as `@.developerAccount empty true` no longer passes locally. Use a parent-object filter such as `@.cmElements[?(@.developerAccount == 'Y')] empty true` when a condition needs to pass for missing non-developer flags.
+
+Comms-compatible `!=` comparisons now treat a missing path as not equal to a present literal value. For example, `@.billPrint.billDetails.cmElements.billTag != 'Adjusted Bill'` now passes when `billTag` is absent, matching Comms document-trigger behavior.
 
 ## Map Button Feedback
 
