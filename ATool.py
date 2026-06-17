@@ -61,6 +61,7 @@ class AToolApp:
             "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
             "user_name": "",
+            "retain_lock_after_shared_update": False,
             "package_mru": [],
             "preview_open_programs": {
                 "PDF": "",
@@ -4515,6 +4516,7 @@ class AToolApp:
         config_id_filter_var = tk.StringVar(value=self._get_occs_config_id_filter())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
+        retain_lock_after_shared_update_var = tk.BooleanVar(value=self._get_retain_lock_after_shared_update_setting())
         preview_program_vars = {
             render_type: tk.StringVar(value=self._get_occs_preview_open_program(render_type))
             for render_type in self.OCCS_PREVIEW_RENDER_TYPES
@@ -4608,6 +4610,13 @@ class AToolApp:
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
         user_name_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
+        retain_lock_check = ttk.Checkbutton(
+            occs_group,
+            text="Retain lock on package after update",
+            variable=retain_lock_after_shared_update_var,
+        )
+        retain_lock_check.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         preview_group.columnconfigure(1, weight=1)
@@ -4690,6 +4699,7 @@ class AToolApp:
             self._set_occs_config_id_filter(config_id_filter)
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
+            self._set_retain_lock_after_shared_update_enabled(bool(retain_lock_after_shared_update_var.get()))
             for render_type, variable in preview_program_vars.items():
                 self._set_occs_preview_open_program(render_type, variable.get())
             self._save_user_settings()
@@ -4750,6 +4760,10 @@ class AToolApp:
     def _set_occs_user_name(self, user_name: str) -> None:
         section = self._occs_settings_section()
         section["user_name"] = str(user_name or "").strip()
+
+    def _set_retain_lock_after_shared_update_enabled(self, enabled: bool) -> None:
+        section = self._occs_settings_section()
+        section["retain_lock_after_shared_update"] = enabled
 
     def _set_occs_preview_open_program(self, render_type: str, program: str) -> None:
         section = self._occs_settings_section()
@@ -4821,6 +4835,15 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("user_name", "")).strip()
+
+    def _get_retain_lock_after_shared_update_setting(self) -> bool:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return False
+        value = section.get("retain_lock_after_shared_update")
+        if isinstance(value, bool):
+            return value
+        return False
 
     def _get_occs_preview_open_program(self, render_type: str) -> str:
         section = self.user_settings.get("occs")
@@ -5077,6 +5100,9 @@ class AToolApp:
                 value = occs.get(key)
                 if isinstance(value, str):
                     settings["occs"][key] = value
+            retain_lock_value = occs.get("retain_lock_after_shared_update")
+            if isinstance(retain_lock_value, bool):
+                settings["occs"]["retain_lock_after_shared_update"] = retain_lock_value
             settings["occs"]["last_preview_render_types"] = self._normalize_preview_render_types(
                 occs.get("last_preview_render_types")
             )
@@ -8838,10 +8864,13 @@ class AToolApp:
 
         release_lock = release_lock_after
         if release_lock is None:
-            release_lock = messagebox.askyesno(
-                "Update Shared Package",
-                "Shared package folder updated.\n\nRelease the edit lock now?",
-            )
+            if self._get_retain_lock_after_shared_update_setting():
+                release_lock = False
+            else:
+                release_lock = messagebox.askyesno(
+                    "Update Shared Package",
+                    "Shared package folder updated.\n\nRelease the edit lock now?",
+                )
         if release_lock:
             try:
                 lock_path.unlink()
