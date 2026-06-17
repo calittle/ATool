@@ -144,6 +144,7 @@ class AToolApp:
         self._restore_window_geometry()
 
         self.status_text = tk.StringVar(value="File: (none) | Package: (none)")
+        self.operation_status_text = tk.StringVar(value="Status: Ready")
         self.data_status_text = tk.StringVar(value="Data: (none)")
         self.mapping_status_text = tk.StringVar(value="Mapping: Idle")
         self.document_count_text = tk.StringVar(value="Documents: 0")
@@ -514,18 +515,25 @@ class AToolApp:
         status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, borderwidth=1, padding=(8, 4))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         status_bar.columnconfigure(0, weight=1)
+        status_bar.columnconfigure(1, weight=1)
 
         status_label = ttk.Label(status_bar, textvariable=self.status_text, anchor=tk.W)
         status_label.grid(row=0, column=0, sticky="ew")
 
+        operation_label = ttk.Label(status_bar, textvariable=self.operation_status_text, anchor=tk.W)
+        operation_label.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+
         data_label = ttk.Label(status_bar, textvariable=self.data_status_text, anchor=tk.W)
-        data_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        data_label.grid(row=0, column=2, sticky="w", padx=(12, 0))
+
+        mapping_label = ttk.Label(status_bar, textvariable=self.mapping_status_text, anchor=tk.CENTER)
+        mapping_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
 
         docs_label = ttk.Label(status_bar, textvariable=self.document_count_text, anchor=tk.CENTER)
-        docs_label.grid(row=0, column=2, sticky="e", padx=(12, 0))
+        docs_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
 
         fields_label = ttk.Label(status_bar, textvariable=self.field_count_text, anchor=tk.CENTER)
-        fields_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
+        fields_label.grid(row=0, column=5, sticky="e", padx=(12, 0))
 
     def _create_documents_panel(self, parent: ttk.Frame) -> tuple[ttk.Frame, ttk.Treeview]:
         panel = ttk.Frame(parent, padding=(0, 0, 12, 0))
@@ -7689,7 +7697,19 @@ class AToolApp:
                         f"against {self._format_mapped_nodeset_preview(present_values)}",
                     )
             if not left_values or not right_values:
-                return False, f"left={len(left_values)} right={len(right_values)}"
+                notes = []
+                if not left_values:
+                    left_note = self._condition_template_field_reference_note(lhs)
+                    if left_note:
+                        notes.append(left_note)
+                if not right_values:
+                    right_note = self._condition_template_field_reference_note(rhs)
+                    if right_note:
+                        notes.append(right_note)
+                detail = f"left={len(left_values)} right={len(right_values)}"
+                if notes:
+                    detail = f"{detail}; " + "; ".join(notes)
+                return False, detail
             passed = self._compare_condition_operand_values(left_values, operator, right_values)
             return (
                 passed,
@@ -12862,8 +12882,9 @@ class AToolApp:
             cached_entry = cache.get(cache_key)
             if cached_entry:
                 true_path = str(cached_entry.get("true_path", path))
+                true_path = self._trim_trailing_unmatched_closing_parens(true_path)
                 segments = cached_entry.get("path_segments")
-                if isinstance(segments, list) and segments:
+                if isinstance(segments, list) and segments == self._path_to_segments(true_path):
                     path_segments = [str(segment) for segment in segments]
                 else:
                     path_segments = self._path_to_segments(true_path)
@@ -12988,6 +13009,8 @@ class AToolApp:
     def _restore_default_status_text(self) -> None:
         self._status_note_job = None
         self.status_text.set(self._default_status_text())
+        if self._occs_status_started_at is None:
+            self.operation_status_text.set("Status: Ready")
 
     def _format_occs_timed_status(self) -> str:
         started_at = self._occs_status_started_at
@@ -12998,7 +13021,7 @@ class AToolApp:
         if self._occs_status_started_at is None:
             self._occs_status_timer_job = None
             return
-        self.status_text.set(self._format_occs_timed_status())
+        self.operation_status_text.set(self._format_occs_timed_status())
         self._occs_status_timer_job = self.root.after(1000, self._refresh_occs_status_timer)
 
     def _start_occs_status_timer(self, message: str) -> None:
@@ -13013,7 +13036,7 @@ class AToolApp:
     def _set_occs_status_timer_message(self, message: str) -> None:
         self._occs_status_message = message
         if self._occs_status_started_at is not None:
-            self.status_text.set(self._format_occs_timed_status())
+            self.operation_status_text.set(self._format_occs_timed_status())
 
     def _stop_occs_status_timer(self) -> None:
         if self._occs_status_timer_job:
@@ -13021,13 +13044,15 @@ class AToolApp:
             self._occs_status_timer_job = None
         self._occs_status_started_at = None
         self._occs_status_message = ""
+        self.operation_status_text.set("Status: Ready")
 
     def _show_temporary_status(self, message: str, duration_ms: int = 5000) -> None:
         if self._status_note_job:
             self.root.after_cancel(self._status_note_job)
             self._status_note_job = None
         self._stop_occs_status_timer()
-        self.status_text.set(message)
+        self.status_text.set(self._default_status_text())
+        self.operation_status_text.set(message)
         self._status_note_job = self.root.after(duration_ms, self._restore_default_status_text)
 
     def _on_close(self) -> None:
@@ -13900,6 +13925,11 @@ class AToolApp:
             lhs, operator, rhs = comparison
             left_values = self._evaluate_condition_operand(data_payload, lhs)
             right_values = self._evaluate_condition_operand(data_payload, rhs)
+            if warnings is not None:
+                if not left_values:
+                    self._append_condition_template_field_reference_warning(warnings, lhs)
+                if not right_values:
+                    self._append_condition_template_field_reference_warning(warnings, rhs)
             if operator in {"==", "!="}:
                 missing_result = self._compare_missing_condition_operand_values(
                     left_values,
@@ -13965,6 +13995,43 @@ class AToolApp:
             return [literal_value]
         path = self._normalize_condition_path(expression)
         return self._extract_values_by_path(data_payload, path)
+
+    def _append_condition_template_field_reference_warning(
+        self,
+        warnings: list[str],
+        expression: str,
+    ) -> None:
+        note = self._condition_template_field_reference_note(expression)
+        if note:
+            self._append_condition_warning(warnings, note)
+
+    def _condition_template_field_reference_note(self, expression: str) -> str:
+        field = self._condition_template_field_for_operand(expression)
+        if field is None:
+            return ""
+        field_name = str(field.get("name", "")).strip()
+        field_path = str(field.get("path", "")).strip()
+        if field_path:
+            return (
+                f"Condition operand {expression.strip()} matches ATool field '{field_name}', "
+                "but Comms conditions evaluate against the input JSON and do not resolve ATool field names. "
+                f"Use the field's JSON path instead: {field_path}"
+            )
+        return (
+            f"Condition operand {expression.strip()} matches ATool field '{field_name}', "
+            "but Comms conditions evaluate against the input JSON and do not resolve ATool field names."
+        )
+
+    def _condition_template_field_for_operand(self, expression: str) -> dict[str, object] | None:
+        path = self._normalize_condition_path(expression)
+        match = re.match(r"^\$\.([A-Za-z_][A-Za-z0-9_]*)$", path)
+        if not match:
+            return None
+        field_name = match.group(1).casefold()
+        for field in self._loaded_fields:
+            if str(field.get("name", "")).casefold() == field_name:
+                return field
+        return None
 
     def _compare_condition_operand_values(
         self, left_values: list[object], operator: str, right_values: list[object]
@@ -14505,12 +14572,15 @@ class AToolApp:
             candidate = self._strip_wrapper_function(candidate, "length")
             candidate = self._strip_wrapper_function(candidate, "concat")
             candidate = candidate.replace(".length()", "")
+            candidate = self._trim_trailing_unmatched_closing_parens(candidate)
             candidate = candidate.strip()
 
         if candidate.startswith("$.length("):
             candidate = self._strip_wrapper_function(candidate[2:], "length")
+            candidate = self._trim_trailing_unmatched_closing_parens(candidate)
         if candidate.startswith("$.concat("):
             candidate = self._strip_wrapper_function(candidate[2:], "concat")
+            candidate = self._trim_trailing_unmatched_closing_parens(candidate)
 
         if not candidate.startswith("$"):
             extracted = self._extract_first_jsonpath(candidate)
@@ -14519,6 +14589,36 @@ class AToolApp:
 
         extracted = self._extract_first_jsonpath(candidate)
         return extracted or candidate or "$"
+
+    @staticmethod
+    def _trim_trailing_unmatched_closing_parens(expression: str) -> str:
+        text = expression.strip()
+        while text.endswith(")") and AToolApp._paren_balance(text) < 0:
+            text = text[:-1].rstrip()
+        return text
+
+    @staticmethod
+    def _paren_balance(expression: str) -> int:
+        balance = 0
+        in_string = ""
+        escaped = False
+        for char in expression:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == in_string:
+                    in_string = ""
+                continue
+            if char in {"'", '"'}:
+                in_string = char
+                continue
+            if char == "(":
+                balance += 1
+            elif char == ")":
+                balance -= 1
+        return balance
 
     @staticmethod
     def _normalize_path_expression(path: str) -> str:
