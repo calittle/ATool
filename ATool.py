@@ -56,6 +56,8 @@ class AToolApp:
             "cli_path": "",
             "work_dir": "",
             "session_alias": "",
+            "config_source_session_alias": "np",
+            "config_target_session_alias": "pp",
             "config_id_filter": "",
             "last_config_id": "",
             "last_preview_render_types": ["PDF"],
@@ -341,6 +343,10 @@ class AToolApp:
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
+        config_menu = tk.Menu(menu_bar, tearoff=0)
+        config_menu.add_command(label="Close...", command=self.close_occs_config)
+        config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
+
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
         preview_accelerator = "Cmd+P" if self._is_macos() else "Ctrl+P"
@@ -385,6 +391,7 @@ class AToolApp:
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
+        menu_bar.add_cascade(label="Config", menu=config_menu)
         menu_bar.add_cascade(label="Data", menu=data_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
         menu_bar.add_cascade(label="Window", menu=window_menu)
@@ -4513,6 +4520,8 @@ class AToolApp:
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
         session_alias_var = tk.StringVar(value=self._get_occs_session_alias())
+        config_source_session_alias_var = tk.StringVar(value=self._get_occs_config_source_session_alias())
+        config_target_session_alias_var = tk.StringVar(value=self._get_occs_config_target_session_alias())
         config_id_filter_var = tk.StringVar(value=self._get_occs_config_id_filter())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
@@ -4578,13 +4587,29 @@ class AToolApp:
         session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
         session_alias_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config ID Filter:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
-        config_id_filter_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(occs_group, text="Config Source Session:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_source_session_alias_entry = ttk.Entry(
+            occs_group,
+            textvariable=config_source_session_alias_var,
+            width=54,
+        )
+        config_source_session_alias_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Config Target Session:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_target_session_alias_entry = ttk.Entry(
+            occs_group,
+            textvariable=config_target_session_alias_var,
+            width=54,
+        )
+        config_target_session_alias_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Config ID Filter:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
+        config_id_filter_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
-        shared_workspace_entry.grid(row=4, column=1, sticky="ew", pady=(8, 0))
+        shared_workspace_entry.grid(row=6, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
@@ -4599,23 +4624,23 @@ class AToolApp:
                 shared_workspace_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
-            row=4,
+            row=6,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="User Name:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         retain_lock_check = ttk.Checkbutton(
             occs_group,
             text="Retain lock on package after update",
             variable=retain_lock_after_shared_update_var,
         )
-        retain_lock_check.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        retain_lock_check.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
@@ -4696,6 +4721,8 @@ class AToolApp:
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
             self._set_occs_session_alias(session_alias_var.get())
+            self._set_occs_config_source_session_alias(config_source_session_alias_var.get())
+            self._set_occs_config_target_session_alias(config_target_session_alias_var.get())
             self._set_occs_config_id_filter(config_id_filter)
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
@@ -4748,6 +4775,14 @@ class AToolApp:
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
         section["session_alias"] = str(session_alias or "").strip()
+
+    def _set_occs_config_source_session_alias(self, session_alias: str) -> None:
+        section = self._occs_settings_section()
+        section["config_source_session_alias"] = str(session_alias or "").strip()
+
+    def _set_occs_config_target_session_alias(self, session_alias: str) -> None:
+        section = self._occs_settings_section()
+        section["config_target_session_alias"] = str(session_alias or "").strip()
 
     def _set_occs_config_id_filter(self, config_id_filter: str) -> None:
         section = self._occs_settings_section()
@@ -4816,6 +4851,18 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("session_alias", "")).strip()
+
+    def _get_occs_config_source_session_alias(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return "np"
+        return str(section.get("config_source_session_alias", "np")).strip() or "np"
+
+    def _get_occs_config_target_session_alias(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return "pp"
+        return str(section.get("config_target_session_alias", "pp")).strip() or "pp"
 
     def _get_occs_config_id_filter(self) -> str:
         section = self.user_settings.get("occs")
@@ -5092,6 +5139,8 @@ class AToolApp:
                 "cli_path",
                 "work_dir",
                 "session_alias",
+                "config_source_session_alias",
+                "config_target_session_alias",
                 "config_id_filter",
                 "last_config_id",
                 "shared_workspace_dir",
@@ -7667,6 +7716,18 @@ class AToolApp:
         if not expr:
             return True, "empty expression"
 
+        negated_expr = self._unwrap_condition_negation(expr)
+        if negated_expr is not None:
+            passed = self._evaluate_condition_expression(
+                negated_expr,
+                data_payload,
+                comms_compatible=comms_compatible,
+            )
+            return (
+                not passed,
+                f"inner condition {self._condition_status_text(passed)}: {negated_expr}",
+            )
+
         empty_match = re.match(r"^(.*?)\s+empty\s+(true|false)\s*$", expr, flags=re.IGNORECASE)
         if empty_match:
             path = empty_match.group(1).strip()
@@ -9650,6 +9711,175 @@ class AToolApp:
             messagebox.showinfo("Publish Package to Comms", message)
         self._show_temporary_status("Package published to Comms", duration_ms=5000)
 
+    def close_occs_config(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Close Config", "An OCCS operation is already in progress.")
+            return
+        source_session = self._get_occs_config_source_session_alias()
+        self._run_occs_json_command_async(
+            [
+                "list-configs",
+                "--session",
+                source_session,
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ],
+            f"Loading Config IDs from {source_session}...",
+            lambda result, selected_session=source_session: self._open_occs_config_close_dialog(
+                self._normalize_occs_configs(result),
+                selected_session,
+            ),
+            on_failure=lambda error, selected_session=source_session: self._on_occs_config_close_list_failed(
+                error,
+                selected_session,
+            ),
+        )
+
+    def _on_occs_config_close_list_failed(self, error: Exception, source_session: str) -> None:
+        if not messagebox.askyesno(
+            "Close Config",
+            f"Could not load open Config IDs from {source_session}.\n\n"
+            f"Details: {error}\n\n"
+            "Continue with manual Config ID entry?",
+        ):
+            return
+        self._open_occs_config_close_dialog([], source_session)
+
+    def _open_occs_config_close_dialog(self, configs: list[dict[str, str]], source_session: str) -> None:
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Close Config")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        ttk.Label(container, text="Session:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(container, text=source_session).grid(row=0, column=1, sticky="w")
+
+        configs = self._filter_occs_configs_for_display(configs, parent=dialog)
+        labels = [self._format_occs_config_label(config) for config in configs]
+        config_by_label = {
+            label: config
+            for label, config in zip(labels, configs)
+            if label
+        }
+        config_var = tk.StringVar(value=self._initial_occs_config_selection(labels, configs))
+
+        ttk.Label(container, text="Config ID:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        config_combo = ttk.Combobox(
+            container,
+            textvariable=config_var,
+            values=labels,
+            state="normal",
+            width=54,
+        )
+        config_combo.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            raw_value = config_var.get().strip()
+            config_id = self._occs_config_close_id_from_selection(raw_value, config_by_label)
+            if not config_id:
+                messagebox.showerror("Close Config", "Config ID is required.", parent=dialog)
+                return
+            if not messagebox.askyesno(
+                "Confirm Close Config",
+                f"Close Config ID in {source_session}?\n\n{config_id}",
+                parent=dialog,
+            ):
+                return
+            self._set_last_occs_config_id(config_id)
+            dialog.destroy()
+            self._run_occs_config_close(source_session, config_id)
+
+        ttk.Button(buttons, text="Close", command=_submit).grid(row=0, column=1)
+        config_combo.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _run_occs_config_close(self, source_session: str, config_id: str) -> None:
+        self._run_occs_command_async(
+            [
+                "close-config",
+                "--session",
+                source_session,
+                "--config-id",
+                config_id,
+            ],
+            f"Closing Config ID {config_id} in {source_session}...",
+            lambda result, selected_session=source_session, selected_config_id=config_id: self._on_occs_config_close_complete(
+                result,
+                selected_session,
+                selected_config_id,
+            ),
+            on_failure=lambda error: messagebox.showerror("Close Config", str(error)),
+        )
+
+    def _on_occs_config_close_complete(
+        self,
+        result: dict[str, object],
+        source_session: str,
+        config_id: str,
+    ) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        detail = f"\n\n{stdout}" if stdout else ""
+        self._show_temporary_status("Config closed", duration_ms=5000)
+        if messagebox.askyesno(
+            "Close Config",
+            f"Config ID closed in {source_session}:\n\n{config_id}{detail}\n\nMigrate now?",
+        ):
+            self.migrate_occs_config(confirm=False)
+
+    def migrate_occs_config(self, confirm: bool = True) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Migrate Config", "An OCCS operation is already in progress.")
+            return
+        source_session = self._get_occs_config_source_session_alias()
+        target_session = self._get_occs_config_target_session_alias()
+        if confirm and not messagebox.askyesno(
+            "Confirm Migrate Config",
+            f"Run OCCS migrate?\n\nSource: {source_session}\nTarget: {target_session}",
+        ):
+            return
+        self._run_occs_command_async(
+            [
+                "migrate",
+                "--source-session",
+                source_session,
+                "--target-session",
+                target_session,
+            ],
+            f"Migrating Config from {source_session} to {target_session}...",
+            lambda result, selected_source=source_session, selected_target=target_session: self._on_occs_config_migrate_complete(
+                result,
+                selected_source,
+                selected_target,
+            ),
+            on_failure=lambda error: messagebox.showerror("Migrate Config", str(error)),
+        )
+
+    def _on_occs_config_migrate_complete(
+        self,
+        result: dict[str, object],
+        source_session: str,
+        target_session: str,
+    ) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        detail = f"\n\n{stdout}" if stdout else ""
+        self._show_temporary_status("Config migration complete", duration_ms=5000)
+        messagebox.showinfo(
+            "Migrate Config",
+            f"Migration complete.\n\nSource: {source_session}\nTarget: {target_session}{detail}",
+        )
+
     def _sync_shared_package_after_comms_publish(self) -> str:
         if (
             self.current_occs_shared_package_dir is None
@@ -11395,6 +11625,16 @@ class AToolApp:
         config = config_by_label.get(selection)
         if config:
             return config.get("id") or config.get("shortName") or selection
+        return selection.strip()
+
+    @staticmethod
+    def _occs_config_close_id_from_selection(
+        selection: str,
+        config_by_label: dict[str, dict[str, str]],
+    ) -> str:
+        config = config_by_label.get(selection)
+        if config:
+            return config.get("shortName") or config.get("id") or selection
         return selection.strip()
 
     def _format_occs_save_result(
@@ -13783,6 +14023,18 @@ class AToolApp:
         data_payload: object,
     ) -> tuple[bool, list[str]]:
         expr = self._strip_outer_parens(expression)
+        negated_expr = self._unwrap_condition_negation(expr)
+        if negated_expr is not None:
+            inner_passed, inner_details = self._describe_atomic_condition_result(negated_expr, data_payload)
+            passed = not inner_passed
+            details = [
+                f"Check: {expr}",
+                f"Expected: NOT ({negated_expr})",
+                f"Inner result: {self._condition_status_text(inner_passed)}",
+            ]
+            details.extend(inner_details)
+            return passed, details
+
         passed, details = self._evaluate_atomic_condition_with_detail(expr, data_payload)
 
         empty_match = re.match(r"^(.*?)\s+empty\s+(true|false)\s*$", expr, flags=re.IGNORECASE)
@@ -13909,6 +14161,15 @@ class AToolApp:
                 for part in and_parts
             )
 
+        negated_expr = self._unwrap_condition_negation(expr)
+        if negated_expr is not None:
+            return not self._evaluate_condition_expression(
+                negated_expr,
+                data_payload,
+                comms_compatible=comms_compatible,
+                warnings=warnings,
+            )
+
         return self._evaluate_atomic_condition(
             expr,
             data_payload,
@@ -13927,6 +14188,15 @@ class AToolApp:
         expr = self._strip_outer_parens(expression)
         if not expr:
             return True
+
+        negated_expr = self._unwrap_condition_negation(expr)
+        if negated_expr is not None:
+            return not self._evaluate_condition_expression(
+                negated_expr,
+                data_payload,
+                comms_compatible=comms_compatible,
+                warnings=warnings,
+            )
 
         empty_match = re.match(r"^(.*?)\s+empty\s+(true|false)\s*$", expr, flags=re.IGNORECASE)
         if empty_match:
@@ -14362,6 +14632,22 @@ class AToolApp:
         if tail:
             parts.append(tail)
         return parts
+
+    @staticmethod
+    def _unwrap_condition_negation(expression: str) -> str | None:
+        expr = str(expression or "").strip()
+        if not expr.startswith("!") or expr.startswith("!="):
+            return None
+
+        operand = expr[1:].strip()
+        if not operand:
+            return None
+
+        if operand.startswith("("):
+            unwrapped = AToolApp._strip_outer_parens(operand)
+            return unwrapped if unwrapped != operand else None
+
+        return operand
 
     @staticmethod
     def _strip_outer_parens(text: str) -> str:

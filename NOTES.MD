@@ -11,6 +11,13 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 
 - User Settings now include `Confirm on Quit`, enabled by default. When enabled, ATool asks for confirmation before quitting from Cmd+Q, File > Exit, or the window close control.
 - User Settings now include an OCCS `Config ID Filter` regular expression. When set, the Publish Package to Comms Config ID dropdown only shows matching Config IDs, names, or labels.
+- User Settings now include Config Source and Target session aliases, defaulting to `np` and `pp`, for Config close and migration commands.
+
+## Config Management
+
+- Added `Config > Close...`, which loads open Config IDs from the configured source session, applies the Config ID Filter, and runs `occs close-config --session <source> --config-id <config>`.
+- After a Config closes successfully, ATool now asks whether to run migration immediately.
+- Added `Config > Migrate`, which runs `occs migrate --source-session <source> --target-session <target>`.
 
 ## Layout Mapping Diagnostics
 
