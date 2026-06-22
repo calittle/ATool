@@ -1,3 +1,3 @@
 #!/bin/zsh
-cd "$(dirname "$0")"
+cd "/Users/clittle/Documents/dev/ATool"
 python3 ATool.py

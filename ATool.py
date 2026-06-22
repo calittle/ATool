@@ -673,8 +673,8 @@ class AToolApp:
         filter_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         filter_row.columnconfigure(0, weight=1)
 
-        documents_filter = ttk.Entry(filter_row, textvariable=self.documents_filter_var)
-        documents_filter.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.documents_filter_entry = ttk.Entry(filter_row, textvariable=self.documents_filter_var)
+        self.documents_filter_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
         documents_filter_clear = ttk.Button(
             filter_row,
@@ -956,8 +956,8 @@ class AToolApp:
         filter_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         filter_row.columnconfigure(0, weight=1)
 
-        fields_filter = ttk.Entry(filter_row, textvariable=self.fields_filter_var)
-        fields_filter.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.fields_filter_entry = ttk.Entry(filter_row, textvariable=self.fields_filter_var)
+        self.fields_filter_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
         fields_filter_clear = ttk.Button(
             filter_row,
@@ -1336,6 +1336,7 @@ class AToolApp:
         self._attach_app_menu(self.fields_window)
         self.fields_window.protocol("WM_DELETE_WINDOW", self._hide_fields_window)
         self.fields_window.bind("<Configure>", self._on_fields_window_configure)
+        self._bind_search_shortcut(self.fields_window, self._focus_fields_filter_event)
 
         container = ttk.Frame(self.fields_window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
@@ -1537,6 +1538,7 @@ class AToolApp:
         self._attach_app_menu(self.condition_library_window)
         self.condition_library_window.protocol("WM_DELETE_WINDOW", self._hide_condition_library_window)
         self.condition_library_window.bind("<Configure>", self._on_condition_library_window_configure)
+        self._bind_search_shortcut(self.condition_library_window, self._focus_condition_library_filter_event)
 
         container = ttk.Frame(self.condition_library_window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
@@ -8012,6 +8014,7 @@ class AToolApp:
             self.root.title("ATool" + (" *" if self.is_dirty else ""))
 
     def _bind_shortcuts(self) -> None:
+        self._bind_search_shortcut(self.root, self._focus_documents_filter_event)
         if self._is_macos():
             try:
                 self.root.createcommand("tk::mac::Quit", self._on_close)
@@ -8050,6 +8053,42 @@ class AToolApp:
             self.root.bind_all("<Control-Shift-M>", self._convert_and_map_event)
             self.root.bind_all("<Control-u>", self._update_shared_event)
             self.root.bind_all("<Control-Shift-U>", self._publish_to_comms_event)
+
+    def _bind_search_shortcut(self, widget: tk.Misc, handler: object) -> None:
+        if self._is_macos():
+            widget.bind("<Command-f>", handler)
+            widget.bind("<Command-F>", handler)
+        else:
+            widget.bind("<Control-f>", handler)
+            widget.bind("<Control-F>", handler)
+
+    def _focus_documents_filter_event(self, event: tk.Event) -> str:
+        if hasattr(self, "documents_filter_entry"):
+            self._focus_entry_widget(self.documents_filter_entry)
+        return "break"
+
+    def _focus_fields_filter_event(self, event: tk.Event) -> str:
+        if hasattr(self, "fields_filter_entry"):
+            self._focus_entry_widget(self.fields_filter_entry)
+        return "break"
+
+    def _focus_condition_library_filter_event(self, event: tk.Event) -> str:
+        if hasattr(self, "condition_library_filter_entry"):
+            self._focus_entry_widget(self.condition_library_filter_entry)
+        return "break"
+
+    @staticmethod
+    def _focus_entry_widget(entry: tk.Misc) -> None:
+        try:
+            if not entry.winfo_exists():
+                return
+            entry.focus_set()
+            if hasattr(entry, "selection_range"):
+                entry.selection_range(0, tk.END)
+            if hasattr(entry, "icursor"):
+                entry.icursor(tk.END)
+        except tk.TclError:
+            return
 
     def _open_event(self, event: tk.Event) -> str:
         self.open_occs_package()
