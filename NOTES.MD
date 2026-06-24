@@ -125,12 +125,14 @@ Useful interpretation rules:
 - Convert and Map now has a keyboard shortcut: `Shift+Cmd+M` on macOS and `Shift+Ctrl+M` on Windows/Linux.
 - The workflow reuses the existing conversion validation, including multi-Bill-ID confirmation and overwrite prompts.
 - If conversion succeeds but the generated JSON cannot be found, ATool reports the conversion output path instead of silently failing.
+- Windows subprocess output is now decoded as UTF-8 with replacement fallback, preventing Convert and Map from crashing when OCCS emits bytes that do not decode under the Windows `cp1252` console code page.
 
 ## Preview Workflow And Package Menu
 
 - `Preview...` is now the final item in the Package menu, separated from package management commands by a divider.
 - The Preview dialog now focuses the `Preview` button by default, so pressing Enter starts the preview.
 - The Preview dialog now remembers the last submitted render type selection and timeout.
+- Preview timeout values are no longer capped at 180 seconds, allowing longer OCCS renders to be configured and reused.
 - When preview output is opened automatically, ATool no longer shows an extra completion popup first.
 - Preview still reports output paths when automatic opening is disabled or no output file is available to open.
 

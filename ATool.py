@@ -39,9 +39,10 @@ class AToolApp:
         "JSON": 20,
         "METADATA": 20,
     }
-    OCCS_PREVIEW_MAX_TIMEOUT_SECONDS = 180
     OCCS_LOGIN_TIMEOUT_SECONDS = 120
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
+    SUBPROCESS_OUTPUT_ENCODING = "utf-8"
+    SUBPROCESS_OUTPUT_ERRORS = "replace"
     DEFAULT_SETTINGS = {
         "application": {
             "confirm_on_quit": True,
@@ -464,6 +465,8 @@ class AToolApp:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding=AToolApp.SUBPROCESS_OUTPUT_ENCODING,
+                errors=AToolApp.SUBPROCESS_OUTPUT_ERRORS,
             )
         except OSError:
             return default
@@ -4816,10 +4819,7 @@ class AToolApp:
         section = self._occs_settings_section()
         normalized_render_types = self._normalize_preview_render_types(render_types)
         section["last_preview_render_types"] = normalized_render_types
-        section["last_preview_timeout_seconds"] = min(
-            max(int(timeout_seconds), 1),
-            self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS,
-        )
+        section["last_preview_timeout_seconds"] = max(int(timeout_seconds), 1)
         self._save_user_settings()
 
     def _set_last_occs_config_id(self, config_id: str) -> None:
@@ -4920,7 +4920,7 @@ class AToolApp:
         if isinstance(section, dict):
             timeout_seconds = self._safe_int(section.get("last_preview_timeout_seconds"))
             if timeout_seconds is not None and timeout_seconds > 0:
-                return min(timeout_seconds, self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS)
+                return timeout_seconds
         return self._default_preview_timeout_seconds(render_types)
 
     def _get_occs_package_mru(self) -> list[dict[str, str]]:
@@ -5159,10 +5159,7 @@ class AToolApp:
             )
             timeout_seconds = self._safe_int(occs.get("last_preview_timeout_seconds"))
             if timeout_seconds is not None and timeout_seconds > 0:
-                settings["occs"]["last_preview_timeout_seconds"] = min(
-                    timeout_seconds,
-                    self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS,
-                )
+                settings["occs"]["last_preview_timeout_seconds"] = timeout_seconds
             settings["occs"]["package_mru"] = self._normalize_occs_package_mru(occs.get("package_mru"))
             settings["occs"]["preview_open_programs"] = self._normalize_occs_preview_open_programs(
                 occs.get("preview_open_programs")
@@ -8705,13 +8702,6 @@ class AToolApp:
             if timeout_seconds is None or timeout_seconds <= 0:
                 messagebox.showerror("Preview Package", "Timeout must be a positive number of seconds.", parent=dialog)
                 return
-            if timeout_seconds > self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS:
-                messagebox.showerror(
-                    "Preview Package",
-                    f"Timeout cannot exceed {self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS} seconds.",
-                    parent=dialog,
-                )
-                return
 
             self._set_last_occs_preview_options(render_types, timeout_seconds)
 
@@ -10110,6 +10100,8 @@ class AToolApp:
                 cwd=self._occs_cli_cwd(),
                 capture_output=True,
                 text=True,
+                encoding=self.SUBPROCESS_OUTPUT_ENCODING,
+                errors=self.SUBPROCESS_OUTPUT_ERRORS,
                 timeout=timeout_seconds,
                 check=False,
                 stdin=stdin,
@@ -11714,7 +11706,7 @@ class AToolApp:
             self.OCCS_PREVIEW_TIMEOUT_SECONDS.get(render_type, 20)
             for render_type in render_types
         )
-        return min(max(total, 1), self.OCCS_PREVIEW_MAX_TIMEOUT_SECONDS)
+        return max(total, 1)
 
     def _build_occs_preview_output_base(self, data_file_path: Path, package_name: str) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
