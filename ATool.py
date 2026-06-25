@@ -14366,6 +14366,11 @@ class AToolApp:
     def _compare_condition_operand_values(
         self, left_values: list[object], operator: str, right_values: list[object]
     ) -> bool:
+        if operator in {"==", "!="}:
+            sequence_result = self._compare_condition_operand_sequences(left_values, operator, right_values)
+            if sequence_result is not None:
+                return sequence_result
+
         if operator == "!=":
             for left in left_values:
                 for right in right_values:
@@ -14378,6 +14383,40 @@ class AToolApp:
                 if self._compare_single_condition_value(left, operator, right):
                     return True
         return False
+
+    @staticmethod
+    def _compare_condition_operand_sequences(
+        left_values: list[object],
+        operator: str,
+        right_values: list[object],
+    ) -> bool | None:
+        if len(left_values) <= 1 and len(right_values) <= 1:
+            return None
+
+        if len(left_values) == 1 and len(right_values) == 1:
+            return None
+
+        if len(left_values) == 0 or len(right_values) == 0:
+            return None
+
+        left = AToolApp._coerce_condition_sequence_value(left_values)
+        right = AToolApp._coerce_condition_sequence_value(right_values)
+        matched = AToolApp._compare_single_condition_value(left, "==", right)
+        return not matched if operator == "!=" else matched
+
+    @staticmethod
+    def _coerce_condition_sequence_value(values: list[object]) -> object:
+        if len(values) == 1:
+            return values[0]
+        return ",".join(AToolApp._stringify_condition_sequence_item(value) for value in values)
+
+    @staticmethod
+    def _stringify_condition_sequence_item(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
 
     def _compare_missing_condition_operand_values(
         self,
