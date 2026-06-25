@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import re
+import signal
 import copy
 import shutil
 import socket
@@ -16,6 +17,10 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from xml.etree import ElementTree
+
+
+class OccsCommandCancelled(RuntimeError):
+    pass
 
 
 class AToolApp:
@@ -128,6 +133,9 @@ class AToolApp:
         self.current_occs_shared_package_dir: Path | None = None
         self.current_occs_shared_mode = "local"
         self._occs_operation_in_progress = False
+        self._occs_cancel_requested = False
+        self._occs_process: subprocess.Popen[str] | None = None
+        self._occs_process_lock = threading.Lock()
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -353,6 +361,7 @@ class AToolApp:
         preview_accelerator = "Cmd+P" if self._is_macos() else "Ctrl+P"
         update_shared_accelerator = "Cmd+U" if self._is_macos() else "Ctrl+U"
         publish_accelerator = "Shift+Cmd+U" if self._is_macos() else "Shift+Ctrl+U"
+        cancel_occs_accelerator = "Cmd+." if self._is_macos() else "Ctrl+."
         package_menu.add_command(
             label="Open Shared Package...",
             accelerator=open_accelerator,
@@ -383,6 +392,11 @@ class AToolApp:
             label="Preview...",
             accelerator=preview_accelerator,
             command=self.preview_occs_package,
+        )
+        package_menu.add_command(
+            label="Cancel OCCS Operation",
+            accelerator=cancel_occs_accelerator,
+            command=self.cancel_occs_operation,
         )
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
@@ -8032,6 +8046,8 @@ class AToolApp:
             self.root.bind_all("<Command-Alt-M>", self._remap_event)
             self.root.bind_all("<Command-p>", self._preview_event)
             self.root.bind_all("<Command-P>", self._preview_event)
+            self.root.bind_all("<Command-period>", self._cancel_occs_event)
+            self.root.bind_all("<Command-.>", self._cancel_occs_event)
             self.root.bind_all("<Command-Shift-M>", self._convert_and_map_event)
             self.root.bind_all("<Command-u>", self._update_shared_event)
             self.root.bind_all("<Command-Shift-U>", self._publish_to_comms_event)
@@ -8047,6 +8063,8 @@ class AToolApp:
             self.root.bind_all("<Control-Alt-M>", self._remap_event)
             self.root.bind_all("<Control-p>", self._preview_event)
             self.root.bind_all("<Control-P>", self._preview_event)
+            self.root.bind_all("<Control-period>", self._cancel_occs_event)
+            self.root.bind_all("<Control-.>", self._cancel_occs_event)
             self.root.bind_all("<Control-Shift-M>", self._convert_and_map_event)
             self.root.bind_all("<Control-u>", self._update_shared_event)
             self.root.bind_all("<Control-Shift-U>", self._publish_to_comms_event)
@@ -8109,6 +8127,10 @@ class AToolApp:
 
     def _preview_event(self, event: tk.Event) -> str:
         self.preview_occs_package()
+        return "break"
+
+    def _cancel_occs_event(self, event: tk.Event) -> str:
+        self.cancel_occs_operation()
         return "break"
 
     def _quit_event(self, event: tk.Event) -> str:
@@ -9966,6 +9988,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
+        self._occs_cancel_requested = False
         self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
@@ -9995,6 +10018,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
+        self._occs_cancel_requested = False
         self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
@@ -10014,6 +10038,7 @@ class AToolApp:
 
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
+        self._occs_cancel_requested = False
         self._stop_occs_status_timer()
         self._restore_default_status_text()
         if callable(on_success):
@@ -10026,13 +10051,42 @@ class AToolApp:
         on_failure: object | None,
     ) -> None:
         self._occs_operation_in_progress = False
+        self._occs_cancel_requested = False
         self._stop_occs_status_timer()
         self._restore_default_status_text()
+        if isinstance(error, OccsCommandCancelled):
+            self._debug_log("OCCS command canceled by user.")
+            self._show_temporary_status("OCCS operation canceled", duration_ms=5000)
+            return
         self._debug_log(f"OCCS command failed:\n{stack}")
         if callable(on_failure):
             on_failure(error)
             return
         messagebox.showerror("OCCS Error", str(error))
+
+    def cancel_occs_operation(self) -> None:
+        if not self._occs_operation_in_progress:
+            messagebox.showinfo("OCCS", "No OCCS operation is currently running.")
+            return
+
+        self._occs_cancel_requested = True
+        self._set_occs_status_timer_message("Canceling OCCS operation...")
+        self._terminate_active_occs_process()
+
+    def _terminate_active_occs_process(self) -> None:
+        with self._occs_process_lock:
+            process = self._occs_process
+
+        if process is None or process.poll() is not None:
+            return
+
+        try:
+            if platform.system() == "Windows":
+                process.terminate()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            return
 
     def _run_occs_json_command(self, args: list[str]) -> dict[str, object]:
         command_args = [str(arg) for arg in args]
@@ -10094,22 +10148,50 @@ class AToolApp:
         timeout_message: str = "OCCS CLI command timed out.",
     ) -> subprocess.CompletedProcess[str]:
         command = self._build_occs_command(args)
+        process: subprocess.Popen[str] | None = None
         try:
-            return subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=self._occs_cli_cwd(),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding=self.SUBPROCESS_OUTPUT_ENCODING,
                 errors=self.SUBPROCESS_OUTPUT_ERRORS,
-                timeout=timeout_seconds,
-                check=False,
                 stdin=stdin,
+                start_new_session=(platform.system() != "Windows"),
+            )
+            with self._occs_process_lock:
+                self._occs_process = process
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            if self._occs_cancel_requested:
+                raise OccsCommandCancelled("OCCS CLI command canceled.")
+            return subprocess.CompletedProcess(
+                command,
+                process.returncode,
+                stdout,
+                stderr,
             )
         except OSError as error:
             raise RuntimeError(f"Could not run OCCS CLI: {error}") from error
         except subprocess.TimeoutExpired as error:
+            if process is not None and process.poll() is None:
+                self._terminate_process(process)
+                process.communicate()
             raise RuntimeError(timeout_message) from error
+        finally:
+            with self._occs_process_lock:
+                if self._occs_process is process:
+                    self._occs_process = None
+
+    def _terminate_process(self, process: subprocess.Popen[str]) -> None:
+        try:
+            if platform.system() == "Windows":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            return
 
     def _run_occs_login_for_retry(self, original_error: str) -> None:
         self._debug_log("OCCS authorization failed; running `occs login` before retrying.")
