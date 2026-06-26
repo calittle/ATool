@@ -315,6 +315,7 @@ class AToolApp:
             accelerator=open_session_accelerator,
             command=self.open_last_session,
         )
+        file_menu.add_command(label="Close Package", command=self.close_current_package)
         file_menu.add_separator()
         file_menu.add_command(label="About ATool", command=self._show_about_dialog)
         file_menu.add_separator()
@@ -8215,6 +8216,114 @@ class AToolApp:
         if not selected_dir:
             return
         self._load_occs_bundle(selected_dir)
+
+    def close_current_package(self) -> None:
+        if self.current_payload is None:
+            messagebox.showinfo("Close Package", "No package is currently open.")
+            return
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Close Package", "A package operation is already in progress.")
+            return
+        if not self._prepare_current_package_for_close():
+            return
+        closed_name = self.current_package_name
+        self._clear_current_package_state()
+        self._show_temporary_status(f"Closed package: {closed_name}", duration_ms=5000)
+
+    def _prepare_current_package_for_close(self) -> bool:
+        if self.is_dirty:
+            choice = messagebox.askyesnocancel(
+                "Close Package",
+                "You have unsaved package changes. Save before closing?",
+            )
+            if choice is None:
+                return False
+            if choice and not self.save_assembly_template():
+                return False
+
+        if self.current_occs_shared_package_dir is None or self.current_occs_shared_mode != "edit":
+            return True
+
+        if not self._current_local_copy_matches_shared():
+            choice = messagebox.askyesnocancel(
+                "Close Package",
+                "This shared package edit has not been updated to the shared package folder.\n\n"
+                "Update the shared package before closing?",
+            )
+            if choice is None:
+                return False
+            if choice:
+                return self._update_shared_from_current(release_lock_after=None, show_message=True)
+
+        return self._prompt_release_owned_shared_lock_on_close()
+
+    def _prompt_release_owned_shared_lock_on_close(self) -> bool:
+        if self._get_retain_lock_after_shared_update_setting():
+            return True
+        context = self._current_occs_shared_context(show_errors=False)
+        if context is None:
+            return True
+        package_dir = context.get("package_dir")
+        if not isinstance(package_dir, Path):
+            return True
+        lock_path = self._shared_lock_path(package_dir)
+        existing_lock = self._read_shared_lock(lock_path)
+        if not isinstance(existing_lock, dict):
+            return True
+        owner = self._current_shared_user_identity()
+        if not self._is_shared_lock_owner(existing_lock, owner):
+            return True
+        if not messagebox.askyesno(
+            "Close Package",
+            "Release the shared package edit lock before closing?\n\n"
+            f"{self._format_shared_lock(existing_lock)}",
+        ):
+            return True
+        try:
+            lock_path.unlink()
+        except OSError as error:
+            messagebox.showerror(
+                "Close Package",
+                f"Could not remove shared lock:\n{lock_path}\n\nDetails: {error}",
+            )
+            return False
+        return True
+
+    def _clear_current_package_state(self) -> None:
+        self._mapping_job_id += 1
+        self._mapping_in_progress = False
+        self.current_payload = None
+        self.current_file_path = None
+        self.current_source_file_path = None
+        self.current_package_name = "(none)"
+        self.current_occs_bundle_dir = None
+        self.current_occs_manifest = None
+        self.current_occs_shared_package_dir = None
+        self.current_occs_shared_mode = "local"
+        self.current_data_payload = None
+        self.current_data_file_path = None
+        self._loaded_documents = []
+        self._loaded_fields = []
+        self._condition_library_entries = []
+        self._active_condition_library_index = None
+        self._active_document_node_id = None
+        self._active_field_node_id = None
+        self._active_layout_node_id = None
+        self._show_triggered_documents_only = False
+        self._show_mapped_fields_only = False
+        self._triggered_document_names = set()
+        self._render_condition_library_list()
+        self._populate_condition_library_form(None)
+        self._render_documents_tree()
+        self._render_fields_tree()
+        self.data_status_text.set("Data: (none)")
+        self.mapping_status_text.set("Mapping: Idle")
+        self.document_count_text.set("Documents: 0")
+        self.field_count_text.set("Fields: 0")
+        self.root.title("ATool")
+        self._set_dirty(False)
+        self._restore_default_status_text()
+        self._update_mapping_controls()
 
     def open_last_session(self) -> None:
         if self._occs_operation_in_progress:
