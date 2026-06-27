@@ -94,6 +94,7 @@ class AToolApp:
         self._layout_node_details: dict[str, dict[str, object]] = {}
         self._triggered_document_names: set[str] = set()
         self.documents_panel_width = self._load_saved_documents_panel_width()
+        self.document_metadata_collapsed = self._load_document_details_section_collapsed("metadata")
         self.document_condition_collapsed = self._load_document_details_section_collapsed("condition")
         self.document_match_details_collapsed = self._load_document_details_section_collapsed("match_details")
         self.fields_window: tk.Toplevel | None = None
@@ -104,6 +105,7 @@ class AToolApp:
         self.clause_trigger_update_window: tk.Toplevel | None = None
         self.condition_usage_window: tk.Toplevel | None = None
         self._condition_library_window_geometry_job: str | None = None
+        self._package_documents_window_geometry_job: str | None = None
         self._condition_library_entries: list[dict[str, str]] = []
         self._active_condition_library_index: int | None = None
         self._condition_library_node_to_index: dict[str, int] = {}
@@ -130,6 +132,8 @@ class AToolApp:
         self.current_package_name: str = "(none)"
         self.current_occs_bundle_dir: str | None = None
         self.current_occs_manifest: dict[str, object] | None = None
+        self.current_version_master: dict[str, object] | None = None
+        self.current_document_associations: dict[str, object] | None = None
         self.current_occs_shared_package_dir: Path | None = None
         self.current_occs_shared_mode = "local"
         self._occs_operation_in_progress = False
@@ -145,6 +149,7 @@ class AToolApp:
         self._show_mapped_fields_only = False
         self._mapping_job_id = 0
         self.is_dirty = False
+        self.package_bundle_dirty = False
         self._updating_field_form = False
         self._active_field_node_id: str | None = None
         self._updating_document_form = False
@@ -195,11 +200,22 @@ class AToolApp:
         self.field_view_mode = "name"
         self._loaded_documents: list[dict[str, object]] = []
         self._loaded_fields: list[dict[str, object]] = []
+        self.package_documents_window: tk.Toplevel | None = None
+        self.package_documents_tree: ttk.Treeview | None = None
+        self.package_documents_summary_var = tk.StringVar(value="")
+        self.package_documents_detail_var = tk.StringVar(value="")
+        self.package_documents_filter_var = tk.StringVar(value="")
+        self.package_documents_sort_column = "order"
+        self.package_documents_sort_reverse = False
+        self.package_document_always_trigger_var = tk.BooleanVar(value=False)
+        self._package_document_row_details: dict[str, dict[str, object]] = {}
+        self._active_package_document_row: dict[str, object] | None = None
 
         self._configure_platform_appearance()
         self._create_menu()
         self._create_main_layout()
         self.documents_filter_var.trace_add("write", self._on_documents_filter_changed)
+        self.package_documents_filter_var.trace_add("write", self._on_package_documents_filter_changed)
         self.fields_filter_var.trace_add("write", self._on_fields_filter_changed)
         self.condition_clause_filter_var.trace_add("write", self._on_condition_library_filter_changed)
         self._bind_shortcuts()
@@ -210,9 +226,14 @@ class AToolApp:
     def _open_startup_windows(self) -> None:
         self.root.deiconify()
         self.root.lift()
-        self._show_fields_window()
-        self._show_condition_library_window()
-        self._show_layouts_window()
+        if self._load_manager_window_visible("fields"):
+            self._show_fields_window()
+        if self._load_manager_window_visible("condition_library"):
+            self._show_condition_library_window()
+        if self._load_manager_window_visible("layouts"):
+            self._show_layouts_window()
+        if self._load_manager_window_visible("package_documents"):
+            self._show_package_documents_manager(allow_empty=True)
         self.root.after(200, self._focus_main_window)
 
     def _focus_main_window(self) -> None:
@@ -405,6 +426,7 @@ class AToolApp:
         window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
         window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
         window_menu.add_command(label="Show Layouts", command=self._show_layouts_window)
+        window_menu.add_command(label="Show Package Documents Manager", command=self.show_package_documents_manager)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
@@ -1094,51 +1116,62 @@ class AToolApp:
         editor_frame = ttk.Frame(panel)
         editor_frame.grid(row=0, column=0, sticky="nsew")
         editor_frame.columnconfigure(0, weight=1)
-        editor_frame.rowconfigure(10, weight=3)
-        editor_frame.rowconfigure(12, weight=2)
+        editor_frame.rowconfigure(4, weight=3)
+        editor_frame.rowconfigure(6, weight=2)
         self.document_details_editor_frame = editor_frame
 
         heading = ttk.Label(editor_frame, text="Document Details", font=("TkDefaultFont", 12, "bold"))
         heading.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        name_title = ttk.Label(editor_frame, text="Name:")
-        name_title.grid(row=1, column=0, sticky="w")
-        name_value = ttk.Entry(editor_frame, textvariable=self.edit_document_name_var)
-        name_value.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        self.document_metadata_toggle_button = ttk.Button(
+            editor_frame,
+            command=self._toggle_document_metadata_collapsed,
+        )
+        self.document_metadata_toggle_button.grid(row=1, column=0, sticky="ew", pady=(0, 2))
+
+        metadata_frame = ttk.Frame(editor_frame)
+        metadata_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        metadata_frame.columnconfigure(0, weight=1)
+        self.document_metadata_frame = metadata_frame
+
+        name_title = ttk.Label(metadata_frame, text="Name:")
+        name_title.grid(row=0, column=0, sticky="w")
+        name_value = ttk.Entry(metadata_frame, textvariable=self.edit_document_name_var)
+        name_value.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         name_value.bind("<KeyRelease>", self._on_document_name_changed)
         name_value.bind("<FocusOut>", self._on_document_name_commit)
         name_value.bind("<Return>", self._on_document_name_commit)
 
-        descr_title = ttk.Label(editor_frame, text="Description:")
-        descr_title.grid(row=3, column=0, sticky="w")
-        descr_value = ttk.Entry(editor_frame, textvariable=self.document_descr_edit_text)
-        descr_value.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        descr_title = ttk.Label(metadata_frame, text="Description:")
+        descr_title.grid(row=2, column=0, sticky="w")
+        descr_value = ttk.Entry(metadata_frame, textvariable=self.document_descr_edit_text)
+        descr_value.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         self.document_descr_edit_text.trace_add("write", self._on_document_descr_changed)
 
-        updated_title = ttk.Label(editor_frame, text="Updated:")
-        updated_title.grid(row=5, column=0, sticky="w")
-        updated_value = ttk.Label(editor_frame, textvariable=self.document_updated_text, wraplength=280, justify=tk.LEFT)
-        updated_value.grid(row=6, column=0, sticky="w", pady=(0, 8))
+        updated_title = ttk.Label(metadata_frame, text="Updated:")
+        updated_title.grid(row=4, column=0, sticky="w")
+        updated_value = ttk.Label(metadata_frame, textvariable=self.document_updated_text, wraplength=280, justify=tk.LEFT)
+        updated_value.grid(row=5, column=0, sticky="w", pady=(0, 8))
         self._document_details_wrapped_labels.append(updated_value)
 
-        self.document_triggered_title = ttk.Label(editor_frame, text="Triggered:")
-        self.document_triggered_title.grid(row=7, column=0, sticky="w")
+        self.document_triggered_title = ttk.Label(metadata_frame, text="Triggered:")
+        self.document_triggered_title.grid(row=6, column=0, sticky="w")
         self.document_triggered_value = ttk.Label(
-            editor_frame,
+            metadata_frame,
             textvariable=self.document_triggered_text,
             wraplength=280,
             justify=tk.LEFT,
         )
-        self.document_triggered_value.grid(row=8, column=0, sticky="w", pady=(0, 8))
+        self.document_triggered_value.grid(row=7, column=0, sticky="w", pady=(0, 8))
         self._document_details_wrapped_labels.append(self.document_triggered_value)
 
         self.document_condition_toggle_button = ttk.Button(
             editor_frame,
             command=self._toggle_document_condition_collapsed,
         )
-        self.document_condition_toggle_button.grid(row=9, column=0, sticky="ew", pady=(0, 2))
+        self.document_condition_toggle_button.grid(row=3, column=0, sticky="ew", pady=(0, 2))
         condition_value = tk.Text(editor_frame, height=10, wrap="word", undo=True)
-        condition_value.grid(row=10, column=0, sticky="nsew", pady=(0, 8))
+        condition_value.grid(row=4, column=0, sticky="nsew", pady=(0, 8))
         condition_value.bind("<KeyRelease>", self._on_document_condition_changed)
         self.document_condition_widget = condition_value
 
@@ -1146,9 +1179,9 @@ class AToolApp:
             editor_frame,
             command=self._toggle_document_match_details_collapsed,
         )
-        self.document_match_details_toggle_button.grid(row=11, column=0, sticky="ew", pady=(0, 2))
+        self.document_match_details_toggle_button.grid(row=5, column=0, sticky="ew", pady=(0, 2))
         match_details_frame = ttk.Frame(editor_frame)
-        match_details_frame.grid(row=12, column=0, sticky="nsew")
+        match_details_frame.grid(row=6, column=0, sticky="nsew")
         match_details_frame.columnconfigure(0, weight=1)
         match_details_frame.rowconfigure(0, weight=1)
         match_details_value = tk.Text(match_details_frame, height=6, wrap="word", undo=False)
@@ -1199,6 +1232,11 @@ class AToolApp:
         for label in self._document_details_wrapped_labels:
             label.configure(wraplength=wrap_length)
 
+    def _toggle_document_metadata_collapsed(self) -> None:
+        self.document_metadata_collapsed = not self.document_metadata_collapsed
+        self._persist_document_details_section_state()
+        self._apply_document_details_section_visibility()
+
     def _toggle_document_condition_collapsed(self) -> None:
         self.document_condition_collapsed = not self.document_condition_collapsed
         self._persist_document_details_section_state()
@@ -1210,6 +1248,15 @@ class AToolApp:
         self._apply_document_details_section_visibility()
 
     def _apply_document_details_section_visibility(self) -> None:
+        if hasattr(self, "document_metadata_toggle_button"):
+            prefix = "[+]" if self.document_metadata_collapsed else "[-]"
+            self.document_metadata_toggle_button.config(text=f"{prefix} Metadata")
+        if hasattr(self, "document_metadata_frame"):
+            if self.document_metadata_collapsed:
+                self.document_metadata_frame.grid_remove()
+            else:
+                self.document_metadata_frame.grid()
+
         if hasattr(self, "document_condition_toggle_button"):
             prefix = "[+]" if self.document_condition_collapsed else "[-]"
             self.document_condition_toggle_button.config(text=f"{prefix} Condition")
@@ -1249,8 +1296,8 @@ class AToolApp:
             condition_weight = 0
             match_details_weight = 0
 
-        editor_frame.rowconfigure(10, weight=condition_weight)
-        editor_frame.rowconfigure(12, weight=match_details_weight)
+        editor_frame.rowconfigure(4, weight=condition_weight)
+        editor_frame.rowconfigure(6, weight=match_details_weight)
 
     def _update_document_triggered_visibility(self) -> None:
         if not hasattr(self, "document_triggered_title") or not hasattr(self, "document_triggered_value"):
@@ -1338,9 +1385,19 @@ class AToolApp:
         value = state.get(f"document_details_{section}_collapsed")
         return bool(value) if isinstance(value, bool) else False
 
+    def _load_manager_window_visible(self, key: str) -> bool:
+        state = self._read_app_state()
+        value = state.get(f"{key}_window_visible")
+        default_visible = key != "package_documents"
+        return bool(value) if isinstance(value, bool) else default_visible
+
+    def _set_manager_window_visible(self, key: str, visible: bool) -> None:
+        self._update_app_state({f"{key}_window_visible": bool(visible)})
+
     def _persist_document_details_section_state(self) -> None:
         self._update_app_state(
             {
+                "document_details_metadata_collapsed": self.document_metadata_collapsed,
                 "document_details_condition_collapsed": self.document_condition_collapsed,
                 "document_details_match_details_collapsed": self.document_match_details_collapsed,
             }
@@ -1396,11 +1453,14 @@ class AToolApp:
         self.fields_window.deiconify()
         self.fields_window.lift()
         self.fields_window.focus_force()
+        self._set_manager_window_visible("fields", True)
 
     def _hide_fields_window(self) -> None:
         if self.fields_window is None or not self.fields_window.winfo_exists():
             return
+        self._persist_fields_window_geometry()
         self.fields_window.withdraw()
+        self._set_manager_window_visible("fields", False)
 
     def _on_fields_window_configure(self, event: tk.Event) -> None:
         if self.fields_window is None or event.widget is not self.fields_window:
@@ -1488,11 +1548,14 @@ class AToolApp:
         self.layouts_window.deiconify()
         self.layouts_window.lift()
         self.layouts_window.focus_force()
+        self._set_manager_window_visible("layouts", True)
 
     def _hide_layouts_window(self) -> None:
         if self.layouts_window is None or not self.layouts_window.winfo_exists():
             return
+        self._persist_layouts_window_geometry()
         self.layouts_window.withdraw()
+        self._set_manager_window_visible("layouts", False)
 
     def _on_layouts_window_configure(self, event: tk.Event) -> None:
         if self.layouts_window is None or event.widget is not self.layouts_window:
@@ -1544,6 +1607,7 @@ class AToolApp:
         self.condition_library_window.deiconify()
         self.condition_library_window.lift()
         self.condition_library_window.focus_force()
+        self._set_manager_window_visible("condition_library", True)
         self._render_condition_library_list()
         self._autofill_compose_from_current_target()
         self._update_clause_manager_target_label()
@@ -1562,7 +1626,7 @@ class AToolApp:
         container = ttk.Frame(self.condition_library_window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(1, weight=1)
+        container.rowconfigure(2, weight=1)
 
         heading = ttk.Label(container, text="Clause Manager", font=("TkDefaultFont", 12, "bold"))
         heading.grid(row=0, column=0, sticky="w", pady=(0, 8))
@@ -1737,7 +1801,9 @@ class AToolApp:
         if self.condition_library_window is None or not self.condition_library_window.winfo_exists():
             return
         self._hide_compose_autocomplete()
+        self._persist_condition_library_window_geometry()
         self.condition_library_window.withdraw()
+        self._set_manager_window_visible("condition_library", False)
 
     def _on_condition_library_window_configure(self, event: tk.Event) -> None:
         if self.condition_library_window is None or event.widget is not self.condition_library_window:
@@ -2127,7 +2193,7 @@ class AToolApp:
         container = ttk.Frame(window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(1, weight=1)
+        container.rowconfigure(3, weight=1)
 
         self.clause_trigger_update_summary_var = tk.StringVar(value="")
         heading = ttk.Label(
@@ -8019,12 +8085,22 @@ class AToolApp:
         if self.is_dirty == dirty:
             return
         self.is_dirty = dirty
+        self._update_window_title()
+
+    def _set_package_bundle_dirty(self, dirty: bool) -> None:
+        if self.package_bundle_dirty == dirty:
+            return
+        self.package_bundle_dirty = dirty
+        self._update_window_title()
+        self._restore_default_status_text()
+
+    def _update_window_title(self) -> None:
+        marker = " *" if self.is_dirty or self.package_bundle_dirty else ""
         if self.current_file_path:
             file_name = os.path.basename(self.current_file_path)
-            marker = " *" if self.is_dirty else ""
             self.root.title(f"ATool - {file_name}{marker}")
         else:
-            self.root.title("ATool" + (" *" if self.is_dirty else ""))
+            self.root.title(f"ATool{marker}")
 
     def _bind_shortcuts(self) -> None:
         self._bind_search_shortcut(self.root, self._focus_documents_filter_event)
@@ -8298,6 +8374,9 @@ class AToolApp:
         self.current_package_name = "(none)"
         self.current_occs_bundle_dir = None
         self.current_occs_manifest = None
+        self.current_version_master = None
+        self.current_document_associations = None
+        self.package_bundle_dirty = False
         self.current_occs_shared_package_dir = None
         self.current_occs_shared_mode = "local"
         self.current_data_payload = None
@@ -8322,8 +8401,23 @@ class AToolApp:
         self.field_count_text.set("Fields: 0")
         self.root.title("ATool")
         self._set_dirty(False)
+        self._update_window_title()
         self._restore_default_status_text()
         self._update_mapping_controls()
+        self._clear_package_documents_manager()
+
+    def _clear_package_documents_manager(self) -> None:
+        if self.package_documents_tree:
+            self.package_documents_tree.delete(*self.package_documents_tree.get_children())
+        self._package_document_row_details = {}
+        self._active_package_document_row = None
+        self.package_documents_summary_var.set("Documents: 0 | Associated: 0 | AT only: 0 | Association only: 0 | Issues: 0")
+        if hasattr(self, "package_documents_detail_header_var"):
+            self.package_documents_detail_header_var.set("Open an OCCS package bundle to view package document associations.")
+        if hasattr(self, "package_document_always_trigger_var"):
+            self.package_document_always_trigger_var.set(False)
+        self._set_package_documents_condition_text("")
+        self._set_package_documents_detail("Open an OCCS package bundle to view package document associations.")
 
     def open_last_session(self) -> None:
         if self._occs_operation_in_progress:
@@ -9871,6 +9965,11 @@ class AToolApp:
                 result,
                 selected_config_id,
             ),
+            on_failure=lambda error, attempted_config_id=config_id: self._on_occs_package_save_failed(
+                error,
+                attempted_config_id,
+                retry_stage="dry-run",
+            ),
         )
 
     def _on_occs_save_dry_run_complete(self, result: dict[str, object], config_id: str) -> None:
@@ -9912,16 +10011,30 @@ class AToolApp:
             ],
             "Publishing package to Comms...",
             self._on_occs_package_save_complete,
+            on_failure=lambda error, attempted_config_id=config_id: self._on_occs_package_save_failed(
+                error,
+                attempted_config_id,
+                retry_stage="publish",
+            ),
         )
 
     def _on_occs_package_save_complete(self, result: dict[str, object]) -> None:
         if self.current_occs_bundle_dir:
             try:
                 self.current_occs_manifest = self._read_occs_manifest(self.current_occs_bundle_dir)
+                self.current_version_master = self._load_occs_version_master(
+                    self.current_occs_bundle_dir,
+                    self.current_occs_manifest,
+                )
+                self.current_document_associations = self._load_occs_document_associations(
+                    self.current_occs_bundle_dir,
+                    self.current_occs_manifest,
+                )
             except ValueError:
                 pass
         self._record_occs_package_mru_from_manifest(self.current_occs_manifest)
         shared_sync_warning = self._sync_shared_package_after_comms_publish()
+        self._set_package_bundle_dirty(False)
         summary = self._format_occs_save_result(result)
         message = f"Package published to Comms.\n\n{summary}"
         if shared_sync_warning:
@@ -9930,6 +10043,83 @@ class AToolApp:
         else:
             messagebox.showinfo("Publish Package to Comms", message)
         self._show_temporary_status("Package published to Comms", duration_ms=5000)
+
+    def _on_occs_package_save_failed(self, error: Exception, attempted_config_id: str, *, retry_stage: str) -> None:
+        lock_info = self._parse_occs_config_lock_error(str(error))
+        if lock_info is None:
+            messagebox.showerror("Publish Package to Comms", str(error))
+            return
+        package_name = self._occs_manifest_package_short_name(self.current_occs_manifest) or self.current_package_name
+        locked_config = lock_info["config_id"]
+        if locked_config.strip().lower() == str(attempted_config_id).strip().lower():
+            messagebox.showerror(
+                "Publish Package to Comms",
+                f"Package {package_name} is locked under Config {locked_config}, but that Config ID was already used.\n\n"
+                f"Details: {error}",
+            )
+            return
+        if not messagebox.askokcancel(
+            "Package Locked",
+            f"Package {package_name} is locked under Config {locked_config}.\n\nUse that Config ID and retry?",
+        ):
+            return
+        self._resolve_locked_occs_config_and_retry(locked_config, retry_stage)
+
+    @staticmethod
+    def _parse_occs_config_lock_error(message: str) -> dict[str, str] | None:
+        match = re.search(r"SFD0375\s*-\s*Item is locked for editing under ConfigId\s+([^\s'\".,;]+)", message)
+        if not match:
+            return None
+        config_id = match.group(1).strip()
+        return {"config_id": config_id} if config_id else None
+
+    def _resolve_locked_occs_config_and_retry(self, locked_config: str, retry_stage: str) -> None:
+        self._run_occs_json_command_async(
+            [
+                "list-configs",
+                "--timeout",
+                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            ],
+            "Resolving locked Config ID...",
+            lambda result, lock_name=locked_config, stage=retry_stage: self._retry_occs_package_save_with_locked_config(
+                self._normalize_occs_configs(result),
+                lock_name,
+                stage,
+            ),
+            on_failure=lambda _error, lock_name=locked_config, stage=retry_stage: self._retry_occs_package_save_with_locked_config(
+                [],
+                lock_name,
+                stage,
+            ),
+        )
+
+    def _retry_occs_package_save_with_locked_config(
+        self,
+        configs: list[dict[str, str]],
+        locked_config: str,
+        retry_stage: str,
+    ) -> None:
+        config_id = self._resolve_occs_config_id_from_name(configs, locked_config)
+        self._set_last_occs_config_id(config_id)
+        if retry_stage == "publish":
+            self._run_occs_package_save(config_id)
+            return
+        self._run_occs_save_dry_run(config_id)
+
+    @staticmethod
+    def _resolve_occs_config_id_from_name(configs: list[dict[str, str]], config_name: str) -> str:
+        target = str(config_name).strip()
+        if not target:
+            return ""
+        lowered = target.lower()
+        for config in configs:
+            if lowered in {
+                config.get("id", "").strip().lower(),
+                config.get("shortName", "").strip().lower(),
+                config.get("name", "").strip().lower(),
+            }:
+                return config.get("id") or config.get("shortName") or target
+        return target
 
     def close_occs_config(self) -> None:
         if self._occs_operation_in_progress:
@@ -10580,6 +10770,1180 @@ class AToolApp:
             raise ValueError(f"Unsupported OCCS bundle manifest:\n{manifest_path}")
         return manifest
 
+    def show_package_documents_manager(self) -> None:
+        self._show_package_documents_manager(allow_empty=False)
+
+    def _show_package_documents_manager(self, *, allow_empty: bool) -> None:
+        if self.current_payload is None:
+            if allow_empty:
+                self._create_package_documents_manager_window()
+                assert self.package_documents_window is not None
+                self.package_documents_window.deiconify()
+                self.package_documents_window.lift()
+                self._clear_package_documents_manager()
+                return
+            messagebox.showinfo("Package Documents", "Open an assembly template first.")
+            return
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            if allow_empty:
+                self._create_package_documents_manager_window()
+                assert self.package_documents_window is not None
+                self.package_documents_window.deiconify()
+                self.package_documents_window.lift()
+                self._clear_package_documents_manager()
+                return
+            messagebox.showinfo(
+                "Package Documents",
+                "Open an OCCS package bundle to view package document associations.",
+            )
+            return
+        if self.package_documents_window and self.package_documents_window.winfo_exists():
+            self._refresh_package_documents_manager()
+            self.package_documents_window.deiconify()
+            self.package_documents_window.lift()
+            self.package_documents_window.focus_force()
+            self._set_manager_window_visible("package_documents", True)
+            return
+        self._create_package_documents_manager_window()
+        self._refresh_package_documents_manager()
+        self._set_manager_window_visible("package_documents", True)
+
+    def _close_package_documents_manager(self) -> None:
+        if self.package_documents_window and self.package_documents_window.winfo_exists():
+            self._persist_package_documents_window_geometry()
+            self.package_documents_window.withdraw()
+        self._set_manager_window_visible("package_documents", False)
+
+    def _create_package_documents_manager_window(self) -> None:
+        window = self._create_toplevel(self.root)
+        window.title("ATool - Package Documents")
+        window.minsize(920, 560)
+        self._attach_app_menu(window)
+        window.protocol("WM_DELETE_WINDOW", self._close_package_documents_manager)
+        window.bind("<Configure>", self._on_package_documents_window_configure)
+        self.package_documents_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(3, weight=1)
+
+        ttk.Label(
+            container,
+            text="Package Documents",
+            font=("TkDefaultFont", 12, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(container, textvariable=self.package_documents_summary_var).grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(0, 6),
+        )
+
+        filter_row = ttk.Frame(container)
+        filter_row.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        filter_row.columnconfigure(0, weight=1)
+        filter_entry = ttk.Entry(filter_row, textvariable=self.package_documents_filter_var)
+        filter_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(
+            filter_row,
+            text="Clear",
+            command=self._clear_package_documents_filter,
+        ).grid(row=0, column=1)
+
+        body = ttk.Panedwindow(container, orient=tk.VERTICAL)
+        body.grid(row=3, column=0, sticky="nsew")
+
+        table_frame = ttk.Frame(body)
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(
+            table_frame,
+            columns=("order", "document", "associated", "status"),
+            show="headings",
+            height=13,
+        )
+        tree.heading("order", text="Order", command=lambda: self._sort_package_documents_by("order"))
+        tree.heading("document", text="Document", command=lambda: self._sort_package_documents_by("document"))
+        tree.heading("associated", text="Assoc", command=lambda: self._sort_package_documents_by("associated"))
+        tree.heading("status", text="Status", command=lambda: self._sort_package_documents_by("status"))
+        tree.column("order", width=70, anchor=tk.E)
+        tree.column("document", width=280, anchor=tk.W)
+        tree.column("associated", width=70, anchor=tk.CENTER)
+        tree.column("status", width=190, anchor=tk.W)
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        tree.tag_configure("ok", foreground="")
+        tree.tag_configure("warning", foreground="#9a5b00")
+        tree.tag_configure("error", foreground="#b00020")
+        tree.bind("<<TreeviewSelect>>", self._on_package_documents_select)
+        self.package_documents_tree = tree
+
+        detail_frame = ttk.Frame(body)
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.rowconfigure(5, weight=1)
+        self.package_documents_detail_header_var = tk.StringVar(value="Select a package document row for details.")
+        ttk.Label(
+            detail_frame,
+            textvariable=self.package_documents_detail_header_var,
+            font=("TkDefaultFont", 10, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        controls = ttk.Frame(detail_frame)
+        controls.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(controls, text="Move Up", command=lambda: self._move_active_package_document(-1)).grid(
+            row=0,
+            column=0,
+            padx=(0, 6),
+        )
+        ttk.Button(controls, text="Move Down", command=lambda: self._move_active_package_document(1)).grid(
+            row=0,
+            column=1,
+            padx=(0, 12),
+        )
+        ttk.Checkbutton(
+            controls,
+            text="Always trigger",
+            variable=self.package_document_always_trigger_var,
+            command=self._toggle_active_package_document_always_trigger,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 12))
+        ttk.Button(controls, text="Add...", command=self._show_add_package_document_dialog).grid(
+            row=0,
+            column=3,
+            padx=(0, 6),
+        )
+        ttk.Button(controls, text="Remove", command=self._remove_active_package_document_association).grid(
+            row=0,
+            column=4,
+        )
+
+        ttk.Label(detail_frame, text="AT Condition").grid(row=2, column=0, sticky="w")
+        condition_frame = ttk.Frame(detail_frame)
+        condition_frame.grid(row=3, column=0, sticky="nsew")
+        condition_frame.columnconfigure(0, weight=1)
+        condition_frame.rowconfigure(0, weight=1)
+        condition_text = tk.Text(condition_frame, height=7, wrap="word", undo=True)
+        condition_text.grid(row=0, column=0, sticky="nsew")
+        condition_scroll = ttk.Scrollbar(condition_frame, orient=tk.VERTICAL, command=condition_text.yview)
+        condition_scroll.grid(row=0, column=1, sticky="ns")
+        condition_text.configure(yscrollcommand=condition_scroll.set)
+        self.package_documents_condition_text = condition_text
+        ttk.Button(
+            detail_frame,
+            text="Apply Condition",
+            command=self._apply_active_package_document_condition,
+        ).grid(row=4, column=0, sticky="e", pady=(6, 8))
+
+        detail = tk.Text(detail_frame, height=6, wrap="word", undo=False)
+        detail.grid(row=5, column=0, sticky="nsew")
+        detail.configure(state=tk.DISABLED)
+        detail_scroll = ttk.Scrollbar(detail_frame, orient=tk.VERTICAL, command=detail.yview)
+        detail_scroll.grid(row=5, column=1, sticky="ns")
+        detail.configure(yscrollcommand=detail_scroll.set)
+        self.package_documents_detail_text = detail
+
+        body.add(table_frame, weight=2)
+        body.add(detail_frame, weight=2)
+
+        actions = ttk.Frame(container)
+        actions.grid(row=4, column=0, sticky="e", pady=(10, 0))
+        ttk.Button(actions, text="Refresh", command=self._refresh_package_documents_manager).grid(
+            row=0,
+            column=0,
+            padx=(0, 8),
+        )
+        ttk.Button(actions, text="Close", command=self._close_package_documents_manager).grid(row=0, column=1)
+        self._restore_package_documents_window_geometry()
+
+    def _refresh_package_documents_manager(self) -> None:
+        if not self.package_documents_tree:
+            return
+        all_rows = self._build_package_document_rows()
+        rows = self._sort_package_document_rows(self._filter_package_document_rows(all_rows))
+        self.package_documents_tree.delete(*self.package_documents_tree.get_children())
+        self._package_document_row_details = {}
+        self._active_package_document_row = None
+        for row in rows:
+            tags = ("error",) if row["severity"] == "error" else ("warning",) if row["severity"] == "warning" else ("ok",)
+            node_id = self.package_documents_tree.insert(
+                "",
+                "end",
+                values=(
+                    row["order_text"],
+                    str(row["document"]),
+                    "Yes" if row["associated"] else "No",
+                    row["status"],
+                ),
+                tags=tags,
+            )
+            self._package_document_row_details[node_id] = row
+        self.package_documents_summary_var.set(self._package_documents_summary(all_rows, rows))
+        self._set_package_documents_detail("Select a package document row for details.")
+        self._set_package_documents_condition_text("")
+        self.package_documents_detail_header_var.set("Select a package document row for details.")
+        self.package_document_always_trigger_var.set(False)
+
+    def _package_documents_summary(
+        self,
+        all_rows: list[dict[str, object]],
+        visible_rows: list[dict[str, object]],
+    ) -> str:
+        rows = all_rows
+        associated = sum(1 for row in rows if bool(row.get("associated")))
+        at_only = sum(1 for row in rows if row.get("status_key") == "at_only")
+        association_only = sum(1 for row in rows if row.get("status_key") == "association_only")
+        issue_count = sum(
+            1
+            for row in rows
+            if row.get("status_key") not in ("ok", "at_only")
+        )
+        visible_suffix = "" if len(visible_rows) == len(all_rows) else f" | Showing: {len(visible_rows)}"
+        return (
+            f"Documents: {len(rows)} | Associated: {associated} | AT only: {at_only} | "
+            f"Association only: {association_only} | Issues: {issue_count}{visible_suffix}"
+        )
+
+    def _on_package_documents_filter_changed(self, *_args: object) -> None:
+        if self.package_documents_tree:
+            self._refresh_package_documents_manager()
+
+    def _clear_package_documents_filter(self) -> None:
+        self.package_documents_filter_var.set("")
+
+    def _filter_package_document_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        query = self.package_documents_filter_var.get().strip().lower()
+        if not query:
+            return rows
+        return [
+            row
+            for row in rows
+            if query in self._package_document_row_search_text(row)
+        ]
+
+    @staticmethod
+    def _package_document_row_search_text(row: dict[str, object]) -> str:
+        parts = [
+            row.get("document", ""),
+            row.get("status", ""),
+            row.get("condition", ""),
+            row.get("document_uuid", ""),
+            row.get("rel_uuid", ""),
+            row.get("document_config_id", ""),
+            row.get("association_config_id", ""),
+        ]
+        diagnostics = row.get("diagnostics")
+        if isinstance(diagnostics, list):
+            parts.extend(diagnostics)
+        return " ".join(str(part) for part in parts).lower()
+
+    def _sort_package_documents_by(self, column: str) -> None:
+        if self.package_documents_sort_column == column:
+            self.package_documents_sort_reverse = not self.package_documents_sort_reverse
+        else:
+            self.package_documents_sort_column = column
+            self.package_documents_sort_reverse = False
+        self._refresh_package_documents_manager()
+
+    def _sort_package_document_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        column = self.package_documents_sort_column
+
+        def sort_key(row: dict[str, object]) -> tuple[object, ...]:
+            if column == "order":
+                order = row.get("order")
+                return (0 if isinstance(order, int) else 1, order if isinstance(order, int) else 0, str(row.get("document", "")).lower())
+            if column == "associated":
+                return (0 if bool(row.get("associated")) else 1, str(row.get("document", "")).lower())
+            if column == "status":
+                return (str(row.get("status", "")).lower(), str(row.get("document", "")).lower())
+            return (str(row.get("document", "")).lower(),)
+
+        return sorted(rows, key=sort_key, reverse=self.package_documents_sort_reverse)
+
+    def _on_package_documents_select(self, _event: tk.Event) -> None:
+        if not self.package_documents_tree:
+            return
+        selection = self.package_documents_tree.selection()
+        if not selection:
+            self._set_package_documents_detail("Select a package document row for details.")
+            self._active_package_document_row = None
+            return
+        row = self._package_document_row_details.get(selection[0])
+        if not row:
+            return
+        self._active_package_document_row = row
+        self.package_documents_detail_header_var.set(str(row.get("document", "")))
+        self.package_document_always_trigger_var.set(bool(row.get("always_trigger")))
+        self._set_package_documents_condition_text(str(row.get("condition", "")))
+        lines = [
+            f"Status: {row.get('status', '')}",
+            f"Associated: {'Yes' if row.get('associated') else 'No'}",
+            f"Order: {row.get('order_text', '')}",
+            "",
+            f"Document UUID: {row.get('document_uuid', '') or '(none)'}",
+            f"Relationship UUID: {row.get('rel_uuid', '') or '(none)'}",
+            f"Document ConfigId: {row.get('document_config_id', '') or '(none)'}",
+            f"Association ConfigId: {row.get('association_config_id', '') or '(none)'}",
+        ]
+        diagnostics = row.get("diagnostics")
+        if isinstance(diagnostics, list) and diagnostics:
+            lines.extend(["", "Diagnostics:"])
+            lines.extend(f"- {item}" for item in diagnostics)
+        self._set_package_documents_detail("\n".join(lines))
+        self._select_at_document_for_package_row(row)
+
+    def _select_at_document_for_package_row(self, row: dict[str, object]) -> None:
+        document_ref = row.get("document_ref")
+        if not isinstance(document_ref, dict):
+            return
+        source = document_ref.get("source")
+        if not isinstance(source, dict):
+            return
+        self._select_document_node_for_source(source)
+
+    def _set_package_documents_detail(self, text: str) -> None:
+        detail = getattr(self, "package_documents_detail_text", None)
+        if detail is None:
+            return
+        detail.configure(state=tk.NORMAL)
+        detail.delete("1.0", tk.END)
+        detail.insert("1.0", text)
+        detail.configure(state=tk.DISABLED)
+
+    def _set_package_documents_condition_text(self, text: str) -> None:
+        widget = getattr(self, "package_documents_condition_text", None)
+        if widget is None:
+            return
+        widget.delete("1.0", tk.END)
+        widget.insert("1.0", text)
+
+    def _active_package_document_or_warn(self, action: str) -> dict[str, object] | None:
+        row = self._active_package_document_row
+        if not isinstance(row, dict):
+            messagebox.showinfo("Package Documents", f"Select a package document before using {action}.")
+            return None
+        return row
+
+    def _move_active_package_document(self, direction: int) -> None:
+        row = self._active_package_document_or_warn("Move")
+        if row is None:
+            return
+        if not row.get("associated"):
+            messagebox.showinfo("Package Documents", "Only associated documents can be reordered.")
+            return
+        rows = [
+            item
+            for item in self._sort_package_document_rows(self._build_package_document_rows())
+            if item.get("associated") and isinstance(item.get("order"), int)
+        ]
+        current_uuid = str(row.get("document_uuid", ""))
+        current_index = next(
+            (index for index, item in enumerate(rows) if str(item.get("document_uuid", "")) == current_uuid),
+            -1,
+        )
+        target_index = current_index + direction
+        if current_index < 0 or target_index < 0 or target_index >= len(rows):
+            return
+        other = rows[target_index]
+        current_order = self._safe_int(row.get("order"))
+        other_order = self._safe_int(other.get("order"))
+        if current_order is None or other_order is None:
+            messagebox.showinfo("Package Documents", "Selected documents must have numeric order values.")
+            return
+        if not self._set_package_association_order(str(row.get("document_uuid", "")), current_order=other_order):
+            return
+        if not self._set_package_association_order(str(other.get("document_uuid", "")), current_order=current_order):
+            return
+        self._write_package_association_files()
+        self._refresh_package_documents_manager()
+        self._select_package_document_by_uuid(current_uuid)
+
+    def _toggle_active_package_document_always_trigger(self) -> None:
+        row = self._active_package_document_or_warn("Always trigger")
+        if row is None:
+            self.package_document_always_trigger_var.set(False)
+            return
+        if not row.get("associated"):
+            self.package_document_always_trigger_var.set(False)
+            messagebox.showinfo("Package Documents", "Only associated documents can use always-trigger.")
+            return
+        document_uuid = str(row.get("document_uuid", ""))
+        value = bool(self.package_document_always_trigger_var.get())
+        if not self._set_package_association_always_trigger(document_uuid, value):
+            self.package_document_always_trigger_var.set(bool(row.get("always_trigger")))
+            return
+        self._write_package_association_files()
+        self._refresh_package_documents_manager()
+        self._select_package_document_by_uuid(document_uuid)
+
+    def _remove_active_package_document_association(self) -> None:
+        row = self._active_package_document_or_warn("Remove")
+        if row is None:
+            return
+        if not row.get("associated"):
+            messagebox.showinfo("Package Documents", "Selected document is not associated to the package.")
+            return
+        document_uuid = str(row.get("document_uuid", "")).strip()
+        document_name = str(row.get("document", "")).strip()
+        if not document_uuid:
+            messagebox.showerror("Package Documents", "Selected association does not have a document UUID.")
+            return
+        if not messagebox.askyesno(
+            "Remove Package Document",
+            f"Remove this document association from the package?\n\n{document_name}",
+        ):
+            return
+        if not self._remove_package_document_association(document_uuid):
+            return
+        self._write_package_association_files()
+        self._refresh_package_documents_manager()
+        self._select_package_document_by_name(document_name)
+
+    def _apply_active_package_document_condition(self) -> None:
+        row = self._active_package_document_or_warn("Apply Condition")
+        if row is None:
+            return
+        document_ref = row.get("document_ref")
+        if not isinstance(document_ref, dict):
+            messagebox.showinfo("Package Documents", "This association is not present in the Assembly Template.")
+            return
+        widget = getattr(self, "package_documents_condition_text", None)
+        if widget is None:
+            return
+        condition = widget.get("1.0", "end-1c")
+        if not self._confirm_valid_at_condition(condition, parent=self.package_documents_window):
+            return
+        source = document_ref.get("source")
+        if not isinstance(source, dict):
+            messagebox.showerror("Package Documents", "Could not find the source Assembly Template document.")
+            return
+        source["Condition"] = condition
+        document_ref["condition"] = condition
+        self._set_dirty(True)
+        self._render_documents_tree()
+        self._refresh_package_documents_manager()
+        self._select_package_document_by_name(str(row.get("document", "")))
+
+    def _confirm_valid_at_condition(self, condition: str, *, parent: tk.Misc | None = None) -> bool:
+        issues, warnings = self._at_condition_validation_messages(condition)
+        if issues:
+            messagebox.showerror(
+                "Invalid Condition",
+                "The condition was not applied because it does not look like a Comms AT condition.\n\n"
+                + "\n".join(f"- {issue}" for issue in issues),
+                parent=parent,
+            )
+            return False
+        if not warnings:
+            return True
+        return messagebox.askyesno(
+            "Review Condition",
+            "The condition was applied in a valid AT wrapper, but it looks unusual.\n\n"
+            + "\n".join(f"- {warning}" for warning in warnings)
+            + "\n\nApply it anyway?",
+            parent=parent,
+        )
+
+    @classmethod
+    def _at_condition_validation_messages(cls, condition: str) -> tuple[list[str], list[str]]:
+        text = str(condition or "").strip()
+        if not text:
+            return [], []
+        issues: list[str] = []
+        warnings: list[str] = []
+        match = re.match(r"^\$\s*\[\s*\?\s*\((.*)\)\s*\]\s*$", text, flags=re.DOTALL)
+        if not match:
+            issues.append("Use the AT condition wrapper format: $[?(...)]")
+            return issues, warnings
+        body = match.group(1).strip()
+        if not body:
+            issues.append("Condition body cannot be empty.")
+            return issues, warnings
+        balance_error = cls._condition_delimiter_error(body)
+        if balance_error:
+            issues.append(balance_error)
+        if "@" not in body and "$" not in body:
+            warnings.append("Condition body does not reference a JSON path using @ or $.")
+        if "==" in body and not re.search(r"[@$][A-Za-z0-9_.$@\\[\\]'\"*?()=<>!\\s-]*==", body):
+            warnings.append("Condition uses ==, but no JSON path was found near the comparison.")
+        return issues, warnings
+
+    @staticmethod
+    def _condition_delimiter_error(expression: str) -> str:
+        pairs = {")": "(", "]": "[", "}": "{"}
+        opening = set(pairs.values())
+        stack: list[str] = []
+        quote = ""
+        escaped = False
+        for char in expression:
+            if quote:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == quote:
+                    quote = ""
+                continue
+            if char in {"'", '"'}:
+                quote = char
+                continue
+            if char in opening:
+                stack.append(char)
+                continue
+            expected = pairs.get(char)
+            if expected is None:
+                continue
+            if not stack or stack[-1] != expected:
+                return f"Unbalanced delimiter near '{char}'."
+            stack.pop()
+        if quote:
+            return f"Unterminated quoted string ({quote})."
+        if stack:
+            return f"Unclosed delimiter '{stack[-1]}'."
+        return ""
+
+    def _show_add_package_document_dialog(self) -> None:
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            messagebox.showinfo("Package Documents", "Open an OCCS package bundle first.")
+            return
+        dialog = self._create_toplevel(self.package_documents_window or self.root)
+        dialog.title("Add Package Document")
+        dialog.minsize(720, 420)
+        dialog.transient(self.package_documents_window or self.root)
+
+        filter_var = tk.StringVar(value="")
+        status_var = tk.StringVar(value="")
+        documents: list[dict[str, str]] = []
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        filter_row = ttk.Frame(container)
+        filter_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        filter_row.columnconfigure(0, weight=1)
+        filter_entry = ttk.Entry(filter_row, textvariable=filter_var)
+        filter_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(filter_row, text="Clear", command=lambda: filter_var.set("")).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(
+            filter_row,
+            text="Refresh from Comms",
+            command=lambda: self._refresh_document_catalog_cache(filter_var.get().strip(), refresh_complete),
+        ).grid(row=0, column=2)
+
+        table_frame = ttk.Frame(container)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        catalog_tree = ttk.Treeview(
+            table_frame,
+            columns=("short_name", "name", "description"),
+            show="headings",
+            height=12,
+        )
+        catalog_tree.heading("short_name", text="Short Name")
+        catalog_tree.heading("name", text="Name")
+        catalog_tree.heading("description", text="Description")
+        catalog_tree.column("short_name", width=180, anchor=tk.W)
+        catalog_tree.column("name", width=180, anchor=tk.W)
+        catalog_tree.column("description", width=320, anchor=tk.W)
+        catalog_tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=catalog_tree.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        catalog_tree.configure(yscrollcommand=y_scroll.set)
+
+        ttk.Label(container, textvariable=status_var).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        action_row = ttk.Frame(container)
+        action_row.grid(row=3, column=0, sticky="e", pady=(10, 0))
+
+        def visible_documents() -> list[dict[str, str]]:
+            query = filter_var.get().strip().lower()
+            if not query:
+                return documents
+            return [
+                item
+                for item in documents
+                if query in " ".join(
+                    [
+                        item.get("shortName", ""),
+                        item.get("name", ""),
+                        item.get("description", ""),
+                        item.get("uuid", ""),
+                        item.get("configId", ""),
+                    ]
+                ).lower()
+            ]
+
+        def populate() -> None:
+            catalog_tree.delete(*catalog_tree.get_children())
+            visible = visible_documents()
+            for item in visible:
+                catalog_tree.insert(
+                    "",
+                    "end",
+                    iid=item["uuid"],
+                    values=(item.get("shortName", ""), item.get("name", ""), item.get("description", "")),
+                )
+            status_var.set(f"Cached documents: {len(documents)} | Showing: {len(visible)}")
+
+        def refresh_complete(_result: dict[str, object]) -> None:
+            nonlocal documents
+            documents = self._load_document_catalog_cache()
+            populate()
+
+        def add_selected() -> None:
+            selection = catalog_tree.selection()
+            if not selection:
+                messagebox.showinfo("Add Package Document", "Select a document to add.")
+                return
+            selected_uuid = str(selection[0])
+            document = next((item for item in documents if item.get("uuid") == selected_uuid), None)
+            if document is None:
+                messagebox.showerror("Add Package Document", "Could not find the selected cached document.")
+                return
+            if not self._add_package_document_association(document):
+                return
+            self._write_package_association_files()
+            self._refresh_package_documents_manager()
+            self._select_package_document_by_uuid(selected_uuid)
+            dialog.destroy()
+
+        ttk.Button(action_row, text="Add", command=add_selected).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(action_row, text="Cancel", command=dialog.destroy).grid(row=0, column=1)
+        filter_var.trace_add("write", lambda *_args: populate())
+        catalog_tree.bind("<Double-1>", lambda _event: add_selected())
+
+        documents = self._load_document_catalog_cache()
+        populate()
+        filter_entry.focus_set()
+
+    def _select_package_document_by_uuid(self, document_uuid: str) -> None:
+        if not self.package_documents_tree or not document_uuid:
+            return
+        for node_id, row in self._package_document_row_details.items():
+            if str(row.get("document_uuid", "")) != document_uuid:
+                continue
+            self.package_documents_tree.selection_set(node_id)
+            self.package_documents_tree.focus(node_id)
+            self.package_documents_tree.see(node_id)
+            self._on_package_documents_select(tk.Event())
+            return
+
+    def _select_package_document_by_name(self, document_name: str) -> None:
+        if not self.package_documents_tree:
+            return
+        for node_id, row in self._package_document_row_details.items():
+            if str(row.get("document", "")) != document_name:
+                continue
+            self.package_documents_tree.selection_set(node_id)
+            self.package_documents_tree.focus(node_id)
+            self.package_documents_tree.see(node_id)
+            self._on_package_documents_select(tk.Event())
+            return
+
+    def _package_version_document_rels(self) -> list[dict[str, object]]:
+        version_master = self._read_current_version_master()
+        rels = version_master.get("CommunicationPackageVersionDocuments")
+        return rels if isinstance(rels, list) else []
+
+    def _read_current_version_master(self) -> dict[str, object]:
+        if isinstance(self.current_version_master, dict):
+            return self.current_version_master
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            return {}
+        path = Path(self._occs_bundle_version_master_path(self.current_occs_bundle_dir, self.current_occs_manifest))
+        try:
+            with open(path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        self.current_version_master = payload
+        return payload
+
+    @staticmethod
+    def _version_document_rel_info(item: dict[str, object]) -> dict[str, object] | None:
+        rec = item.get("CommunicationPackageVersionConfigCommunicationDocumentConfigRelRec")
+        if not isinstance(rec, dict):
+            return None
+        info = rec.get("CommunicationPackageVersionConfigCommunicationDocumentConfigRelInfo")
+        return info if isinstance(info, dict) else None
+
+    def _find_version_document_rel_info(self, document_uuid: str) -> dict[str, object] | None:
+        for item in self._package_version_document_rels():
+            if not isinstance(item, dict):
+                continue
+            info = self._version_document_rel_info(item)
+            if not isinstance(info, dict):
+                continue
+            if str(info.get("CommunicationDocumentConfigUuid", "")) == document_uuid:
+                return info
+        return None
+
+    def _current_package_version_uuid(self) -> str:
+        manifest_version = self.current_occs_manifest.get("version") if isinstance(self.current_occs_manifest, dict) else None
+        version_master = self._read_current_version_master()
+        package_version_uuid = self._first_nonempty_text(
+            manifest_version.get("uuid") if isinstance(manifest_version, dict) else "",
+            manifest_version.get("versionUuid") if isinstance(manifest_version, dict) else "",
+            version_master.get("CommunicationPackageVersionConfigUuid"),
+            version_master.get("uuid"),
+        )
+        if package_version_uuid:
+            return package_version_uuid
+        for item in self._package_version_document_rels():
+            if not isinstance(item, dict):
+                continue
+            info = self._version_document_rel_info(item)
+            if not isinstance(info, dict):
+                continue
+            package_version_uuid = self._first_nonempty_text(info.get("CommunicationPackageVersionConfigUuid"))
+            if package_version_uuid:
+                return package_version_uuid
+        return ""
+
+    def _next_package_document_order(self) -> int:
+        orders: list[int] = []
+        for item in self._package_version_document_rels():
+            if not isinstance(item, dict):
+                continue
+            info = self._version_document_rel_info(item)
+            if not isinstance(info, dict):
+                continue
+            order = self._safe_int(info.get("DocumentRelIndex"))
+            if order is not None:
+                orders.append(order)
+        return max(orders, default=0) + 1
+
+    def _add_package_document_association(self, document: dict[str, str]) -> bool:
+        document_uuid = str(document.get("uuid", "")).strip()
+        document_short_name = str(document.get("shortName", "")).strip()
+        if not document_uuid:
+            messagebox.showerror("Add Package Document", "Selected cached document does not have a UUID.")
+            return False
+        if self._find_version_document_rel_info(document_uuid) is not None:
+            messagebox.showinfo("Add Package Document", f"Document is already associated:\n\n{document_short_name or document_uuid}")
+            return False
+        for row in self._build_package_document_rows():
+            if str(row.get("document", "")).strip().lower() == document_short_name.lower() and row.get("associated"):
+                messagebox.showinfo("Add Package Document", f"Document is already associated:\n\n{document_short_name}")
+                return False
+
+        version_uuid = self._current_package_version_uuid()
+        if not version_uuid:
+            messagebox.showerror("Add Package Document", "Could not determine the package version UUID.")
+            return False
+
+        version_master = self._read_current_version_master()
+        rels = version_master.get("CommunicationPackageVersionDocuments")
+        if not isinstance(rels, list):
+            rels = []
+            version_master["CommunicationPackageVersionDocuments"] = rels
+
+        order = self._next_package_document_order()
+        rels.append(
+            {
+                "CommunicationPackageVersionConfigCommunicationDocumentConfigRelRec": {
+                    "CommunicationPackageVersionConfigCommunicationDocumentConfigRelInfo": {
+                        "CommunicationPackageVersionConfigUuid": version_uuid,
+                        "CommunicationDocumentConfigUuid": document_uuid,
+                        "DocumentRelIndex": order,
+                        "DocumentAlwaysTriggerInd": False,
+                    }
+                }
+            }
+        )
+        self._ensure_document_association_helper()["associations"].append(
+            {
+                "relUuid": "",
+                "documentConfigUuid": document_uuid,
+                "documentShortName": document_short_name,
+                "documentName": str(document.get("name", "")).strip(),
+                "documentDescription": str(document.get("description", "")).strip(),
+                "documentConfigId": str(document.get("configId", "")).strip(),
+                "documentRelIndex": order,
+                "documentAlwaysTriggerInd": False,
+                "packageVersionConfigUuid": version_uuid,
+                "configId": "",
+                "resolved": True,
+            }
+        )
+        if self._ensure_at_document_for_catalog_item(document):
+            self._set_dirty(True)
+            self._render_documents_tree()
+        return True
+
+    def _ensure_at_document_for_catalog_item(self, document: dict[str, str]) -> bool:
+        if not isinstance(self.current_payload, dict):
+            return False
+        document_short_name = str(document.get("shortName", "")).strip()
+        if not document_short_name:
+            return False
+
+        documents = self.current_payload.get("Documents")
+        if not isinstance(documents, list):
+            documents = []
+            self.current_payload["Documents"] = documents
+
+        for item in documents:
+            if isinstance(item, dict) and str(item.get("$$Id", "")).strip() == document_short_name:
+                return False
+
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        source_document = {
+            "$$Id": document_short_name,
+            "Updated": now_text,
+            "Descr": str(document.get("description") or document.get("name") or "").strip(),
+            "Condition": "",
+            "Layouts": [],
+        }
+        documents.append(source_document)
+        self._loaded_documents = self._extract_documents(self.current_payload)
+        new_document = next(
+            (
+                item
+                for item in self._loaded_documents
+                if item.get("source") is source_document
+            ),
+            None,
+        )
+        if new_document is not None and self.current_data_payload is not None:
+            self._refresh_document_condition_mapping(new_document)
+        elif self.current_data_payload is not None:
+            self.document_count_text.set(
+                f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
+            )
+        else:
+            self.document_count_text.set(f"Documents: {len(self._loaded_documents)}")
+        return True
+
+    def _remove_package_document_association(self, document_uuid: str) -> bool:
+        version_master = self._read_current_version_master()
+        rels = version_master.get("CommunicationPackageVersionDocuments")
+        removed = False
+        if isinstance(rels, list):
+            kept_rels: list[object] = []
+            for item in rels:
+                if isinstance(item, dict):
+                    info = self._version_document_rel_info(item)
+                    if isinstance(info, dict) and str(info.get("CommunicationDocumentConfigUuid", "")) == document_uuid:
+                        removed = True
+                        continue
+                kept_rels.append(item)
+            version_master["CommunicationPackageVersionDocuments"] = kept_rels
+        if isinstance(self.current_document_associations, dict):
+            associations = self.current_document_associations.get("associations")
+            if isinstance(associations, list):
+                self.current_document_associations["associations"] = [
+                    item
+                    for item in associations
+                    if not (isinstance(item, dict) and str(item.get("documentConfigUuid", "")) == document_uuid)
+                ]
+        if not removed:
+            messagebox.showerror("Package Documents", f"Could not find association for document UUID:\n{document_uuid}")
+            return False
+        return True
+
+    def _set_package_association_order(self, document_uuid: str, *, current_order: int) -> bool:
+        info = self._find_version_document_rel_info(document_uuid)
+        if info is None:
+            messagebox.showerror("Package Documents", f"Could not find association for document UUID:\n{document_uuid}")
+            return False
+        info["DocumentRelIndex"] = current_order
+        self._sync_document_association_helper(document_uuid, {"documentRelIndex": current_order})
+        return True
+
+    def _set_package_association_always_trigger(self, document_uuid: str, value: bool) -> bool:
+        info = self._find_version_document_rel_info(document_uuid)
+        if info is None:
+            messagebox.showerror("Package Documents", f"Could not find association for document UUID:\n{document_uuid}")
+            return False
+        info["DocumentAlwaysTriggerInd"] = bool(value)
+        self._sync_document_association_helper(document_uuid, {"documentAlwaysTriggerInd": bool(value)})
+        return True
+
+    def _sync_document_association_helper(self, document_uuid: str, updates: dict[str, object]) -> None:
+        if not isinstance(self.current_document_associations, dict):
+            return
+        associations = self.current_document_associations.get("associations")
+        if not isinstance(associations, list):
+            return
+        for association in associations:
+            if not isinstance(association, dict):
+                continue
+            if str(association.get("documentConfigUuid", "")) != document_uuid:
+                continue
+            association.update(updates)
+            return
+
+    def _ensure_document_association_helper(self) -> dict[str, object]:
+        if not isinstance(self.current_document_associations, dict):
+            self.current_document_associations = {
+                "schemaVersion": "occs-cli/document-associations/v1",
+                "generatedAt": self._current_timestamp(),
+                "package": self._occs_manifest_package_short_name(self.current_occs_manifest),
+                "version": self._occs_manifest_version_short_name(self.current_occs_manifest),
+                "associations": [],
+            }
+        associations = self.current_document_associations.get("associations")
+        if not isinstance(associations, list):
+            self.current_document_associations["associations"] = []
+        return self.current_document_associations
+
+    def _write_package_association_files(self) -> None:
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            return
+        version_master_path = Path(self._occs_bundle_version_master_path(self.current_occs_bundle_dir, self.current_occs_manifest))
+        version_master = self._read_current_version_master()
+        if not version_master:
+            messagebox.showerror(
+                "Package Documents",
+                "Could not save package association files because version-master.json is not loaded.",
+            )
+            return
+        try:
+            with open(version_master_path, "w", encoding="utf-8") as target:
+                json.dump(version_master, target, indent=2)
+            if isinstance(self.current_document_associations, dict):
+                associations_path = Path(self._occs_bundle_document_associations_path(self.current_occs_bundle_dir, self.current_occs_manifest))
+                with open(associations_path, "w", encoding="utf-8") as target:
+                    json.dump(self.current_document_associations, target, indent=2)
+            self._set_package_bundle_dirty(True)
+        except OSError as error:
+            messagebox.showerror("Package Documents", f"Could not save package association files.\n\nDetails: {error}")
+
+    @staticmethod
+    def _document_catalog_cache_path() -> Path:
+        return Path.home() / ".atool" / "document-catalog.json"
+
+    def _load_document_catalog_cache(self) -> list[dict[str, str]]:
+        path = self._document_catalog_cache_path()
+        if not path.exists():
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showwarning("Document Catalog", f"Could not read cached document catalog:\n{path}\n\nDetails: {error}")
+            return []
+        items = payload.get("documents") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            return []
+        documents: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in items:
+            normalized = self._normalize_document_catalog_item(item)
+            if normalized is None:
+                continue
+            uuid = normalized["uuid"]
+            if uuid in seen:
+                continue
+            seen.add(uuid)
+            documents.append(normalized)
+        return sorted(documents, key=lambda item: (item.get("shortName", "").lower(), item.get("name", "").lower()))
+
+    @staticmethod
+    def _normalize_document_catalog_item(item: object) -> dict[str, str] | None:
+        if not isinstance(item, dict):
+            return None
+        uuid = AToolApp._first_nonempty_text(
+            item.get("uuid"),
+            item.get("documentConfigUuid"),
+            item.get("CommunicationDocumentConfigUuid"),
+        )
+        if not uuid:
+            return None
+        return {
+            "uuid": uuid,
+            "shortName": AToolApp._first_nonempty_text(item.get("shortName"), item.get("documentShortName"), item.get("ShortName")),
+            "name": AToolApp._first_nonempty_text(item.get("name"), item.get("documentName"), item.get("Name")),
+            "description": AToolApp._first_nonempty_text(item.get("description"), item.get("documentDescription"), item.get("Desc")),
+            "configId": AToolApp._first_nonempty_text(item.get("configId"), item.get("documentConfigId"), item.get("ConfigId")),
+        }
+
+    def _refresh_document_catalog_cache(self, query: str, on_success: object) -> None:
+        path = self._document_catalog_cache_path()
+        args = [
+            "documents",
+            "catalog",
+            "--output",
+            str(path),
+            "--timeout",
+            "60000",
+        ]
+        if query:
+            args.extend(["--name", query])
+        self._run_occs_json_command_async(
+            args,
+            "Refreshing document catalog...",
+            on_success,
+        )
+
+    def _on_package_documents_window_configure(self, event: tk.Event) -> None:
+        if self.package_documents_window is None or event.widget is not self.package_documents_window:
+            return
+        if self._package_documents_window_geometry_job:
+            self.root.after_cancel(self._package_documents_window_geometry_job)
+        self._package_documents_window_geometry_job = self.root.after(300, self._persist_package_documents_window_geometry)
+
+    def _restore_package_documents_window_geometry(self) -> None:
+        if self.package_documents_window is None or not self.package_documents_window.winfo_exists():
+            return
+        state = self._read_app_state()
+        geometry = state.get("package_documents_window_geometry")
+        if not isinstance(geometry, dict):
+            return
+        width = self._safe_int(geometry.get("width"))
+        height = self._safe_int(geometry.get("height"))
+        x_pos = self._safe_int(geometry.get("x"))
+        y_pos = self._safe_int(geometry.get("y"))
+        if all(value is not None for value in [width, height, x_pos, y_pos]):
+            self.package_documents_window.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+
+    def _persist_package_documents_window_geometry(self) -> None:
+        self._package_documents_window_geometry_job = None
+        if self.package_documents_window is None or not self.package_documents_window.winfo_exists():
+            return
+        if self.package_documents_window.state() == "withdrawn":
+            return
+        width = self.package_documents_window.winfo_width()
+        height = self.package_documents_window.winfo_height()
+        x_pos = self.package_documents_window.winfo_x()
+        y_pos = self.package_documents_window.winfo_y()
+        if width <= 1 or height <= 1:
+            return
+        self._update_app_state(
+            {
+                "package_documents_window_geometry": {
+                    "width": width,
+                    "height": height,
+                    "x": x_pos,
+                    "y": y_pos,
+                }
+            }
+        )
+
+    def _build_package_document_rows(self) -> list[dict[str, object]]:
+        at_documents = {str(document.get("name", "")): document for document in self._loaded_documents}
+        association_payload = self.current_document_associations if isinstance(self.current_document_associations, dict) else {}
+        associations = association_payload.get("associations") if isinstance(association_payload, dict) else []
+        if not isinstance(associations, list):
+            associations = []
+        association_rows = [item for item in associations if isinstance(item, dict)]
+        associations_by_name: dict[str, list[dict[str, object]]] = {}
+        unresolved_associations: list[dict[str, object]] = []
+        for association in association_rows:
+            short_name = str(association.get("documentShortName", "")).strip()
+            if short_name:
+                associations_by_name.setdefault(short_name, []).append(association)
+            else:
+                unresolved_associations.append(association)
+
+        rows: list[dict[str, object]] = []
+        for doc_name in sorted(at_documents.keys(), key=str.lower):
+            document = at_documents[doc_name]
+            matches = associations_by_name.pop(doc_name, [])
+            if matches:
+                for association in matches:
+                    rows.append(self._package_document_row_from_match(doc_name, document, association, duplicate=len(matches) > 1))
+                continue
+            rows.append(self._package_document_row_from_match(doc_name, document, None, duplicate=False))
+
+        for short_name, matches in associations_by_name.items():
+            for association in matches:
+                rows.append(self._package_document_row_from_match(short_name, None, association, duplicate=len(matches) > 1))
+        for association in unresolved_associations:
+            fallback_name = str(association.get("documentConfigUuid", "")).strip() or "(unknown document)"
+            rows.append(self._package_document_row_from_match(fallback_name, None, association, duplicate=False))
+
+        return sorted(rows, key=self._package_document_row_sort_key)
+
+    @staticmethod
+    def _package_document_row_sort_key(row: dict[str, object]) -> tuple[object, ...]:
+        order = row.get("order")
+        has_order = isinstance(order, int)
+        return (
+            0 if has_order else 1,
+            order if has_order else 0,
+            str(row.get("document", "")).lower(),
+        )
+
+    def _package_document_row_from_match(
+        self,
+        doc_name: str,
+        document: dict[str, object] | None,
+        association: dict[str, object] | None,
+        *,
+        duplicate: bool,
+    ) -> dict[str, object]:
+        diagnostics: list[str] = []
+        associated = association is not None
+        condition = str(document.get("condition", "")) if isinstance(document, dict) else ""
+        order = self._safe_int(association.get("documentRelIndex")) if isinstance(association, dict) else None
+        always_trigger = bool(association.get("documentAlwaysTriggerInd")) if isinstance(association, dict) else False
+        if not self.current_document_associations:
+            diagnostics.append("Bundle does not include document-associations.json. Refresh package from Comms with the updated OCCS CLI.")
+        if duplicate:
+            diagnostics.append("Multiple association rows resolve to this document short name.")
+        if associated and document is None:
+            diagnostics.append("Association resolves to a document short name that is not present in the Assembly Template.")
+        if not associated and document is not None and self.current_document_associations:
+            diagnostics.append("Assembly Template document is not associated to the package version.")
+        if associated and order is None:
+            diagnostics.append("Association is missing a numeric DocumentRelIndex.")
+        if associated and isinstance(association, dict) and not association.get("resolved", True):
+            diagnostics.append("OCCS CLI could not resolve this association's document metadata.")
+
+        status_key = "ok"
+        status = "OK"
+        severity = "ok"
+        if associated and document is None:
+            status_key = "association_only"
+            status = "Association missing AT doc"
+            severity = "error"
+        elif not associated and document is not None:
+            status_key = "at_only"
+            status = "AT doc not associated"
+            severity = "warning" if self.current_document_associations else "error"
+        elif duplicate or diagnostics:
+            status_key = "warning"
+            status = "Review"
+            severity = "warning"
+
+        return {
+            "document": doc_name,
+            "associated": associated,
+            "order": order,
+            "order_text": str(order) if order is not None else "",
+            "trigger_text": "Always" if always_trigger else "Condition",
+            "condition": condition,
+            "condition_preview": self._single_line_preview(condition, 110),
+            "status": status,
+            "status_key": status_key,
+            "severity": severity,
+            "diagnostics": diagnostics,
+            "always_trigger": always_trigger,
+            "document_ref": document,
+            "association_ref": association,
+            "document_uuid": str(association.get("documentConfigUuid", "")) if isinstance(association, dict) else "",
+            "rel_uuid": str(association.get("relUuid", "")) if isinstance(association, dict) else "",
+            "document_config_id": str(association.get("documentConfigId", "")) if isinstance(association, dict) else "",
+            "association_config_id": str(association.get("configId", "")) if isinstance(association, dict) else "",
+        }
+
+    @staticmethod
+    def _single_line_preview(value: object, limit: int = 120) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return f"{text[: max(0, limit - 3)]}..."
+
     def _occs_bundle_assembly_template_path(self, bundle_dir: str, manifest: dict[str, object]) -> str:
         files = manifest.get("files")
         relative_path = "assembly-template.json"
@@ -10600,9 +11964,63 @@ class AToolApp:
             return str(candidate)
         return str(Path(os.path.expanduser(bundle_dir)) / candidate)
 
+    def _occs_bundle_document_associations_path(self, bundle_dir: str, manifest: dict[str, object]) -> str:
+        files = manifest.get("files")
+        relative_path = "document-associations.json"
+        if isinstance(files, dict):
+            relative_path = str(files.get("documentAssociations") or relative_path)
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            return str(candidate)
+        return str(Path(os.path.expanduser(bundle_dir)) / candidate)
+
+    def _load_occs_version_master(self, bundle_dir: str, manifest: dict[str, object]) -> dict[str, object] | None:
+        version_master_path = Path(self._occs_bundle_version_master_path(bundle_dir, manifest))
+        if not version_master_path.exists():
+            return None
+        try:
+            with open(version_master_path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showwarning(
+                "Package Documents",
+                f"Could not read package version metadata:\n{version_master_path}\n\nDetails: {error}",
+            )
+            return None
+        if not isinstance(payload, dict):
+            messagebox.showwarning(
+                "Package Documents",
+                f"Package version metadata must be a JSON object:\n{version_master_path}",
+            )
+            return None
+        return payload
+
+    def _load_occs_document_associations(self, bundle_dir: str, manifest: dict[str, object]) -> dict[str, object] | None:
+        associations_path = Path(self._occs_bundle_document_associations_path(bundle_dir, manifest))
+        if not associations_path.exists():
+            return None
+        try:
+            with open(associations_path, "r", encoding="utf-8") as source:
+                payload = json.load(source)
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showwarning(
+                "Package Documents",
+                f"Could not read document association metadata:\n{associations_path}\n\nDetails: {error}",
+            )
+            return None
+        if not isinstance(payload, dict):
+            messagebox.showwarning(
+                "Package Documents",
+                f"Document association metadata must be a JSON object:\n{associations_path}",
+            )
+            return None
+        return payload
+
     def _detect_occs_bundle_for_file(self, loaded_path: str, source_path: str) -> None:
         self.current_occs_bundle_dir = None
         self.current_occs_manifest = None
+        self.current_version_master = None
+        self.current_document_associations = None
         self.current_occs_shared_package_dir = None
         self.current_occs_shared_mode = "local"
         candidates = []
@@ -10632,6 +12050,8 @@ class AToolApp:
                 continue
             self.current_occs_bundle_dir = str(bundle_dir)
             self.current_occs_manifest = manifest
+            self.current_version_master = self._load_occs_version_master(str(bundle_dir), manifest)
+            self.current_document_associations = self._load_occs_document_associations(str(bundle_dir), manifest)
             self._update_app_state({"last_occs_bundle": str(bundle_dir)})
             return
 
@@ -11003,6 +12423,9 @@ class AToolApp:
             "assembly-template.json": Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest)),
             "version-master.json": Path(self._occs_bundle_version_master_path(str(bundle_dir), manifest)),
         }
+        association_path = Path(self._occs_bundle_document_associations_path(str(bundle_dir), manifest))
+        if association_path.exists():
+            source_files["document-associations.json"] = association_path
         for target_name, source_path in source_files.items():
             if not source_path.exists():
                 raise OSError(f"Missing package version file: {source_path}")
@@ -12077,6 +13500,8 @@ class AToolApp:
         reasons: list[str] = []
         if self.is_dirty:
             reasons.append("Current package has unsaved local edits.")
+        if self.package_bundle_dirty:
+            reasons.append("Package document associations have local changes that are not published to Comms.")
 
         if self.current_occs_bundle_dir and self.current_occs_manifest:
             try:
@@ -12127,11 +13552,15 @@ class AToolApp:
             manifest_path = manifest_candidate if manifest_candidate.is_absolute() else bundle_dir / manifest_candidate
         assembly_template_path = Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest))
         version_master_path = Path(self._occs_bundle_version_master_path(str(bundle_dir), manifest))
-        return {
+        hashes = {
             "manifest": self._semantic_json_hash_for_file(manifest_path),
             "assemblyTemplate": self._semantic_json_hash_for_file(assembly_template_path),
             "versionMaster": self._semantic_json_hash_for_file(version_master_path),
         }
+        document_associations_path = Path(self._occs_bundle_document_associations_path(str(bundle_dir), manifest))
+        if document_associations_path.exists():
+            hashes["documentAssociations"] = self._semantic_json_hash_for_file(document_associations_path)
+        return hashes
 
     @classmethod
     def _semantic_json_hash_for_file(cls, path: Path) -> str:
@@ -12780,6 +14209,7 @@ class AToolApp:
         self.current_file_path = loaded_path
         self.current_source_file_path = file_path
         self.current_package_name = package_name
+        self.package_bundle_dirty = False
         self._detect_occs_bundle_for_file(loaded_path=loaded_path, source_path=file_path)
         self._condition_library_entries = self._load_condition_library(package_name, payload)
         self._active_condition_library_index = None
@@ -12799,6 +14229,8 @@ class AToolApp:
 
         self._render_documents_tree()
         self._render_fields_tree()
+        if self.package_documents_tree:
+            self._refresh_package_documents_manager()
 
         file_name = os.path.basename(loaded_path)
         self.status_text.set(self._default_status_text())
@@ -12806,7 +14238,6 @@ class AToolApp:
         self.mapping_status_text.set("Mapping: Idle")
         self.document_count_text.set(f"Documents: {len(documents)}")
         self.field_count_text.set(f"Fields: {len(fields)}")
-        self.root.title(f"ATool - {file_name}")
         self._update_mapping_controls()
         document_names = [str(document["name"]) for document in documents]
         self._write_metadata(
@@ -12818,6 +14249,7 @@ class AToolApp:
         )
         self._write_app_state(last_opened_file=loaded_path, package_name=package_name)
         self._set_dirty(sanitized_loaded_text)
+        self._update_window_title()
         if sanitized_loaded_text:
             self._show_temporary_status(
                 "Removed unsupported line breaks from package text; save before publishing.",
@@ -13585,7 +15017,8 @@ class AToolApp:
                 occs_suffix = f" | Package Version: {occs_package} {occs_version}".rstrip()
                 if self.current_occs_shared_package_dir is not None and self.current_occs_shared_mode != "local":
                     occs_suffix = f"{occs_suffix} ({self.current_occs_shared_mode})"
-        return f"File: {file_name} | Package: {package_name}{occs_suffix}"
+        dirty_suffix = " | Local package changes" if self.package_bundle_dirty else ""
+        return f"File: {file_name} | Package: {package_name}{occs_suffix}{dirty_suffix}"
 
     def _restore_default_status_text(self) -> None:
         self._status_note_job = None
@@ -13653,6 +15086,7 @@ class AToolApp:
         self._persist_layouts_window_geometry()
         self._persist_clause_manager_split()
         self._persist_condition_library_window_geometry()
+        self._persist_package_documents_window_geometry()
         if self.fields_window is not None and self.fields_window.winfo_exists():
             self.fields_window.destroy()
         if self.layouts_window is not None and self.layouts_window.winfo_exists():
@@ -13661,6 +15095,8 @@ class AToolApp:
             self.condition_usage_window.destroy()
         if self.condition_library_window is not None and self.condition_library_window.winfo_exists():
             self.condition_library_window.destroy()
+        if self.package_documents_window is not None and self.package_documents_window.winfo_exists():
+            self.package_documents_window.destroy()
         self.root.destroy()
 
     def _prompt_save_if_dirty(self) -> bool:
