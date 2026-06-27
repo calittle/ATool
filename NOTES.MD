@@ -64,6 +64,21 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - The Layouts toolbar is more compact and now includes an Expand/Collapse toggle for the full layout tree.
 - The document toolbar `Sample` button was removed; sample input generation is now available from `Data > Generate Sample...`.
 
+## Package Documents
+
+- Added `Window > Show Package Documents Manager` for managing package document associations alongside the Assembly Template document list.
+- The Package Documents manager shows package association order, associated state, and diagnostics for AT-only or association-only documents.
+- Package document columns are filterable and sortable, with order shown first and sorted in package order by default.
+- Selecting a Package Documents row now selects the matching AT document in the main Documents tree when one exists.
+- Associated documents can be reordered from the Package Documents manager; this updates `DocumentRelIndex` in the package version metadata.
+- Associated documents can toggle `Always trigger`; this updates `DocumentAlwaysTriggerInd`.
+- AT document trigger conditions can be edited from Package Documents. Empty conditions are allowed, but non-empty conditions must use the Comms AT wrapper format such as `$[?(...)]`; malformed delimiters or obvious non-AT expressions are blocked before writing the AT JSON.
+- Adding from the document catalog creates the package association and, when missing, creates a minimal AT document shell with `$$Id`, `Updated`, `Descr`, `Condition`, and empty `Layouts`.
+- Removing a package association leaves the AT document and its details intact.
+- The document catalog is cached at `~/.atool/document-catalog.json` and can be refreshed from Comms directly from the add dialog.
+- Package association edits mark local package metadata as changed. The main window title uses `*` for unsaved AT JSON edits and `!` for unpublished package association changes; the status bar also shows `Local package changes`.
+- Publishing to Comms now parses OCCS `SFD0375` lock errors and offers to retry with the Config ID that already owns the package lock.
+
 ## Document Details Panel
 
 - `Triggered` is hidden until data has been mapped.

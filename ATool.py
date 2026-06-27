@@ -8095,12 +8095,13 @@ class AToolApp:
         self._restore_default_status_text()
 
     def _update_window_title(self) -> None:
-        marker = " *" if self.is_dirty or self.package_bundle_dirty else ""
+        marker = " *" if self.is_dirty else ""
+        package_marker = " !" if self.package_bundle_dirty else ""
         if self.current_file_path:
             file_name = os.path.basename(self.current_file_path)
-            self.root.title(f"ATool - {file_name}{marker}")
+            self.root.title(f"ATool - {file_name}{marker}{package_marker}")
         else:
-            self.root.title(f"ATool{marker}")
+            self.root.title(f"ATool{marker}{package_marker}")
 
     def _bind_shortcuts(self) -> None:
         self._bind_search_shortcut(self.root, self._focus_documents_filter_event)
