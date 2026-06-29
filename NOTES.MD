@@ -39,9 +39,11 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Shared package edit locks now refresh their baseline hashes when the lock owner updates or publishes the shared package, preventing stale owned locks from blocking later saves.
 - `Package > Manual Unlock Shared Package...` now lets users release a stale shared package lock after selecting the locked package version and confirming the unlock.
 - `File > Close Package` now closes the currently open package, prompts to save dirty changes first, and prompts shared edit sessions to update the shared package before closing.
+- `File > Clean Local Packages...` now supports multi-select toggling, keeps keyboard focus in the package list after spacebar toggles, and refreshes an open cleanup window when the current package is closed.
 - `Get to Shared/Edit` now respects existing shared package locks: the lock owner can update the shared package from Comms, while other users must use `Get to Local` or manually unlock after confirming the lock is stale.
 - Checkout and save flows no longer offer to replace another user's shared package lock; manual unlock is now the explicit override path.
 - `Package > Get Packages from Comms...` now replaces the separate list/get Comms menu items with one list-first workflow.
+- The Package menu now groups preview/cancel, open actions, Comms retrieval, shared publish/update, and lock actions separately, while local package cleanup has moved to the File menu.
 - The Comms package list hides internal ID/UUID columns, supports local filtering, and lets users choose `Get to Local` or `Get to Shared/Edit`.
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
 - Package menu shortcuts were added for Preview (`Cmd/Ctrl+P`), Update Shared Package (`Cmd/Ctrl+U`), and Publish Package to Comms (`Shift+Cmd/Ctrl+U`).

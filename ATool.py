@@ -101,6 +101,8 @@ class AToolApp:
         self._fields_window_geometry_job: str | None = None
         self.layouts_window: tk.Toplevel | None = None
         self._layouts_window_geometry_job: str | None = None
+        self._local_occs_cleanup_window: tk.Toplevel | None = None
+        self._refresh_local_occs_cleanup_dialog = None
         self.condition_library_window: tk.Toplevel | None = None
         self.clause_trigger_update_window: tk.Toplevel | None = None
         self.condition_usage_window: tk.Toplevel | None = None
@@ -337,6 +339,7 @@ class AToolApp:
             command=self.open_last_session,
         )
         file_menu.add_command(label="Close Package", command=self.close_current_package)
+        file_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         file_menu.add_separator()
         file_menu.add_command(label="About ATool", command=self._show_about_dialog)
         file_menu.add_separator()
@@ -385,12 +388,22 @@ class AToolApp:
         publish_accelerator = "Shift+Cmd+U" if self._is_macos() else "Shift+Ctrl+U"
         cancel_occs_accelerator = "Cmd+." if self._is_macos() else "Ctrl+."
         package_menu.add_command(
+            label="Preview...",
+            accelerator=preview_accelerator,
+            command=self.preview_occs_package,
+        )
+        package_menu.add_command(
+            label="Cancel OCCS Operation",
+            accelerator=cancel_occs_accelerator,
+            command=self.cancel_occs_operation,
+        )
+        package_menu.add_separator()
+        package_menu.add_command(
             label="Open Shared Package...",
             accelerator=open_accelerator,
             command=self.open_occs_package,
         )
         package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
-        package_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
         package_menu.add_separator()
         package_menu.add_command(
@@ -408,18 +421,11 @@ class AToolApp:
             accelerator=publish_accelerator,
             command=self.publish_occs_package_to_comms,
         )
-        package_menu.add_command(label="Release Shared Package Lock", command=self.release_shared_occs_lock)
-        package_menu.add_command(label="Manual Unlock Shared Package...", command=self.manual_unlock_shared_occs_package)
         package_menu.add_separator()
+        package_menu.add_command(label="Release Shared Package Lock", command=self.release_shared_occs_lock)
         package_menu.add_command(
-            label="Preview...",
-            accelerator=preview_accelerator,
-            command=self.preview_occs_package,
-        )
-        package_menu.add_command(
-            label="Cancel OCCS Operation",
-            accelerator=cancel_occs_accelerator,
-            command=self.cancel_occs_operation,
+            label="Manual Shared Package Unlock...",
+            command=self.manual_unlock_shared_occs_package,
         )
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
@@ -8305,6 +8311,7 @@ class AToolApp:
             return
         closed_name = self.current_package_name
         self._clear_current_package_state()
+        self._refresh_open_local_occs_cleanup_dialog()
         self._show_temporary_status(f"Closed package: {closed_name}", duration_ms=5000)
 
     def _prepare_current_package_for_close(self) -> bool:
@@ -8472,6 +8479,19 @@ class AToolApp:
 
         self._open_local_occs_cleanup_dialog(work_dir, entries)
 
+    def _refresh_open_local_occs_cleanup_dialog(self) -> None:
+        refresh = self._refresh_local_occs_cleanup_dialog
+        window = self._local_occs_cleanup_window
+        if refresh is None or window is None:
+            return
+        try:
+            if not window.winfo_exists():
+                return
+            refresh()
+        except tk.TclError:
+            self._local_occs_cleanup_window = None
+            self._refresh_local_occs_cleanup_dialog = None
+
     def _open_local_occs_cleanup_dialog(
         self,
         work_dir: Path,
@@ -8482,6 +8502,7 @@ class AToolApp:
         dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
+        self._local_occs_cleanup_window = dialog
 
         container = ttk.Frame(dialog, padding=14)
         container.pack(fill=tk.BOTH, expand=True)
@@ -8500,6 +8521,7 @@ class AToolApp:
             container,
             columns=("selected", "package", "version", "modified", "age", "size", "status", "folder"),
             show="headings",
+            selectmode="extended",
             height=min(max(len(entries), 8), 18),
         )
         headings = {
@@ -8532,6 +8554,19 @@ class AToolApp:
         tree.configure(yscrollcommand=scrollbar.set)
 
         item_to_entry: dict[str, dict[str, object]] = {}
+        key_to_item: dict[str, str] = {}
+
+        def _entry_key(entry: dict[str, object]) -> str:
+            path = entry.get("path")
+            if isinstance(path, Path):
+                return str(self._resolved_path(path))
+            return str(entry.get("folder", ""))
+
+        def _set_tree_focus(item_id: str | None = None) -> None:
+            if item_id and tree.exists(item_id):
+                tree.focus(item_id)
+                tree.see(item_id)
+            tree.focus_set()
 
         def _selected_entries() -> list[dict[str, object]]:
             return [
@@ -8540,10 +8575,24 @@ class AToolApp:
                 if bool(entry.get("selected")) and not bool(entry.get("protected"))
             ]
 
-        def _render_rows() -> None:
+        def _render_rows(
+            selected_keys: set[str] | None = None,
+            focus_key: str | None = None,
+        ) -> None:
+            if selected_keys is None:
+                selected_keys = {
+                    _entry_key(item_to_entry[item_id])
+                    for item_id in tree.selection()
+                    if item_id in item_to_entry
+                }
+            if focus_key is None:
+                focused_item = tree.focus()
+                focus_key = _entry_key(item_to_entry[focused_item]) if focused_item in item_to_entry else None
             item_to_entry.clear()
+            key_to_item.clear()
             tree.delete(*tree.get_children())
             for entry in entries:
+                entry_key = _entry_key(entry)
                 selected_text = "Yes" if bool(entry.get("selected")) else ""
                 item_id = tree.insert(
                     "",
@@ -8560,6 +8609,9 @@ class AToolApp:
                     ),
                 )
                 item_to_entry[item_id] = entry
+                key_to_item[entry_key] = item_id
+                if entry_key in selected_keys:
+                    tree.selection_add(item_id)
             selected_count = len(_selected_entries())
             removable_count = sum(1 for entry in entries if not bool(entry.get("protected")))
             total_size = sum(
@@ -8572,16 +8624,33 @@ class AToolApp:
                 f"Default cleanup selects removable bundles at least {self.OCCS_LOCAL_CLEANUP_DEFAULT_DAYS} days old. "
                 f"Selected: {selected_count} of {removable_count} removable, {self._format_bytes(total_size)}."
             )
+            if focus_key and focus_key in key_to_item:
+                _set_tree_focus(key_to_item[focus_key])
+            else:
+                tree.focus_set()
 
-        def _toggle_selected_row() -> None:
+        def _toggle_selected_rows() -> None:
             selection = tree.selection()
             if not selection:
                 return
-            entry = item_to_entry.get(selection[0])
-            if not entry or bool(entry.get("protected")):
-                return
-            entry["selected"] = not bool(entry.get("selected"))
-            _render_rows()
+            selected_keys = {
+                _entry_key(item_to_entry[item_id])
+                for item_id in selection
+                if item_id in item_to_entry
+            }
+            focus_item = tree.focus() or selection[0]
+            focus_key = _entry_key(item_to_entry[focus_item]) if focus_item in item_to_entry else None
+            toggled = False
+            for item_id in selection:
+                entry = item_to_entry.get(item_id)
+                if not entry or bool(entry.get("protected")):
+                    continue
+                entry["selected"] = not bool(entry.get("selected"))
+                toggled = True
+            if toggled:
+                _render_rows(selected_keys=selected_keys, focus_key=focus_key)
+            else:
+                _set_tree_focus(focus_item)
 
         def _select_old() -> None:
             for entry in entries:
@@ -8636,18 +8705,50 @@ class AToolApp:
                 )
             entries = self._local_occs_cleanup_entries(work_dir)
             if not entries:
-                dialog.destroy()
+                _on_dialog_close()
                 messagebox.showinfo("Clean Local Packages", "No local package bundles remain.")
                 return
             _render_rows()
 
-        tree.bind("<Double-1>", lambda _event: _toggle_selected_row())
-        tree.bind("<space>", lambda _event: (_toggle_selected_row(), "break")[1])
+        def _refresh_entries() -> None:
+            nonlocal entries
+            selected_by_key = {
+                _entry_key(entry): bool(entry.get("selected"))
+                for entry in entries
+            }
+            selected_keys = {
+                _entry_key(item_to_entry[item_id])
+                for item_id in tree.selection()
+                if item_id in item_to_entry
+            }
+            focused_item = tree.focus()
+            focus_key = _entry_key(item_to_entry[focused_item]) if focused_item in item_to_entry else None
+            entries = self._local_occs_cleanup_entries(work_dir)
+            for entry in entries:
+                entry_key = _entry_key(entry)
+                if entry_key in selected_by_key and not bool(entry.get("protected")):
+                    entry["selected"] = selected_by_key[entry_key]
+            if not entries:
+                _on_dialog_close()
+                messagebox.showinfo("Clean Local Packages", "No local package bundles remain.", parent=self.root)
+                return
+            _render_rows(selected_keys=selected_keys, focus_key=focus_key)
+
+        def _on_dialog_close() -> None:
+            self._local_occs_cleanup_window = None
+            self._refresh_local_occs_cleanup_dialog = None
+            dialog.destroy()
+
+        self._refresh_local_occs_cleanup_dialog = _refresh_entries
+        dialog.protocol("WM_DELETE_WINDOW", _on_dialog_close)
+
+        tree.bind("<Double-1>", lambda _event: _toggle_selected_rows())
+        tree.bind("<space>", lambda _event: (_toggle_selected_rows(), "break")[1])
 
         buttons = ttk.Frame(container)
         buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(buttons, text="Toggle", command=_toggle_selected_row).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Close", command=_on_dialog_close).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(buttons, text="Toggle", command=_toggle_selected_rows).grid(row=0, column=1, padx=(0, 8))
         ttk.Button(buttons, text="Select Old", command=_select_old).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(buttons, text="Select All Removable", command=_select_all_removable).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(buttons, text="Clear", command=_clear_selection).grid(row=0, column=4, padx=(0, 8))
