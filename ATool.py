@@ -13388,12 +13388,11 @@ class AToolApp:
 
     @staticmethod
     def _format_occs_config_label(config: dict[str, str]) -> str:
-        parts = [
-            config.get("shortName", ""),
-            config.get("name", ""),
-            config.get("id", ""),
-        ]
-        return " - ".join([part for part in parts if part])
+        short_name = config.get("shortName", "")
+        config_id = config.get("id", "")
+        if short_name and config_id:
+            return f"{short_name} ({config_id})"
+        return short_name or config_id
 
     def _filter_occs_configs_for_display(
         self,
