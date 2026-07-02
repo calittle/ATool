@@ -13868,6 +13868,8 @@ class AToolApp:
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
+        if map_after_generation:
+            dialog.after_idle(_browse_xml_file)
 
     @staticmethod
     def _build_convert_xml_output_path(xml_path: Path) -> Path:
