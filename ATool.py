@@ -9089,13 +9089,16 @@ class AToolApp:
         if self.is_dirty and not self.save_assembly_template():
             return
 
+        source_session = self._get_occs_config_source_session_alias()
         self._run_occs_json_command_async(
             [
                 "list-configs",
+                "--session",
+                source_session,
                 "--timeout",
                 str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
             ],
-            "Loading Comms Config IDs...",
+            f"Loading Comms Config IDs from {source_session}...",
             lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
             on_failure=self._on_occs_config_list_failed,
         )
@@ -10054,6 +10057,8 @@ class AToolApp:
         self._run_occs_json_command_async(
             [
                 "package",
+                "--session",
+                self._get_occs_config_source_session_alias(),
                 "save",
                 self.current_occs_bundle_dir,
                 "--config-id",
@@ -10104,6 +10109,8 @@ class AToolApp:
         self._run_occs_json_command_async(
             [
                 "package",
+                "--session",
+                self._get_occs_config_source_session_alias(),
                 "save",
                 self.current_occs_bundle_dir,
                 "--config-id",
