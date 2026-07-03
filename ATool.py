@@ -95,6 +95,7 @@ class AToolApp:
         self._triggered_document_names: set[str] = set()
         self.documents_panel_width = self._load_saved_documents_panel_width()
         self.document_metadata_collapsed = self._load_document_details_section_collapsed("metadata")
+        self.document_clauses_collapsed = self._load_document_details_section_collapsed("clauses")
         self.document_condition_collapsed = self._load_document_details_section_collapsed("condition")
         self.document_match_details_collapsed = self._load_document_details_section_collapsed("match_details")
         self.fields_window: tk.Toplevel | None = None
@@ -163,9 +164,9 @@ class AToolApp:
         self._restore_window_geometry()
 
         self.status_text = tk.StringVar(value="File: (none) | Package: (none)")
-        self.operation_status_text = tk.StringVar(value="Status: Ready")
+        self.operation_status_text = tk.StringVar(value="")
         self.data_status_text = tk.StringVar(value="Data: (none)")
-        self.mapping_status_text = tk.StringVar(value="Mapping: Idle")
+        self.mapping_status_text = tk.StringVar(value="")
         self.document_count_text = tk.StringVar(value="Documents: 0")
         self.field_count_text = tk.StringVar(value="Fields: 0")
         self.condition_compose_status_var = tk.StringVar(value="")
@@ -1122,8 +1123,9 @@ class AToolApp:
         editor_frame = ttk.Frame(panel)
         editor_frame.grid(row=0, column=0, sticky="nsew")
         editor_frame.columnconfigure(0, weight=1)
-        editor_frame.rowconfigure(4, weight=3)
-        editor_frame.rowconfigure(6, weight=2)
+        editor_frame.rowconfigure(4, weight=2)
+        editor_frame.rowconfigure(6, weight=3)
+        editor_frame.rowconfigure(8, weight=2)
         self.document_details_editor_frame = editor_frame
 
         heading = ttk.Label(editor_frame, text="Document Details", font=("TkDefaultFont", 12, "bold"))
@@ -1171,13 +1173,30 @@ class AToolApp:
         self.document_triggered_value.grid(row=7, column=0, sticky="w", pady=(0, 8))
         self._document_details_wrapped_labels.append(self.document_triggered_value)
 
+        self.document_clauses_toggle_button = ttk.Button(
+            editor_frame,
+            command=self._toggle_document_clauses_collapsed,
+        )
+        self.document_clauses_toggle_button.grid(row=3, column=0, sticky="ew", pady=(0, 2))
+        clauses_frame = ttk.Frame(editor_frame)
+        clauses_frame.grid(row=4, column=0, sticky="nsew", pady=(0, 8))
+        clauses_frame.columnconfigure(0, weight=1)
+        clauses_frame.rowconfigure(0, weight=1)
+        clauses_value = tk.Text(clauses_frame, height=5, wrap="word", undo=False)
+        clauses_value.grid(row=0, column=0, sticky="nsew")
+        clauses_scroll = ttk.Scrollbar(clauses_frame, orient=tk.VERTICAL, command=clauses_value.yview)
+        clauses_scroll.grid(row=0, column=1, sticky="ns")
+        clauses_value.configure(yscrollcommand=clauses_scroll.set, state=tk.DISABLED)
+        self.document_clauses_frame = clauses_frame
+        self.document_clauses_widget = clauses_value
+
         self.document_condition_toggle_button = ttk.Button(
             editor_frame,
             command=self._toggle_document_condition_collapsed,
         )
-        self.document_condition_toggle_button.grid(row=3, column=0, sticky="ew", pady=(0, 2))
+        self.document_condition_toggle_button.grid(row=5, column=0, sticky="ew", pady=(0, 2))
         condition_value = tk.Text(editor_frame, height=10, wrap="word", undo=True)
-        condition_value.grid(row=4, column=0, sticky="nsew", pady=(0, 8))
+        condition_value.grid(row=6, column=0, sticky="nsew", pady=(0, 8))
         condition_value.bind("<KeyRelease>", self._on_document_condition_changed)
         self.document_condition_widget = condition_value
 
@@ -1185,9 +1204,9 @@ class AToolApp:
             editor_frame,
             command=self._toggle_document_match_details_collapsed,
         )
-        self.document_match_details_toggle_button.grid(row=5, column=0, sticky="ew", pady=(0, 2))
+        self.document_match_details_toggle_button.grid(row=7, column=0, sticky="ew", pady=(0, 2))
         match_details_frame = ttk.Frame(editor_frame)
-        match_details_frame.grid(row=6, column=0, sticky="nsew")
+        match_details_frame.grid(row=8, column=0, sticky="nsew")
         match_details_frame.columnconfigure(0, weight=1)
         match_details_frame.rowconfigure(0, weight=1)
         match_details_value = tk.Text(match_details_frame, height=6, wrap="word", undo=False)
@@ -1248,6 +1267,11 @@ class AToolApp:
         self._persist_document_details_section_state()
         self._apply_document_details_section_visibility()
 
+    def _toggle_document_clauses_collapsed(self) -> None:
+        self.document_clauses_collapsed = not self.document_clauses_collapsed
+        self._persist_document_details_section_state()
+        self._apply_document_details_section_visibility()
+
     def _toggle_document_match_details_collapsed(self) -> None:
         self.document_match_details_collapsed = not self.document_match_details_collapsed
         self._persist_document_details_section_state()
@@ -1262,6 +1286,15 @@ class AToolApp:
                 self.document_metadata_frame.grid_remove()
             else:
                 self.document_metadata_frame.grid()
+
+        if hasattr(self, "document_clauses_toggle_button"):
+            prefix = "[+]" if self.document_clauses_collapsed else "[-]"
+            self.document_clauses_toggle_button.config(text=f"{prefix} Clauses")
+        if hasattr(self, "document_clauses_frame"):
+            if self.document_clauses_collapsed:
+                self.document_clauses_frame.grid_remove()
+            else:
+                self.document_clauses_frame.grid()
 
         if hasattr(self, "document_condition_toggle_button"):
             prefix = "[+]" if self.document_condition_collapsed else "[-]"
@@ -1287,23 +1320,13 @@ class AToolApp:
         if editor_frame is None:
             return
 
-        condition_visible = not self.document_condition_collapsed
-        match_details_visible = not self.document_match_details_collapsed
-        if condition_visible and match_details_visible:
-            condition_weight = 3
-            match_details_weight = 2
-        elif condition_visible:
-            condition_weight = 5
-            match_details_weight = 0
-        elif match_details_visible:
-            condition_weight = 0
-            match_details_weight = 5
-        else:
-            condition_weight = 0
-            match_details_weight = 0
+        clauses_weight = 2 if not self.document_clauses_collapsed else 0
+        condition_weight = 3 if not self.document_condition_collapsed else 0
+        match_details_weight = 2 if not self.document_match_details_collapsed else 0
 
-        editor_frame.rowconfigure(4, weight=condition_weight)
-        editor_frame.rowconfigure(6, weight=match_details_weight)
+        editor_frame.rowconfigure(4, weight=clauses_weight)
+        editor_frame.rowconfigure(6, weight=condition_weight)
+        editor_frame.rowconfigure(8, weight=match_details_weight)
 
     def _update_document_triggered_visibility(self) -> None:
         if not hasattr(self, "document_triggered_title") or not hasattr(self, "document_triggered_value"):
@@ -1394,16 +1417,30 @@ class AToolApp:
     def _load_manager_window_visible(self, key: str) -> bool:
         state = self._read_app_state()
         value = state.get(f"{key}_window_visible")
-        default_visible = key != "package_documents"
-        return bool(value) if isinstance(value, bool) else default_visible
+        return bool(value) if isinstance(value, bool) else False
 
     def _set_manager_window_visible(self, key: str, visible: bool) -> None:
         self._update_app_state({f"{key}_window_visible": bool(visible)})
+
+    @staticmethod
+    def _is_window_visible(window: tk.Toplevel | None) -> bool:
+        return window is not None and window.winfo_exists() and window.state() != "withdrawn"
+
+    def _persist_manager_window_visibility(self) -> None:
+        self._update_app_state(
+            {
+                "fields_window_visible": self._is_window_visible(self.fields_window),
+                "condition_library_window_visible": self._is_window_visible(self.condition_library_window),
+                "layouts_window_visible": self._is_window_visible(self.layouts_window),
+                "package_documents_window_visible": self._is_window_visible(self.package_documents_window),
+            }
+        )
 
     def _persist_document_details_section_state(self) -> None:
         self._update_app_state(
             {
                 "document_details_metadata_collapsed": self.document_metadata_collapsed,
+                "document_details_clauses_collapsed": self.document_clauses_collapsed,
                 "document_details_condition_collapsed": self.document_condition_collapsed,
                 "document_details_match_details_collapsed": self.document_match_details_collapsed,
             }
@@ -1952,6 +1989,7 @@ class AToolApp:
         self._render_condition_library_list()
         self._populate_condition_library_form(item)
         self._persist_condition_library()
+        self._refresh_active_document_clauses_panel()
 
     def _save_condition_library_entry(self) -> bool:
         if self._active_condition_library_index is None:
@@ -1972,6 +2010,7 @@ class AToolApp:
         self._sort_condition_library_entries(active_name=item["name"])
         self._render_condition_library_list()
         self._persist_condition_library()
+        self._refresh_active_document_clauses_panel()
         return True
 
     def _condition_library_form_item(self) -> dict[str, str] | None:
@@ -2285,8 +2324,8 @@ class AToolApp:
         self.clause_trigger_skip_button.grid(row=0, column=1, padx=(0, 6))
         self.clause_trigger_apply_exact_button = ttk.Button(
             actions,
-            text="Apply All Exact",
-            command=self._apply_all_exact_clause_trigger_updates,
+            text="Apply All",
+            command=self._apply_all_clause_trigger_updates,
         )
         self.clause_trigger_apply_exact_button.grid(row=0, column=2, padx=(0, 6))
         self.clause_trigger_close_button = ttk.Button(
@@ -2382,10 +2421,10 @@ class AToolApp:
 
         status = str(proposal.get("status", "Pending"))
         current_state = tk.NORMAL if status == "Pending" else tk.DISABLED
-        exact_state = tk.NORMAL if exact_pending > 0 else tk.DISABLED
+        all_state = tk.NORMAL if pending > 0 else tk.DISABLED
         self.clause_trigger_apply_button.configure(state=current_state)
         self.clause_trigger_skip_button.configure(state=current_state)
-        self.clause_trigger_apply_exact_button.configure(state=exact_state)
+        self.clause_trigger_apply_exact_button.configure(state=all_state)
         self.clause_trigger_close_button.configure(text="Close" if pending == 0 else "Cancel")
 
     @staticmethod
@@ -2420,37 +2459,41 @@ class AToolApp:
         self._select_next_pending_clause_trigger_update()
         self._update_clause_trigger_update_display()
 
-    def _apply_all_exact_clause_trigger_updates(self) -> None:
-        exact_indices = [
+    def _apply_all_clause_trigger_updates(self) -> None:
+        pending_indices = [
             index for index, proposal in enumerate(self._clause_trigger_update_proposals)
             if str(proposal.get("status", "Pending")) == "Pending"
-            and str(proposal.get("match_type", "")) == "Exact clause"
         ]
-        if not exact_indices:
-            messagebox.showinfo("Update Document Triggers", "There are no pending exact matches.")
+        if not pending_indices:
+            messagebox.showinfo("Update Document Triggers", "There are no pending trigger updates.")
             return
         if not messagebox.askyesno(
             "Update Document Triggers",
-            f"Apply {len(exact_indices)} exact document trigger update"
-            f"{'s' if len(exact_indices) != 1 else ''}?",
+            f"Apply all {len(pending_indices)} pending document trigger update"
+            f"{'s' if len(pending_indices) != 1 else ''}?",
         ):
             return
         applied = 0
         skipped_stale = 0
-        for index in exact_indices:
+        changed_source: dict[str, object] | None = None
+        for index in pending_indices:
             proposal = self._clause_trigger_update_proposals[index]
-            if self._apply_clause_trigger_update_proposal(proposal, prompt_stale=False):
+            if self._apply_clause_trigger_update_proposal(proposal, prompt_stale=False, refresh_documents=False):
                 proposal["status"] = "Applied"
                 applied += 1
+                source = proposal.get("document")
+                if isinstance(source, dict) and isinstance(source.get("source"), dict):
+                    changed_source = source.get("source")
             else:
                 skipped_stale += 1
+        self._refresh_documents_after_clause_trigger_update(changed_source)
         self._render_clause_trigger_update_rows()
         self._select_next_pending_clause_trigger_update()
         self._update_clause_trigger_update_display()
         if skipped_stale:
             messagebox.showwarning(
                 "Update Document Triggers",
-                f"Applied {applied}. Skipped {skipped_stale} exact match"
+                f"Applied {applied}. Skipped {skipped_stale} trigger update"
                 f"{'es' if skipped_stale != 1 else ''} because the current trigger no longer matched the preview.",
             )
 
@@ -2470,6 +2513,7 @@ class AToolApp:
         proposal: dict[str, object],
         *,
         prompt_stale: bool,
+        refresh_documents: bool = True,
     ) -> bool:
         document = proposal.get("document")
         if not isinstance(document, dict):
@@ -2497,7 +2541,8 @@ class AToolApp:
 
         self._set_dirty(True)
         source = document.get("source")
-        self._refresh_documents_after_clause_trigger_update(source if isinstance(source, dict) else None)
+        if refresh_documents:
+            self._refresh_documents_after_clause_trigger_update(source if isinstance(source, dict) else None)
         return True
 
     def _refresh_documents_after_clause_trigger_update(self, source_ref: dict[str, object] | None) -> None:
@@ -3179,6 +3224,7 @@ class AToolApp:
         self._render_condition_library_list()
         self._populate_condition_library_form(None)
         self._persist_condition_library()
+        self._refresh_active_document_clauses_panel()
 
     def _apply_condition_library_entry(self) -> None:
         if self._active_condition_library_index is None:
@@ -3322,6 +3368,7 @@ class AToolApp:
             self._apply_document_form_change(condition=normalized)
             self._updating_document_form = True
             self._set_text_widget_value(self.document_condition_widget, normalized)
+            self._set_document_clauses(normalized)
             self._updating_document_form = False
         else:
             self._touch_selected_document_updated()
@@ -7516,6 +7563,7 @@ class AToolApp:
         self.document_descr_edit_text.set(descr)
         condition = str(document.get("condition", "")).strip()
         self._set_text_widget_value(self.document_condition_widget, condition)
+        self._set_document_clauses(condition)
         self._update_document_triggered_visibility()
         self._apply_document_details_section_visibility()
         self._updating_document_form = False
@@ -7527,12 +7575,50 @@ class AToolApp:
         self.document_triggered_text.set("-")
         self.edit_document_name_var.set("")
         self._set_text_widget_value(self.document_condition_widget, "")
+        self._clear_document_clauses()
         self._clear_document_match_details()
         self.document_descr_edit_text.set("")
         self.document_updated_text.set("-")
         self._update_document_triggered_visibility()
         self._apply_document_details_section_visibility()
         self._updating_document_form = False
+
+    def _format_document_clauses(self, condition: str) -> str:
+        text = str(condition or "").strip()
+        if not text:
+            return "(no condition)"
+        try:
+            compose_text, exact, unmatched_count = self._compose_expression_from_raw_condition(text)
+        except ValueError as error:
+            return f"(could not parse clauses)\n{error}"
+        if not compose_text:
+            return "(no matching clauses)"
+        lines = [compose_text]
+        if not exact:
+            suffix = "s" if unmatched_count != 1 else ""
+            lines.append("")
+            lines.append(f"{unmatched_count} raw fragment{suffix} did not match a saved clause.")
+        return "\n".join(lines)
+
+    def _set_document_clauses(self, condition: str) -> None:
+        widget = getattr(self, "document_clauses_widget", None)
+        if isinstance(widget, tk.Text):
+            self._set_readonly_text_widget_value(widget, self._format_document_clauses(condition))
+
+    def _refresh_active_document_clauses_panel(self) -> None:
+        if not self._active_document_node_id:
+            self._clear_document_clauses()
+            return
+        details = self._document_node_details.get(self._active_document_node_id)
+        if not isinstance(details, dict):
+            self._clear_document_clauses()
+            return
+        self._set_document_clauses(str(details.get("condition", "")))
+
+    def _clear_document_clauses(self) -> None:
+        widget = getattr(self, "document_clauses_widget", None)
+        if isinstance(widget, tk.Text):
+            self._set_readonly_text_widget_value(widget, "")
 
     def _format_document_match_details(self, document: dict[str, object]) -> str:
         if self.current_data_payload is None:
@@ -7702,6 +7788,8 @@ class AToolApp:
         details["updated"] = now_text
         self._sync_document_to_payload(document)
         self._set_dirty(True)
+        if condition_changed:
+            self._set_document_clauses(str(document.get("condition", "")))
         if condition_changed and self.current_data_payload is not None:
             self._refresh_document_condition_mapping(document)
             details["triggered"] = bool(document.get("triggered"))
@@ -8404,7 +8492,7 @@ class AToolApp:
         self._render_documents_tree()
         self._render_fields_tree()
         self.data_status_text.set("Data: (none)")
-        self.mapping_status_text.set("Mapping: Idle")
+        self.mapping_status_text.set("")
         self.document_count_text.set("Documents: 0")
         self.field_count_text.set("Fields: 0")
         self.root.title("ATool")
@@ -10890,6 +10978,7 @@ class AToolApp:
                 self.package_documents_window.deiconify()
                 self.package_documents_window.lift()
                 self._clear_package_documents_manager()
+                self._set_manager_window_visible("package_documents", True)
                 return
             messagebox.showinfo("Package Documents", "Open an assembly template first.")
             return
@@ -10900,6 +10989,7 @@ class AToolApp:
                 self.package_documents_window.deiconify()
                 self.package_documents_window.lift()
                 self._clear_package_documents_manager()
+                self._set_manager_window_visible("package_documents", True)
                 return
             messagebox.showinfo(
                 "Package Documents",
@@ -14056,7 +14146,7 @@ class AToolApp:
         finally:
             self._mapping_dialog_in_progress = False
         if not data_file_path:
-            self.mapping_status_text.set("Mapping: Idle")
+            self.mapping_status_text.set("")
             self._update_mapping_controls()
             return
 
@@ -14082,7 +14172,7 @@ class AToolApp:
         self._show_mapped_fields_only = False
         self._triggered_document_names = set()
         self.data_status_text.set("Data: (none)")
-        self.mapping_status_text.set("Mapping: Idle")
+        self.mapping_status_text.set("")
         for field in self._loaded_fields:
             field.pop("mapped_values", None)
         for document in self._loaded_documents:
@@ -14345,7 +14435,7 @@ class AToolApp:
         file_name = os.path.basename(loaded_path)
         self.status_text.set(self._default_status_text())
         self.data_status_text.set("Data: (none)")
-        self.mapping_status_text.set("Mapping: Idle")
+        self.mapping_status_text.set("")
         self.document_count_text.set(f"Documents: {len(documents)}")
         self.field_count_text.set(f"Fields: {len(fields)}")
         self._update_mapping_controls()
@@ -14500,7 +14590,7 @@ class AToolApp:
         if mapping_job_id != self._mapping_job_id:
             return
         self._mapping_in_progress = False
-        self.mapping_status_text.set("Mapping: Idle")
+        self.mapping_status_text.set("")
         self.current_data_payload = data_payload
         self._show_triggered_documents_only = True
 
@@ -14608,7 +14698,7 @@ class AToolApp:
         if mapping_job_id != self._mapping_job_id:
             return
         self._mapping_in_progress = False
-        self.mapping_status_text.set("Mapping: Idle")
+        self.mapping_status_text.set("")
         data_file_name = os.path.basename(self.current_data_file_path or "")
         self.data_status_text.set(f"Data: {data_file_name}" if data_file_name else "Data: (none)")
         self._update_mapping_controls()
@@ -15134,7 +15224,7 @@ class AToolApp:
         self._status_note_job = None
         self.status_text.set(self._default_status_text())
         if self._occs_status_started_at is None:
-            self.operation_status_text.set("Status: Ready")
+            self.operation_status_text.set("")
 
     def _format_occs_timed_status(self) -> str:
         started_at = self._occs_status_started_at
@@ -15168,7 +15258,7 @@ class AToolApp:
             self._occs_status_timer_job = None
         self._occs_status_started_at = None
         self._occs_status_message = ""
-        self.operation_status_text.set("Status: Ready")
+        self.operation_status_text.set("")
 
     def _show_temporary_status(self, message: str, duration_ms: int = 5000) -> None:
         if self._status_note_job:
@@ -15197,6 +15287,7 @@ class AToolApp:
         self._persist_clause_manager_split()
         self._persist_condition_library_window_geometry()
         self._persist_package_documents_window_geometry()
+        self._persist_manager_window_visibility()
         if self.fields_window is not None and self.fields_window.winfo_exists():
             self.fields_window.destroy()
         if self.layouts_window is not None and self.layouts_window.winfo_exists():
@@ -16653,7 +16744,13 @@ class AToolApp:
         base_name, brackets = self._split_path_segment(segment)
         current_nodes: list[object] = [node]
 
-        if base_name and base_name != "*":
+        if base_name == "length()":
+            next_nodes: list[object] = []
+            for current in current_nodes:
+                if isinstance(current, (str, list)):
+                    next_nodes.append(len(current))
+            current_nodes = next_nodes
+        elif base_name and base_name != "*":
             next_nodes: list[object] = []
             for current in current_nodes:
                 if isinstance(current, dict) and base_name in current:

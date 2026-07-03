@@ -297,8 +297,8 @@ Cycle detection is enabled (for example `A -> B -> A` is rejected).
 - ATool saves the clause and scans document triggers for the old clause expansion.
 - Matching documents are shown in a review queue with current/proposed trigger text.
 - Use `Apply This` or `Skip` to review iteratively.
-- Use `Apply All Exact` for whole-trigger matches that use only the changed clause.
-- Embedded and dependent-clause matches remain in the queue for explicit review.
+- Use `Apply All` to apply every pending exact, embedded, and dependent-clause proposal.
+- If a document condition changed after the preview was built, bulk apply skips it for review.
 
 ## Best Practices for Clause Management
 
