@@ -9367,16 +9367,6 @@ class AToolApp:
                         messagebox.showwarning("Publish Package to Comms", lock_warning)
                     self.save_occs_package()
                     return
-                if not messagebox.askyesno(
-                    "Publish Package to Comms",
-                    "You are editing this package version locally.\n\n"
-                    "Update the shared package folder before publishing to Comms?",
-                ):
-                    messagebox.showinfo(
-                        "Publish Package to Comms",
-                        "Publish canceled. Update the shared package folder first so Comms receives the package you are editing.",
-                    )
-                    return
                 if not self._update_shared_from_current(release_lock_after=False, show_message=False):
                     return
                 self.save_occs_package()
