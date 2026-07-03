@@ -585,12 +585,6 @@ class AToolApp:
         mapping_label = ttk.Label(status_bar, textvariable=self.mapping_status_text, anchor=tk.CENTER)
         mapping_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
 
-        docs_label = ttk.Label(status_bar, textvariable=self.document_count_text, anchor=tk.CENTER)
-        docs_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
-
-        fields_label = ttk.Label(status_bar, textvariable=self.field_count_text, anchor=tk.CENTER)
-        fields_label.grid(row=0, column=5, sticky="e", padx=(12, 0))
-
     def _create_documents_panel(self, parent: ttk.Frame) -> tuple[ttk.Frame, ttk.Treeview]:
         panel = ttk.Frame(parent, padding=(0, 0, 12, 0))
         panel.columnconfigure(0, weight=1)
@@ -1470,6 +1464,15 @@ class AToolApp:
         self.field_details_panel = self._create_field_details_panel(fields_vertical_pane)
         fields_vertical_pane.add(self.fields_panel, weight=3)
         fields_vertical_pane.add(self.field_details_panel, weight=2)
+
+        fields_status_bar = ttk.Frame(container, relief=tk.SUNKEN, borderwidth=1, padding=(8, 4))
+        fields_status_bar.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        fields_status_bar.columnconfigure(0, weight=1)
+        ttk.Label(fields_status_bar, textvariable=self.field_count_text, anchor=tk.W).grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
 
         self._update_field_mapping_filter_button()
         self._restore_fields_window_geometry()
