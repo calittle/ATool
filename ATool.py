@@ -430,10 +430,26 @@ class AToolApp:
         )
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
-        window_menu.add_command(label="Show Field Manager", command=self._show_fields_window)
-        window_menu.add_command(label="Show Clause Manager", command=self._show_condition_library_window)
-        window_menu.add_command(label="Show Layouts", command=self._show_layouts_window)
-        window_menu.add_command(label="Show Package Documents Manager", command=self.show_package_documents_manager)
+        window_menu.add_command(
+            label="Show Documents (Main Window)",
+            command=self._show_main_window,
+        )
+        window_menu.add_command(
+            label="Show Field Manager",
+            command=self._show_fields_window,
+        )
+        window_menu.add_command(
+            label="Show Clause Manager",
+            command=self._show_condition_library_window,
+        )
+        window_menu.add_command(
+            label="Show Layouts",
+            command=self._show_layouts_window,
+        )
+        window_menu.add_command(
+            label="Show Package Documents",
+            command=self.show_package_documents_manager,
+        )
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
@@ -1500,6 +1516,16 @@ class AToolApp:
         self.fields_window.lift()
         self.fields_window.focus_force()
         self._set_manager_window_visible("fields", True)
+
+    def _show_main_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        if hasattr(self, "documents_tree"):
+            try:
+                self.documents_tree.focus_set()
+            except tk.TclError:
+                pass
 
     def _hide_fields_window(self) -> None:
         if self.fields_window is None or not self.fields_window.winfo_exists():
