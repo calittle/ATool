@@ -1698,7 +1698,7 @@ class AToolApp:
         container = ttk.Frame(self.condition_library_window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(2, weight=1)
+        container.rowconfigure(1, weight=1)
 
         heading = ttk.Label(container, text="Clause Manager", font=("TkDefaultFont", 12, "bold"))
         heading.grid(row=0, column=0, sticky="w", pady=(0, 8))
@@ -7937,6 +7937,9 @@ class AToolApp:
             path = empty_match.group(1).strip()
             expect_empty = empty_match.group(2).lower() == "true"
             normalized_path = self._normalize_condition_path(path)
+            parse_issue = self._condition_path_comms_filter_literal_parse_issue(normalized_path)
+            if parse_issue:
+                return False, parse_issue
             parent_path = self._get_empty_check_parent_path(normalized_path)
             parent_values = self._extract_values_by_path(data_payload, parent_path)
             if len(parent_values) == 0:
@@ -16180,6 +16183,11 @@ class AToolApp:
         if empty_match:
             path = empty_match.group(1).strip()
             expect_empty = empty_match.group(2).lower() == "true"
+            parse_issue = self._condition_path_comms_filter_literal_parse_issue(path)
+            if parse_issue:
+                if warnings is not None:
+                    self._append_condition_warning(warnings, parse_issue)
+                return False
             return self._evaluate_empty_check(
                 data_payload,
                 path,
@@ -16222,6 +16230,58 @@ class AToolApp:
 
         values = self._evaluate_condition_operand(data_payload, expr)
         return len(values) > 0
+
+    @classmethod
+    def _condition_path_comms_filter_literal_parse_issue(cls, path_expression: str) -> str:
+        path = str(path_expression or "")
+        if "[?(" not in path:
+            return ""
+        for filter_body in cls._iter_condition_filter_bodies(path):
+            match = re.search(r"'\(([A-Za-z_$][\w$]*)\)'", filter_body)
+            if match:
+                literal = match.group(0)
+                return (
+                    f"Comms JSONPath may parse {literal} as a function call inside a single-quoted filter literal; "
+                    "use double quotes for that literal."
+                )
+        return ""
+
+    @staticmethod
+    def _iter_condition_filter_bodies(path_expression: str):
+        text = str(path_expression or "")
+        index = 0
+        while True:
+            start = text.find("[?(", index)
+            if start < 0:
+                return
+            body_start = start + 3
+            depth = 1
+            quote = ""
+            escaped = False
+            pos = body_start
+            while pos < len(text):
+                char = text[pos]
+                if quote:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == quote:
+                        quote = ""
+                else:
+                    if char in {"'", '"'}:
+                        quote = char
+                    elif char == "(":
+                        depth += 1
+                    elif char == ")":
+                        depth -= 1
+                        if depth == 0:
+                            yield text[body_start:pos]
+                            index = pos + 1
+                            break
+                pos += 1
+            else:
+                return
 
     def _evaluate_empty_check(
         self,
