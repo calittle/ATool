@@ -13623,6 +13623,14 @@ class AToolApp:
         if config_text:
             lines.append(f"Config ID: {config_text}")
         lines.append(f"Changed: {', '.join(changes) if changes else 'none'}")
+        raw_upload_plan = result.get("uploadPlan")
+        upload_plan = [
+            str(name)
+            for name, planned in (raw_upload_plan.items() if isinstance(raw_upload_plan, dict) else [])
+            if planned
+        ]
+        if upload_plan and upload_plan != changes:
+            lines.append(f"Will upload: {', '.join(upload_plan)}")
         return "\n".join(lines)
 
     def _default_preview_timeout_seconds(self, render_types: list[str]) -> int:
