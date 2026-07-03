@@ -5650,8 +5650,8 @@ class AToolApp:
             path = str(source_ref.get("Path", "")).strip()
             if not path:
                 return "(iteration has no path)"
-            items = self._extract_values_by_path(self.current_data_payload, path)
-            return f"{len(items)} item(s): {self._format_mapped_nodeset_preview(items)}"
+            items = self._extract_iteration_items(source_ref, self.current_data_payload)
+            return f"{len(items)} row(s): {self._format_mapped_nodeset_preview(items)}"
 
         if node_kind == "field":
             path = str(source_ref.get("Path", "")).strip()
@@ -5668,7 +5668,7 @@ class AToolApp:
             iteration_path = str(iteration_ref.get("Path", "")).strip()
             if not iteration_path:
                 return "(iteration has no path)"
-            iteration_items = self._extract_values_by_path(self.current_data_payload, iteration_path)
+            iteration_items = self._extract_iteration_items(iteration_ref, self.current_data_payload)
             if not iteration_items:
                 return "(no iterator rows)"
             row_lines: list[str] = []
@@ -5723,7 +5723,7 @@ class AToolApp:
             return False
         node_kind = str(details.get("node_kind", ""))
         if node_kind == "iteration":
-            return bool(self._extract_values_by_path(self.current_data_payload, path))
+            return bool(self._extract_iteration_items(source_ref, self.current_data_payload))
         if node_kind == "field":
             iteration_details = self._find_iteration_details_for_layout_details(details)
             if not iteration_details:
@@ -5734,11 +5734,24 @@ class AToolApp:
             iteration_path = str(iteration_ref.get("Path", "")).strip()
             if not iteration_path:
                 return False
-            iteration_items = self._extract_values_by_path(self.current_data_payload, iteration_path)
+            iteration_items = self._extract_iteration_items(iteration_ref, self.current_data_payload)
             if not iteration_items:
                 return False
             return all(self._extract_values_by_path(item, path) for item in iteration_items)
         return False
+
+    def _extract_iteration_items(self, iteration_ref: dict[str, object], payload: object) -> list[object]:
+        path = str(iteration_ref.get("Path", "")).strip()
+        if not path:
+            return []
+        values = self._extract_values_by_path(payload, path)
+        items: list[object] = []
+        for value in values:
+            if isinstance(value, list):
+                items.extend(value)
+            else:
+                items.append(value)
+        return items
 
     def _layout_node_chain_triggered(self, details: dict[str, object]) -> bool:
         if self._active_layout_node_id is None:
