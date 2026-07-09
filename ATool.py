@@ -7951,25 +7951,37 @@ class AToolApp:
             expect_empty = empty_match.group(2).lower() == "true"
             normalized_path = self._normalize_condition_path(path)
             parse_issue = self._condition_path_comms_filter_literal_parse_issue(normalized_path)
-            if parse_issue:
-                return False, parse_issue
             parent_path = self._get_empty_check_parent_path(normalized_path)
             parent_values = self._extract_values_by_path(data_payload, parent_path)
             if len(parent_values) == 0:
                 if comms_compatible and expect_empty and self._path_has_filter(normalized_path):
-                    return (
-                        True,
+                    detail = (
                         "filtered parent path missing: "
-                        f"{parent_path}; Comms-compatible check treats this as empty",
+                        f"{parent_path}; Comms-compatible check treats this as not empty"
+                    )
+                    if parse_issue:
+                        detail = f"{detail}; warning: {parse_issue}"
+                    return (
+                        False,
+                        detail,
                     )
                 passed = expect_empty
-                return passed, f"parent path missing: {parent_path}"
+                detail = f"parent path missing: {parent_path}"
+                if parse_issue:
+                    detail = f"{detail}; warning: {parse_issue}"
+                return passed, detail
             full_values = self._extract_values_by_path(data_payload, normalized_path)
             is_empty = len(full_values) == 0
             if comms_compatible and expect_empty and is_empty and not self._path_has_filter(normalized_path):
-                return False, f"missing leaf path: {normalized_path}"
+                detail = f"missing leaf path: {normalized_path}"
+                if parse_issue:
+                    detail = f"{detail}; warning: {parse_issue}"
+                return False, detail
             passed = is_empty if expect_empty else not is_empty
-            return passed, f"values={self._format_mapped_nodeset_preview(full_values)}"
+            detail = f"values={self._format_mapped_nodeset_preview(full_values)}"
+            if parse_issue:
+                detail = f"{detail}; warning: {parse_issue}"
+            return passed, detail
 
         size_match = self._find_top_level_word_operator(expr, "size")
         if size_match is not None:
@@ -16195,10 +16207,8 @@ class AToolApp:
             path = empty_match.group(1).strip()
             expect_empty = empty_match.group(2).lower() == "true"
             parse_issue = self._condition_path_comms_filter_literal_parse_issue(path)
-            if parse_issue:
-                if warnings is not None:
-                    self._append_condition_warning(warnings, parse_issue)
-                return False
+            if parse_issue and warnings is not None:
+                self._append_condition_warning(warnings, parse_issue)
             return self._evaluate_empty_check(
                 data_payload,
                 path,
@@ -16308,7 +16318,7 @@ class AToolApp:
         parent_values = self._extract_values_by_path(data_payload, parent_path)
         if len(parent_values) == 0:
             if comms_compatible and expect_empty and self._path_has_filter(normalized_full_path):
-                return True
+                return False
             return expect_empty
 
         full_values = self._extract_values_by_path(data_payload, normalized_full_path)
