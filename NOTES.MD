@@ -182,6 +182,8 @@ Missing scalar leaf checks now match OCCS more closely: a missing leaf path such
 
 Comms-compatible `!=` comparisons now treat a missing path as not equal to a present literal value. For example, `@.billPrint.billDetails.cmElements.billTag != 'Adjusted Bill'` now passes when `billTag` is absent, matching Comms document-trigger behavior.
 
+Single-quoted filter literals that look like function calls, such as `@.cmElements.unitIndicator == '(min)'`, now remain visible as Comms-compatibility warnings but no longer force the local condition check to fail when ATool can evaluate the path.
+
 ## Map Button Feedback
 
 Clicking `Map` now immediately changes the button to `Opening...` and disables it while the data-file picker is being opened. This gives visible feedback during the short delay before the operating-system file dialog appears.
