@@ -34,6 +34,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Publishing a shared package to Comms now publishes directly from the shared `published/current` folder instead of creating a temporary local publish copy first.
 - The Comms publish dialog labels the package source as `Shared Folder` when it is publishing from the shared package folder.
 - The Comms publish Config ID picker now hides closed Config IDs before applying the optional Config ID filter.
+- Publishing to Comms now aborts when open Config IDs cannot be loaded or none match the configured filter, and the Config ID picker only accepts IDs returned by Comms.
 - Publishing to Comms from an editable shared package no longer leaves the open package stranded in publish mode; if that state already exists, Save now moves the in-memory changes into a local edit copy and locks it for editing.
 - Publishing to Comms now works after updating the shared package while keeping the edit lock; ATool refreshes the lock baseline and skips the redundant shared-update prompt when local and shared package contents already match.
 - Shared package edit locks now refresh their baseline hashes when the lock owner updates or publishes the shared package, preventing stale owned locks from blocking later saves.

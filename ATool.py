@@ -10103,18 +10103,27 @@ class AToolApp:
             self.save_occs_package()
 
     def _on_occs_config_list_failed(self, error: Exception) -> None:
-        if not messagebox.askyesno(
+        messagebox.showerror(
             "Publish Package to Comms",
             "Could not load open Config IDs from Comms.\n\n"
             f"Details: {error}\n\n"
-            "Continue with manual Config ID entry?",
-        ):
-            return
-        self._open_occs_save_dialog([])
+            "Publishing was canceled because a valid open Config ID could not be confirmed.",
+        )
+        self._show_temporary_status("Comms publish canceled: Config IDs unavailable", duration_ms=5000)
 
     def _open_occs_save_dialog(self, configs: list[dict[str, str]]) -> None:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
             messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
+            return
+
+        configs = self._filter_occs_configs_for_display(configs, parent=self.root)
+        if not configs:
+            messagebox.showerror(
+                "Publish Package to Comms",
+                "No valid open Config IDs are available from Comms.\n\n"
+                "Publishing was canceled. Check the configured Config ID Filter and try again.",
+            )
+            self._show_temporary_status("Comms publish canceled: no valid open Config IDs", duration_ms=5000)
             return
 
         dialog = self._create_toplevel(self.root)
@@ -10145,21 +10154,23 @@ class AToolApp:
             justify=tk.LEFT,
         ).grid(row=1, column=1, sticky="w", pady=(8, 0))
 
-        configs = self._filter_occs_configs_for_display(configs, parent=dialog)
         labels = [self._format_occs_config_label(config) for config in configs]
         config_by_label = {
             label: config
             for label, config in zip(labels, configs)
             if label
         }
-        config_var = tk.StringVar(value=self._initial_occs_config_selection(labels, configs))
+        initial_selection = self._initial_occs_config_selection(labels, configs)
+        if initial_selection not in config_by_label:
+            initial_selection = labels[0]
+        config_var = tk.StringVar(value=initial_selection)
 
         ttk.Label(container, text="Config ID:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_combo = ttk.Combobox(
             container,
             textvariable=config_var,
             values=labels,
-            state="normal",
+            state="readonly",
             width=54,
         )
         config_combo.grid(row=2, column=1, sticky="ew", pady=(8, 0))
