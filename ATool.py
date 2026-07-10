@@ -15487,16 +15487,19 @@ class AToolApp:
 
     def _insert_field_leaf(self, parent: str, field: dict[str, object]) -> None:
         mandatory = bool(field["mandatory"])
+        mapped_values = field.get("mapped_values")
         if self.current_data_payload is not None:
-            mapped_values = field.get("mapped_values")
             tag = "mapped_field" if isinstance(mapped_values, list) and len(mapped_values) > 0 else "unmapped_field"
         else:
             tag = "mandatory_true" if mandatory else "mandatory_false"
+        mapped_value_marker = ""
+        if isinstance(mapped_values, list) and len(mapped_values) > 1:
+            mapped_value_marker = "*" * len(mapped_values)
         suffix = " [mandatory]" if mandatory else ""
         field_node_id = self.fields_tree.insert(
             parent,
             "end",
-            text=f'{field["name"]}{suffix}',
+            text=f'{field["name"]}{mapped_value_marker}{suffix}',
             tags=(tag,),
         )
         self._field_node_details[field_node_id] = field
