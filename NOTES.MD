@@ -55,6 +55,9 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 
 - Cmd/Ctrl+F now focuses the search field in the main Documents panel, Field Manager, and Clause Manager.
 - Field Manager names now append one asterisk per mapped value when a field maps multiple values, such as `DC41**` for two values.
+- Field Manager now shows a Remove Field button only when a field is selected, confirms removal, and removes the field from the assembly template.
+- Adding a field now clears the Field Manager search and mapped-only filters, selects the new field, and moves keyboard focus to it.
+- Field Manager hides Collapse All and Expand All outside Path view.
 - The Documents panel now has a `+Document` button for adding documents directly.
 - The Documents panel now has a `-Document` button that confirms before removing the selected document and its child documents from the assembly template.
 - Document movement supports multi-select in flat view.

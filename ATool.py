@@ -979,11 +979,11 @@ class AToolApp:
         controls = ttk.Frame(header)
         controls.grid(row=0, column=1, sticky="e")
 
-        collapse_button = ttk.Button(controls, text="Collapse All", command=self._collapse_all_fields)
-        collapse_button.grid(row=0, column=0, padx=(0, 6))
+        self.collapse_fields_button = ttk.Button(controls, text="Collapse All", command=self._collapse_all_fields)
+        self.collapse_fields_button.grid(row=0, column=0, padx=(0, 6))
 
-        expand_button = ttk.Button(controls, text="Expand All", command=self._expand_all_fields)
-        expand_button.grid(row=0, column=1, padx=(0, 6))
+        self.expand_fields_button = ttk.Button(controls, text="Expand All", command=self._expand_all_fields)
+        self.expand_fields_button.grid(row=0, column=1, padx=(0, 6))
 
         self.view_toggle_button = ttk.Button(
             controls,
@@ -1009,6 +1009,15 @@ class AToolApp:
             command=self.add_field,
         )
         self.add_field_button.grid(row=0, column=4, padx=(6, 0))
+
+        self.remove_field_button = ttk.Button(
+            controls,
+            text="Remove Field",
+            command=self.remove_selected_field,
+        )
+        self.remove_field_button.grid(row=0, column=5, padx=(6, 0))
+        self.remove_field_button.grid_remove()
+        self._attach_tooltip(self.remove_field_button, "Remove the selected field from the assembly template.")
 
         filter_row = ttk.Frame(panel)
         filter_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -1477,6 +1486,7 @@ class AToolApp:
 
         self.fields_panel, self.fields_tree = self._create_tree_panel(fields_vertical_pane, "Field Manager")
         self.fields_tree.bind("<<TreeviewSelect>>", self._on_field_tree_select)
+        self._update_view_toggle_label()
         self.field_details_panel = self._create_field_details_panel(fields_vertical_pane)
         fields_vertical_pane.add(self.fields_panel, weight=3)
         fields_vertical_pane.add(self.field_details_panel, weight=2)
@@ -4586,6 +4596,15 @@ class AToolApp:
         self.field_mapping_filter_button.config(text=label, state=tk.NORMAL)
         self.field_mapping_filter_button.grid()
 
+    def _update_field_context_buttons(self) -> None:
+        if not hasattr(self, "remove_field_button"):
+            return
+        selected_field = self._field_node_details.get(self._active_field_node_id or "")
+        if selected_field is None:
+            self.remove_field_button.grid_remove()
+            return
+        self.remove_field_button.grid()
+
     def _update_document_context_buttons(self) -> None:
         selected_doc = self._get_selected_document_ref()
         document_state = tk.NORMAL if self.current_payload is not None else tk.DISABLED
@@ -7535,15 +7554,18 @@ class AToolApp:
         if not selected:
             self._active_field_node_id = None
             self._clear_field_details()
+            self._update_field_context_buttons()
             return
         node_id = selected[0]
         details = self._field_node_details.get(node_id)
         if not details:
             self._active_field_node_id = None
             self._clear_field_details()
+            self._update_field_context_buttons()
             return
         self._active_field_node_id = node_id
         self._set_field_details(details)
+        self._update_field_context_buttons()
 
     def _set_field_details(self, field: dict[str, object]) -> None:
         self._updating_field_form = True
@@ -15445,7 +15467,9 @@ class AToolApp:
     def _populate_fields_tree(self, fields: list[dict[str, object]]) -> None:
         self.fields_tree.delete(*self.fields_tree.get_children())
         self._field_node_details = {}
+        self._active_field_node_id = None
         self._clear_field_details()
+        self._update_field_context_buttons()
         if not fields:
             empty_message = "No fields found"
             if self.fields_filter_var.get().strip():
@@ -15561,13 +15585,63 @@ class AToolApp:
         self._loaded_fields.append(new_field)
         self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
         self._set_dirty(True)
+        self._show_mapped_fields_only = False
+        if self.fields_filter_var.get():
+            self.fields_filter_var.set("")
+        self._update_field_mapping_filter_button()
         self._render_fields_tree(selected_field=new_field)
+        self.fields_tree.focus_set()
+
+    def remove_selected_field(self) -> None:
+        field = self._field_node_details.get(self._active_field_node_id or "")
+        if field is None or not isinstance(self.current_payload, dict):
+            return
+        source_fields = self.current_payload.get("Fields")
+        source_field = field.get("source")
+        if not isinstance(source_fields, list) or not isinstance(source_field, dict):
+            return
+
+        field_name = str(field.get("name", "")).strip() or "(unnamed field)"
+        if not messagebox.askyesno(
+            "Remove Field",
+            f"Remove field '{field_name}' from the assembly template?\n\n"
+            "This removes the field from the AT.",
+            parent=self.fields_window,
+        ):
+            return
+
+        source_index = next(
+            (index for index, candidate in enumerate(source_fields) if candidate is source_field),
+            -1,
+        )
+        if source_index < 0:
+            return
+        source_fields.pop(source_index)
+
+        field_index = self._loaded_fields.index(field) if field in self._loaded_fields else -1
+        if field_index >= 0:
+            self._loaded_fields.pop(field_index)
+        next_field = None
+        if self._loaded_fields and field_index >= 0:
+            next_field = self._loaded_fields[min(field_index, len(self._loaded_fields) - 1)]
+
+        self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
+        self._set_dirty(True)
+        self._render_fields_tree(selected_field=next_field)
 
     def _update_view_toggle_label(self) -> None:
         if not hasattr(self, "view_toggle_button"):
             return
         next_mode_label = "Name" if self.field_view_mode == "path" else "Path"
         self.view_toggle_button.config(text=f"View: {next_mode_label}")
+        for button_name in ("collapse_fields_button", "expand_fields_button"):
+            button = getattr(self, button_name, None)
+            if button is None:
+                continue
+            if self.field_view_mode == "path":
+                button.grid()
+            else:
+                button.grid_remove()
 
     def _expand_all_fields(self) -> None:
         self._set_all_tree_nodes_open(True)
@@ -16992,6 +17066,7 @@ class AToolApp:
                 self.fields_tree.see(node_id)
                 self._active_field_node_id = node_id
                 self._set_field_details(field)
+                self._update_field_context_buttons()
                 return
 
     def _normalize_true_path(self, path: str) -> str:
@@ -17267,7 +17342,9 @@ class AToolApp:
     def _set_empty_fields_tree(self, message: str) -> None:
         self.fields_tree.delete(*self.fields_tree.get_children())
         self._field_node_details = {}
+        self._active_field_node_id = None
         self._clear_field_details()
+        self._update_field_context_buttons()
         self.fields_tree.insert("", "end", text=message)
 
     @staticmethod
