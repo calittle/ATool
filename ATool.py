@@ -9797,13 +9797,21 @@ class AToolApp:
             return False
 
         lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir))
-        owner = self._current_shared_user_identity()
-        if not lock_payload or self._is_shared_lock_owner(lock_payload, owner):
+        if not lock_payload:
             return True
+        owner = self._current_shared_user_identity()
+        if self._is_shared_lock_owner(lock_payload, owner):
+            return messagebox.askyesno(
+                "Get Package from Comms",
+                "You currently hold the edit lock for this shared package version.\n\n"
+                f"{self._format_shared_lock(lock_payload)}\n\n"
+                "Updating the shared package from Comms can replace the shared copy while your edit lock is active. "
+                "Do you want to continue?",
+            )
 
         if messagebox.askyesno(
             "Get Package from Comms",
-            "Cannot update the shared package folder because this package version is locked for edit.\n\n"
+            "Cannot update the shared package folder because this package version is currently locked for edit.\n\n"
             f"{self._format_shared_lock(lock_payload)}\n\n"
             "Open the downloaded bundle as a local package instead?",
         ):
@@ -13284,10 +13292,10 @@ class AToolApp:
             return True
         messagebox.showerror(
             "Get Package from Comms",
-            "Cannot update the shared package folder because this package version is locked for edit.\n\n"
+            "Cannot update the shared package folder because this package version is currently locked for edit.\n\n"
             f"{self._format_shared_lock(lock_payload)}\n\n"
-            "Use Get to Local to download a testing copy, or manually unlock the shared package after confirming "
-            "the lock owner is not editing.",
+            "Release the shared package lock before retrieving it to the shared folder. "
+            "Use Get to Local to download a testing copy instead.",
         )
         return False
 
