@@ -783,13 +783,13 @@ class AToolApp:
         self.move_layout_up_button = ttk.Button(
             controls,
             text="Up",
-            command=lambda: self.move_selected_layout(-1),
+            command=lambda: self.move_selected_layout_item(-1),
         )
         self.move_layout_up_button.grid(row=0, column=2, padx=(0, 2))
         self.move_layout_down_button = ttk.Button(
             controls,
             text="Down",
-            command=lambda: self.move_selected_layout(1),
+            command=lambda: self.move_selected_layout_item(1),
         )
         self.move_layout_down_button.grid(row=0, column=3, padx=(0, 2))
         self.add_iteration_button = ttk.Button(
@@ -4632,7 +4632,7 @@ class AToolApp:
             details = self._layout_node_details.get(self._active_layout_node_id, {})
             node_kind = str(details.get("node_kind", ""))
         add_content_state = tk.NORMAL if node_kind == "layout" else tk.DISABLED
-        move_state = tk.NORMAL if node_kind == "layout" else tk.DISABLED
+        move_state = tk.NORMAL if node_kind in {"layout", "content"} else tk.DISABLED
         add_iteration_state = tk.NORMAL if node_kind == "content" else tk.DISABLED
         add_field_state = tk.NORMAL if node_kind == "iteration" else tk.DISABLED
         remove_state = tk.NORMAL if node_kind in {"layout", "content", "iteration", "field", "condition"} else tk.DISABLED
@@ -7422,36 +7422,49 @@ class AToolApp:
         items.pop(index)
         return True
 
-    def move_selected_layout(self, direction: int) -> None:
+    def move_selected_layout_item(self, direction: int) -> None:
         details = self._layout_node_details.get(self._active_layout_node_id or "")
-        if not details or str(details.get("node_kind", "")) != "layout":
+        if not details:
             return
-        layout = details.get("source_ref")
-        if not isinstance(layout, dict):
+        node_kind = str(details.get("node_kind", ""))
+        item = details.get("source_ref")
+        if not isinstance(item, dict):
             return
-        document_ref = self._get_selected_document_ref()
-        if document_ref is None:
+        items: list[object] | None = None
+        if node_kind == "layout":
+            document_ref = self._get_selected_document_ref()
+            if document_ref is None:
+                return
+            doc_source = document_ref.get("source")
+            if isinstance(doc_source, dict):
+                layouts = doc_source.get("Layouts")
+                if isinstance(layouts, list):
+                    items = layouts
+        elif node_kind == "content":
+            parent_node_id = self.layouts_tree.parent(self._active_layout_node_id or "")
+            parent_details = self._layout_node_details.get(parent_node_id, {})
+            if str(parent_details.get("node_kind", "")) == "layout":
+                parent_layout = parent_details.get("source_ref")
+                if isinstance(parent_layout, dict):
+                    items = self._contents_list_for_layout(parent_layout)
+        if items is None:
             return
-        doc_source = document_ref.get("source")
-        if not isinstance(doc_source, dict):
-            return
-        layouts = doc_source.get("Layouts")
-        if not isinstance(layouts, list):
-            return
-        index = -1
-        for i, item in enumerate(layouts):
-            if item is layout:
-                index = i
-                break
+
+        index = self._index_of_identity(items, item)
         if index < 0:
             return
         new_index = index + direction
-        if new_index < 0 or new_index >= len(layouts):
+        if new_index < 0 or new_index >= len(items):
             return
-        layouts[index], layouts[new_index] = layouts[new_index], layouts[index]
+        items[index], items[new_index] = items[new_index], items[index]
+        self._touch_selected_document_updated()
         self._set_dirty(True)
         self._refresh_layouts_for_active_document()
-        self._select_layout_node_for_source(layout, preferred_kind="layout")
+        self._select_layout_node_for_source(item, preferred_kind=node_kind)
+
+    def move_selected_layout(self, direction: int) -> None:
+        """Backward-compatible alias for callers using the original method name."""
+        self.move_selected_layout_item(direction)
 
     def add_iteration_to_selected_content(self) -> None:
         details = self._layout_node_details.get(self._active_layout_node_id or "")
