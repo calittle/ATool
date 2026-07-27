@@ -1096,14 +1096,21 @@ class AToolApp:
 
         mapped_title = ttk.Label(panel, text="Mapped Value:")
         mapped_title.grid(row=9, column=0, sticky="w")
-        mapped_value = ttk.Label(
+        mapped_value = tk.Text(
             panel,
-            textvariable=self.field_mapped_value_text,
-            wraplength=280,
-            justify=tk.LEFT,
+            height=3,
+            wrap="word",
+            undo=False,
+            background=self.MACOS_CONTENT_BACKGROUND,
+            foreground=self.MACOS_TEXT_FOREGROUND,
+            relief=tk.SOLID,
+            borderwidth=1,
         )
-        mapped_value.grid(row=10, column=0, sticky="w", pady=(0, 8))
-        self._field_details_wrapped_labels.append(mapped_value)
+        mapped_value.grid(row=10, column=0, sticky="ew", pady=(0, 8))
+        mapped_value.configure(state=tk.DISABLED)
+        self.field_mapped_value_widget = mapped_value
+        self.field_mapped_value_text.trace_add("write", self._sync_field_mapped_value_widget)
+        self._sync_field_mapped_value_widget()
 
         updated_title = ttk.Label(panel, text="Updated:")
         updated_title.grid(row=11, column=0, sticky="w")
@@ -1135,6 +1142,12 @@ class AToolApp:
 
         self.root.after(0, self._update_field_details_wraplength)
         return panel
+
+    def _sync_field_mapped_value_widget(self, *_args: object) -> None:
+        """Keep the selectable mapped-value display in sync with its backing value."""
+        widget = getattr(self, "field_mapped_value_widget", None)
+        if isinstance(widget, tk.Text):
+            self._set_readonly_text_widget_value(widget, self.field_mapped_value_text.get())
 
     def _create_document_details_panel(self, parent: ttk.Frame) -> ttk.Frame:
         panel = ttk.Frame(parent, relief=tk.GROOVE, borderwidth=1, padding=10)

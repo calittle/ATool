@@ -328,6 +328,27 @@ If a document exists in `assembly-template.json` but does not render, check its
 package association. If a document is associated but missing from the AT, check
 whether a minimal shell exists or needs to be created.
 
+## Slack Build Notification Format
+
+When drafting a Slack notification after a successful ATool commit and build,
+use the **CLP Consulting** group conversation and follow this format. Keep the
+new build and its directly related changes above the prior-update section.
+
+```text
+***ATool update***
+A new build is available: `ATool-<timestamp>-<commit>.zip` (or
+`ATool-latest.zip` in the shared ATool folder).
+*Changes:*
+• ...
+*Prior Updates:*
+• ...
+```
+
+- `Changes` contains the current release only.
+- `Prior Updates` briefly summarizes recent earlier releases for users who have
+  not updated recently.
+- Create a Slack draft unless the user explicitly asks to send the message.
+
 ## Safe File Handling
 
 When Codex is investigating:
