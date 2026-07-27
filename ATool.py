@@ -422,6 +422,10 @@ class AToolApp:
             accelerator=publish_accelerator,
             command=self.publish_occs_package_to_comms,
         )
+        package_menu.add_command(
+            label="Check Shared Folder Sync...",
+            command=self.check_shared_folder_sync,
+        )
         package_menu.add_separator()
         package_menu.add_command(label="Release Shared Package Lock", command=self.release_shared_occs_lock)
         package_menu.add_command(
@@ -5062,6 +5066,121 @@ class AToolApp:
             configured = str(section.get("shared_workspace_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_shared_workspace_dir())
 
+    @staticmethod
+    def _path_is_within(path: Path, parent: Path) -> bool:
+        try:
+            path.resolve().relative_to(parent.resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _onedrive_roots(self) -> list[Path]:
+        """Return known local OneDrive roots without assuming a specific tenant name."""
+        roots: list[Path] = []
+        system_name = platform.system()
+        if system_name == "Windows":
+            for variable in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
+                value = os.environ.get(variable, "").strip()
+                if value:
+                    roots.append(Path(value))
+            user_profile = os.environ.get("USERPROFILE", "").strip()
+            if user_profile:
+                roots.extend(Path(user_profile).glob("OneDrive*"))
+        elif system_name == "Darwin":
+            roots.extend((Path.home() / "Library" / "CloudStorage").glob("OneDrive*"))
+            roots.append(Path.home() / "OneDrive")
+        return [root for root in roots if root.exists()]
+
+    @staticmethod
+    def _onedrive_process_running() -> bool | None:
+        """Best-effort local process check; this does not prove cloud sync succeeded."""
+        system_name = platform.system()
+        try:
+            if system_name == "Windows":
+                result = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq OneDrive.exe", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                return "onedrive.exe" in result.stdout.lower()
+            if system_name == "Darwin":
+                result = subprocess.run(
+                    ["pgrep", "-x", "OneDrive"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return None
+
+    def _shared_folder_sync_state(self) -> dict[str, object]:
+        workspace = Path(self._get_occs_shared_workspace_dir())
+        one_drive_root = next(
+            (root for root in self._onedrive_roots() if self._path_is_within(workspace, root)),
+            None,
+        )
+        return {
+            "workspace": workspace,
+            "one_drive_root": one_drive_root,
+            "onedrive_running": self._onedrive_process_running() if one_drive_root else None,
+        }
+
+    def check_shared_folder_sync(self) -> None:
+        state = self._shared_folder_sync_state()
+        workspace = state["workspace"]
+        one_drive_root = state["one_drive_root"]
+        running = state["onedrive_running"]
+        if not isinstance(workspace, Path):
+            return
+        if not isinstance(one_drive_root, Path):
+            messagebox.showwarning(
+                "Shared Folder Sync",
+                "ATool could not identify the configured shared package folder as a local OneDrive folder.\n\n"
+                f"Folder: {workspace}\n\n"
+                "Locks may not reach other users. Check the folder location and OneDrive manually.",
+            )
+            return
+        if running is True:
+            messagebox.showinfo(
+                "Shared Folder Sync",
+                "OneDrive appears to be running and the shared package folder is inside its local sync folder.\n\n"
+                "This is a local check only. It cannot confirm that a specific lock has reached SharePoint or another user.",
+            )
+            return
+        state_text = "could not be checked" if running is None else "is not running"
+        messagebox.showwarning(
+            "Shared Folder Sync",
+            f"The shared package folder is inside OneDrive, but OneDrive {state_text}.\n\n"
+            "Do not create, update, or release shared locks until OneDrive is running and healthy.",
+        )
+
+    def _require_shared_folder_sync(self, action: str) -> bool:
+        """Prevent unsafe shared writes when OneDrive is known to be stopped."""
+        state = self._shared_folder_sync_state()
+        workspace = state["workspace"]
+        one_drive_root = state["one_drive_root"]
+        running = state["onedrive_running"]
+        if isinstance(one_drive_root, Path) and running is True:
+            return True
+        if isinstance(one_drive_root, Path) and running is False:
+            messagebox.showerror(
+                "Shared Folder Sync",
+                f"OneDrive is not running. ATool cannot safely {action} because the change would only exist on this computer.\n\n"
+                "Start OneDrive, wait for it to become healthy, then try again.",
+            )
+            return False
+        folder_text = str(workspace) if isinstance(workspace, Path) else "the configured shared package folder"
+        return messagebox.askyesno(
+            "Shared Folder Sync Not Confirmed",
+            f"ATool cannot confirm that {folder_text} is syncing through OneDrive.\n\n"
+            f"{action.capitalize()} may not be visible to other users. Continue anyway?",
+        )
+
     def _get_occs_user_name(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -9300,6 +9419,8 @@ class AToolApp:
             return
         if not self._verify_shared_update_base(context, existing_lock, "Check Out Package Version"):
             return
+        if not self._require_shared_folder_sync("create this shared package lock"):
+            return
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             with open(lock_path, "w", encoding="utf-8") as target:
@@ -9331,6 +9452,8 @@ class AToolApp:
                 "Release it anyway?",
             ):
                 return
+        if not self._require_shared_folder_sync("release this shared package lock"):
+            return
         try:
             lock_path.unlink()
         except OSError as error:
@@ -9383,6 +9506,8 @@ class AToolApp:
             f"{self._format_shared_lock(lock_payload)}\n\n"
             "Only continue if the lock owner has closed ATool or confirmed they are not editing.",
         ):
+            return
+        if not self._require_shared_folder_sync("manually release this shared package lock"):
             return
         try:
             lock_path.unlink()
@@ -9487,6 +9612,8 @@ class AToolApp:
             )
             return False
         if not self._verify_shared_update_base(context, existing_lock, "Update Shared Package"):
+            return False
+        if not self._require_shared_folder_sync("update this shared package"):
             return False
 
         published_dir = context["package_dir"] / "published" / "current"
@@ -9778,6 +9905,8 @@ class AToolApp:
             return False
 
         context = self._shared_context_from_entry(entry)
+        if not self._require_shared_folder_sync("create this shared package lock"):
+            return False
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
             lock_write_mode = "w" if lock_payload else "x"
@@ -9911,6 +10040,8 @@ class AToolApp:
         owner = self._current_shared_user_identity()
         if not self._is_shared_lock_owner(lock_payload, owner):
             return False
+        if not self._require_shared_folder_sync("refresh this shared package lock"):
+            return False
         package_dir = context.get("package_dir")
         if not isinstance(package_dir, Path):
             return False
@@ -9973,6 +10104,8 @@ class AToolApp:
         mode = "edit" if lock_for_edit else "testing"
         if lock_for_edit:
             context = self._shared_context_from_entry(entry)
+            if not self._require_shared_folder_sync("create this shared package lock"):
+                return
             try:
                 lock_path.parent.mkdir(parents=True, exist_ok=True)
                 lock_write_mode = "w" if lock_payload else "x"
@@ -10604,6 +10737,8 @@ class AToolApp:
                 return ""
         except OSError:
             pass
+        if not self._require_shared_folder_sync("update this shared package"):
+            return "Shared package folder was not updated because sync could not be confirmed."
 
         package_name = self._occs_manifest_package_short_name(self.current_occs_manifest)
         version_name = self._occs_manifest_version_short_name(self.current_occs_manifest)
@@ -12497,6 +12632,8 @@ class AToolApp:
         manifest: dict[str, object],
         reason: str,
     ) -> dict[str, object]:
+        if not self._require_shared_folder_sync("write this package to the shared folder"):
+            raise OSError("Shared folder sync was not confirmed.")
         package_dir = self._shared_package_dir_for_manifest(manifest)
         package_name = self._occs_manifest_package_short_name(manifest)
         version_name = self._occs_manifest_version_short_name(manifest)
