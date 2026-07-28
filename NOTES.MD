@@ -78,6 +78,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - Package document columns are filterable and sortable, with order shown first and sorted in package order by default.
 - Selecting a Package Documents row now selects the matching AT document in the main Documents tree when one exists.
 - Associated documents can be reordered from the Package Documents manager; this updates `DocumentRelIndex` in the package version metadata.
+- The main Documents panel now follows that package document order; its redundant document move controls were removed.
 - Associated documents can toggle `Always trigger`; this updates `DocumentAlwaysTriggerInd`.
 - AT document trigger conditions can be edited from Package Documents. Empty conditions are allowed, but non-empty conditions must use the Comms AT wrapper format such as `$[?(...)]`; malformed delimiters or obvious non-AT expressions are blocked before writing the AT JSON.
 - Adding from the document catalog creates the package association and, when missing, creates a minimal AT document shell with `$$Id`, `Updated`, `Descr`, `Condition`, and empty `Layouts`.

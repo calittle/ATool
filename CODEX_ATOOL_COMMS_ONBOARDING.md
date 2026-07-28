@@ -313,7 +313,8 @@ When troubleshooting shared package issues, confirm:
 ## Package Documents Manager
 
 Package Documents Manager handles package-level document associations and order.
-It is separate from the AT document tree.
+The main Documents panel mirrors this package order; use Package Documents to
+reorder associated documents.
 
 It can:
 

@@ -664,70 +664,12 @@ class AToolApp:
             "Remove the selected document and its child documents from the assembly template.",
         )
 
-        self.move_document_up_button = ttk.Button(
-            controls,
-            text="Up",
-            command=lambda: self._run_document_move_button_command(
-                self.move_document_up_button,
-                lambda: self.move_selected_document(-1),
-            ),
-        )
-        self._attach_tooltip(self.move_document_up_button, "Move selected document up (Flat view only).")
-
-        self.move_document_down_button = ttk.Button(
-            controls,
-            text="Down",
-            command=lambda: self._run_document_move_button_command(
-                self.move_document_down_button,
-                lambda: self.move_selected_document(1),
-            ),
-        )
-        self._attach_tooltip(self.move_document_down_button, "Move selected document down (Flat view only).")
-
-        self.move_document_top_button = ttk.Button(
-            controls,
-            text="Top",
-            command=lambda: self._run_document_move_button_command(
-                self.move_document_top_button,
-                self.move_selected_document_to_top,
-            ),
-        )
-        self._attach_tooltip(self.move_document_top_button, "Move selected document to the top (Flat view only).")
-
-        self.move_document_bottom_button = ttk.Button(
-            controls,
-            text="Bottom",
-            command=lambda: self._run_document_move_button_command(
-                self.move_document_bottom_button,
-                self.move_selected_document_to_bottom,
-            ),
-        )
-        self._attach_tooltip(self.move_document_bottom_button, "Move selected document to the bottom (Flat view only).")
-
-        self.auto_move_document_button = ttk.Button(
-            controls,
-            text="Auto Move",
-            command=lambda: self._run_document_move_button_command(
-                self.auto_move_document_button,
-                self.auto_move_selected_document,
-            ),
-        )
-        self._attach_tooltip(
-            self.auto_move_document_button,
-            "Move selected document near similarly named documents.",
-        )
-
         self._document_toolbar_buttons = [
             self.documents_view_toggle_button,
             self.clear_mapping_button,
             self.document_mapping_filter_button,
             self.add_document_button,
             self.remove_document_button,
-            self.move_document_top_button,
-            self.move_document_up_button,
-            self.move_document_down_button,
-            self.move_document_bottom_button,
-            self.auto_move_document_button,
         ]
         self._relayout_documents_controls()
 
@@ -4468,20 +4410,6 @@ class AToolApp:
                 for button in buttons
                 if button is not self.document_mapping_filter_button
             ]
-        if self.document_view_mode != "flat":
-            buttons = [
-                button
-                for button in buttons
-                if button
-                not in {
-                    self.move_document_top_button,
-                    self.move_document_up_button,
-                    self.move_document_down_button,
-                    self.move_document_bottom_button,
-                    self.auto_move_document_button,
-                }
-            ]
-
         signature = (
             self.document_view_mode,
             frame_width,
@@ -4546,21 +4474,6 @@ class AToolApp:
         if self._tooltip_window.winfo_exists():
             self._tooltip_window.destroy()
         self._tooltip_window = None
-
-    def _run_document_move_button_command(self, button: ttk.Button, command: object) -> None:
-        try:
-            if callable(command):
-                command()
-        finally:
-            self.root.after_idle(lambda selected_button=button: self._release_document_move_button(selected_button))
-
-    @staticmethod
-    def _release_document_move_button(button: ttk.Button) -> None:
-        try:
-            if button.winfo_exists():
-                button.state(["!pressed", "active"])
-        except tk.TclError:
-            return
 
     def _update_mapping_controls(self) -> None:
         self._update_document_triggered_visibility()
@@ -4632,16 +4545,6 @@ class AToolApp:
             self.remove_document_button.config(state=selected_state)
         if hasattr(self, "add_layout_button"):
             self.add_layout_button.config(state=selected_state)
-        if hasattr(self, "move_document_top_button"):
-            self.move_document_top_button.config(state=selected_state)
-        if hasattr(self, "move_document_up_button"):
-            self.move_document_up_button.config(state=selected_state)
-        if hasattr(self, "move_document_down_button"):
-            self.move_document_down_button.config(state=selected_state)
-        if hasattr(self, "move_document_bottom_button"):
-            self.move_document_bottom_button.config(state=selected_state)
-        if hasattr(self, "auto_move_document_button"):
-            self.auto_move_document_button.config(state=selected_state)
 
     def _update_layout_context_buttons(self) -> None:
         node_kind = ""
@@ -11605,6 +11508,7 @@ class AToolApp:
         if not self._set_package_association_order(str(other.get("document_uuid", "")), current_order=current_order):
             return
         self._write_package_association_files()
+        self._render_documents_tree()
         self._refresh_package_documents_manager()
         self._select_package_document_by_uuid(current_uuid)
 
@@ -11646,6 +11550,7 @@ class AToolApp:
         if not self._remove_package_document_association(document_uuid):
             return
         self._write_package_association_files()
+        self._render_documents_tree()
         self._refresh_package_documents_manager()
         self._select_package_document_by_name(document_name)
 
@@ -11857,6 +11762,7 @@ class AToolApp:
             if not self._add_package_document_association(document):
                 return
             self._write_package_association_files()
+            self._render_documents_tree()
             self._refresh_package_documents_manager()
             self._select_package_document_by_uuid(selected_uuid)
             dialog.destroy()
@@ -15242,7 +15148,7 @@ class AToolApp:
         return None
 
     def _get_filtered_documents(self) -> list[dict[str, object]]:
-        base_documents = self._loaded_documents
+        base_documents = self._get_documents_in_package_display_order()
         if self.current_data_payload is not None and self._show_triggered_documents_only:
             base_documents = [
                 document
@@ -15272,6 +15178,37 @@ class AToolApp:
             for document in base_documents
             if str(document["name"]) in matching_names
         ]
+
+    def _get_documents_in_package_display_order(self) -> list[dict[str, object]]:
+        """Return AT documents in the package association display order.
+
+        The fallback ordering for unassociated documents follows the Package
+        Documents manager's name-based fallback. DocumentRelIndex remains the
+        single source of truth for associated document order.
+        """
+        if not self.current_document_associations:
+            return list(self._loaded_documents)
+
+        ordered_documents: list[dict[str, object]] = []
+        seen_sources: set[int] = set()
+        for row in self._build_package_document_rows():
+            document = row.get("document_ref")
+            source = document.get("source") if isinstance(document, dict) else None
+            if not isinstance(document, dict) or not isinstance(source, dict):
+                continue
+            source_id = id(source)
+            if source_id in seen_sources:
+                continue
+            seen_sources.add(source_id)
+            ordered_documents.append(document)
+
+        # Defensive fallback for malformed or duplicate association metadata.
+        ordered_documents.extend(
+            document
+            for document in self._loaded_documents
+            if isinstance(document.get("source"), dict) and id(document["source"]) not in seen_sources
+        )
+        return ordered_documents
 
     def _document_matches_query(self, document: dict[str, object], query: str) -> bool:
         searchable = " ".join(
