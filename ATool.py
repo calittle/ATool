@@ -9425,8 +9425,23 @@ class AToolApp:
             column=1,
             sticky="w",
         )
-        ttk.Label(container, text="Recipient email(s):").grid(
+        json_recipients = self._occs_email_recipients_from_payload(self.current_data_payload)
+        ttk.Label(container, text="JSON recipients:").grid(
             row=1,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(10, 0),
+        )
+        ttk.Label(
+            container,
+            text=", ".join(json_recipients) or "(none in mapped JSON)",
+            wraplength=500,
+            justify=tk.LEFT,
+        ).grid(row=1, column=1, sticky="w", pady=(10, 0))
+        recipients_label = ttk.Label(container, text="Recipient email(s):")
+        recipients_label.grid(
+            row=2,
             column=0,
             sticky="w",
             padx=(0, 8),
@@ -9434,14 +9449,12 @@ class AToolApp:
         )
         recipients_var = tk.StringVar(value=defaults["recipients"])
         recipients_entry = ttk.Entry(container, textvariable=recipients_var, width=58)
-        recipients_entry.grid(row=1, column=1, sticky="ew", pady=(10, 0))
-        ttk.Label(container, text="Separate multiple addresses with commas.").grid(
-            row=2,
-            column=1,
-            sticky="w",
-            pady=(2, 0),
-        )
-        ttk.Label(container, text="Config UUID:").grid(
+        recipients_entry.grid(row=2, column=1, sticky="ew", pady=(10, 0))
+        recipient_tooltip = "Separate multiple addresses with commas. Defaults to OCCS_EMAIL_RECIPIENTS when configured."
+        self._attach_tooltip(recipients_label, recipient_tooltip)
+        self._attach_tooltip(recipients_entry, recipient_tooltip)
+        config_uuid_label = ttk.Label(container, text="Config UUID:")
+        config_uuid_label.grid(
             row=3,
             column=0,
             sticky="w",
@@ -9451,23 +9464,22 @@ class AToolApp:
         config_uuid_var = tk.StringVar(value=defaults["config_uuid"])
         config_uuid_entry = ttk.Entry(container, textvariable=config_uuid_var, width=58)
         config_uuid_entry.grid(row=3, column=1, sticky="ew", pady=(10, 0))
-        ttk.Label(
-            container,
-            text="Defaults are read from OCCS_EMAIL_RECIPIENTS and OCCS_EMAIL_CONFIG_UUID when configured.",
-            wraplength=500,
-            justify=tk.LEFT,
-        ).grid(row=4, column=1, sticky="w", pady=(6, 0))
+        config_uuid_tooltip = "Defaults to OCCS_EMAIL_CONFIG_UUID when configured."
+        self._attach_tooltip(config_uuid_label, config_uuid_tooltip)
+        self._attach_tooltip(config_uuid_entry, config_uuid_tooltip)
 
-        dry_run_status_var = tk.StringVar(value="Run Dry Run to validate the email request before generating it.")
-        ttk.Label(
+        dry_run_status_var = tk.StringVar(value="")
+        dry_run_status_label = ttk.Label(
             container,
             textvariable=dry_run_status_var,
             wraplength=500,
             justify=tk.LEFT,
-        ).grid(row=5, column=1, sticky="w", pady=(10, 0))
+        )
+        dry_run_status_label.grid(row=4, column=1, sticky="w", pady=(10, 0))
+        dry_run_status_label.grid_remove()
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
 
         dry_run_verified: tuple[str, str] | None = None
@@ -9492,7 +9504,8 @@ class AToolApp:
             nonlocal dry_run_verified
             dry_run_verified = None
             generate_button.config(state=tk.DISABLED, default="normal")
-            dry_run_status_var.set("Run Dry Run again after changing a recipient or Config UUID.")
+            dry_run_status_var.set("")
+            dry_run_status_label.grid_remove()
 
         recipients_var.trace_add("write", _reset_dry_run)
         config_uuid_var.trace_add("write", _reset_dry_run)
@@ -9559,6 +9572,7 @@ class AToolApp:
 
             dry_run_button.config(state=tk.DISABLED)
             dry_run_status_var.set("Running dry run...")
+            dry_run_status_label.grid()
 
             def _remove_temporary_email_input() -> None:
                 if email_input_path != data_file_path:
@@ -9574,12 +9588,14 @@ class AToolApp:
                     return
                 if _current_inputs() != inputs:
                     dry_run_status_var.set("Recipient or Config UUID changed while the dry run was running. Run it again.")
+                    dry_run_status_label.grid()
                     dry_run_button.config(state=tk.NORMAL)
                     return
                 dry_run_verified = inputs
                 dry_run_status_var.set(
                     f"Dry run passed. Recipients: {recipients}\nConfig UUID: {config_uuid}\nNo email was sent."
                 )
+                dry_run_status_label.grid()
                 generate_button.config(state=tk.NORMAL, default="active")
                 generate_button.focus_set()
                 dry_run_button.config(state=tk.NORMAL)
@@ -9589,6 +9605,7 @@ class AToolApp:
                 if not dialog.winfo_exists():
                     return
                 dry_run_status_var.set(f"Dry run failed: {error}")
+                dry_run_status_label.grid()
                 dry_run_button.config(state=tk.NORMAL)
 
             self._run_occs_command_async(
@@ -9610,6 +9627,7 @@ class AToolApp:
 
         dry_run_button = ttk.Button(buttons, text="Dry Run", command=_dry_run, default="active")
         dry_run_button.grid(row=0, column=1, padx=(0, 8))
+        self._attach_tooltip(dry_run_button, "Run Dry Run successfully before Generate is enabled.")
         generate_button.config(command=_submit)
         generate_button.grid(row=0, column=2)
         dialog.bind("<Return>", lambda _event: _submit())
@@ -9619,11 +9637,39 @@ class AToolApp:
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
+    @staticmethod
+    def _occs_email_payload_from_payload(payload: object) -> dict[str, object] | None:
+        if not isinstance(payload, dict):
+            return None
+        communication_info = payload.get("CommunicationInfo")
+        communication_data = communication_info.get("CommunicationData") if isinstance(communication_info, dict) else None
+        if isinstance(communication_data, dict):
+            return communication_data
+        if isinstance(communication_data, str):
+            try:
+                decoded = json.loads(communication_data)
+            except json.JSONDecodeError:
+                return None
+            return decoded if isinstance(decoded, dict) else None
+        return payload
+
+    def _occs_email_recipients_from_payload(self, payload: object) -> list[str]:
+        recipients = self._extract_values_by_path(
+            payload,
+            "$.billPrint.billDetails.cmElements.eBill.recipientEmails[?(@.email)]",
+        )
+        return [
+            str(recipient.get("email", "")).strip()
+            for recipient in recipients
+            if isinstance(recipient, dict) and str(recipient.get("email", "")).strip()
+        ]
+
     def _build_occs_email_input(self, data_file_path: Path, recipients: str) -> Path:
         """Add the recipient structure required by OCCS CLI without changing mapped JSON."""
-        if not isinstance(self.current_data_payload, dict):
+        email_source_payload = self._occs_email_payload_from_payload(self.current_data_payload)
+        if email_source_payload is None:
             raise ValueError("Mapped JSON must be an object to send email.")
-        bill_print = self.current_data_payload.get("billPrint")
+        bill_print = email_source_payload.get("billPrint")
         if not isinstance(bill_print, dict):
             raise ValueError("Mapped JSON must contain a billPrint object to send email.")
         bill_details = bill_print.get("billDetails")
@@ -9639,7 +9685,7 @@ class AToolApp:
         recipient_list = [email.strip() for email in recipients.split(",") if email.strip()]
         if not recipient_list:
             raise ValueError("Recipient email is required.")
-        email_payload = copy.deepcopy(self.current_data_payload)
+        email_payload = copy.deepcopy(email_source_payload)
         email_bill_details = email_payload["billPrint"]["billDetails"]
         email_cm_elements = email_bill_details["cmElements"]
         email_e_bill = email_cm_elements.get("eBill")
