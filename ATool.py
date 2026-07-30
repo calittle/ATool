@@ -9,6 +9,7 @@ import copy
 import shutil
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 import traceback
@@ -143,6 +144,8 @@ class AToolApp:
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
         self._occs_process_lock = threading.Lock()
+        self._send_email_menu_entries: list[tuple[tk.Menu, int]] = []
+        self._package_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -385,6 +388,7 @@ class AToolApp:
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
         preview_accelerator = "Cmd+P" if self._is_macos() else "Ctrl+P"
+        send_email_accelerator = "Cmd+E" if self._is_macos() else "Ctrl+E"
         update_shared_accelerator = "Cmd+U" if self._is_macos() else "Ctrl+U"
         publish_accelerator = "Shift+Cmd+U" if self._is_macos() else "Shift+Ctrl+U"
         cancel_occs_accelerator = "Cmd+." if self._is_macos() else "Ctrl+."
@@ -392,12 +396,23 @@ class AToolApp:
             label="Preview...",
             accelerator=preview_accelerator,
             command=self.preview_occs_package,
+            state=tk.NORMAL if self._can_preview_occs_package() else tk.DISABLED,
         )
+        self._package_menu_entries.append((package_menu, package_menu.index(tk.END), "preview"))
+        package_menu.add_command(
+            label="Send Email...",
+            accelerator=send_email_accelerator,
+            command=self.send_occs_email,
+            state=tk.NORMAL if self.current_data_payload is not None else tk.DISABLED,
+        )
+        self._send_email_menu_entries.append((package_menu, package_menu.index(tk.END)))
         package_menu.add_command(
             label="Cancel OCCS Operation",
             accelerator=cancel_occs_accelerator,
             command=self.cancel_occs_operation,
+            state=tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED,
         )
+        self._package_menu_entries.append((package_menu, package_menu.index(tk.END), "cancel"))
         package_menu.add_separator()
         package_menu.add_command(
             label="Open Shared Package...",
@@ -4478,6 +4493,8 @@ class AToolApp:
     def _update_mapping_controls(self) -> None:
         self._update_document_triggered_visibility()
         self._update_field_mapping_filter_button()
+        self._update_send_email_menu_state()
+        self._update_package_menu_states()
         if hasattr(self, "clear_mapping_button"):
             if self._mapping_dialog_in_progress:
                 self.clear_mapping_button.config(text="Opening...", command=self.map_data_file, state=tk.DISABLED)
@@ -4500,6 +4517,41 @@ class AToolApp:
             label = "Show All" if self._show_triggered_documents_only else "Show Triggered"
             self.document_mapping_filter_button.config(text=label, state=tk.NORMAL)
             self._relayout_documents_controls()
+
+    def _update_send_email_menu_state(self) -> None:
+        state = tk.NORMAL if self.current_data_payload is not None else tk.DISABLED
+        active_entries: list[tuple[tk.Menu, int]] = []
+        for menu, index in self._send_email_menu_entries:
+            try:
+                menu.entryconfig(index, state=state)
+                active_entries.append((menu, index))
+            except tk.TclError:
+                continue
+        self._send_email_menu_entries = active_entries
+
+    def _can_preview_occs_package(self) -> bool:
+        return bool(
+            self.current_occs_bundle_dir
+            and self.current_occs_manifest
+            and self.current_data_payload is not None
+            and not self._occs_operation_in_progress
+        )
+
+    def _update_package_menu_states(self) -> None:
+        active_entries: list[tuple[tk.Menu, int, str]] = []
+        for menu, index, entry_name in self._package_menu_entries:
+            if entry_name == "preview":
+                state = tk.NORMAL if self._can_preview_occs_package() else tk.DISABLED
+            elif entry_name == "cancel":
+                state = tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED
+            else:
+                continue
+            try:
+                menu.entryconfig(index, state=state)
+                active_entries.append((menu, index, entry_name))
+            except tk.TclError:
+                continue
+        self._package_menu_entries = active_entries
 
     def _toggle_triggered_document_filter(self) -> None:
         if self.current_data_payload is None:
@@ -4974,6 +5026,46 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("config_id_filter", "")).strip()
+
+    def _get_occs_email_defaults(self) -> dict[str, str]:
+        """Read email defaults with the same precedence used by OCCS CLI."""
+        values: dict[str, str] = {}
+        cli_cwd = self._occs_cli_cwd()
+        candidates = [
+            Path.home() / ".occs.env",
+            Path.home() / ".occs-cli" / ".env",
+        ]
+        if cli_cwd:
+            candidates.append(Path(cli_cwd) / ".env")
+        explicit_env_file = os.environ.get("OCCS_ENV_FILE", "").strip()
+        if explicit_env_file:
+            candidates.insert(0, Path(os.path.expanduser(explicit_env_file)))
+
+        for path in candidates:
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for raw_line in lines:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                key, separator, value = line.partition("=")
+                if not separator:
+                    continue
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+                if key in {"OCCS_EMAIL_CONFIG_UUID", "OCCS_EMAIL_RECIPIENTS"}:
+                    values[key] = value
+
+        return {
+            "config_uuid": os.environ.get("OCCS_EMAIL_CONFIG_UUID", values.get("OCCS_EMAIL_CONFIG_UUID", "")).strip(),
+            "recipients": os.environ.get("OCCS_EMAIL_RECIPIENTS", values.get("OCCS_EMAIL_RECIPIENTS", "")).strip(),
+        }
 
     def _get_occs_shared_workspace_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -8346,6 +8438,8 @@ class AToolApp:
             self.root.bind_all("<Command-Alt-M>", self._remap_event)
             self.root.bind_all("<Command-p>", self._preview_event)
             self.root.bind_all("<Command-P>", self._preview_event)
+            self.root.bind_all("<Command-e>", self._send_email_event)
+            self.root.bind_all("<Command-E>", self._send_email_event)
             self.root.bind_all("<Command-period>", self._cancel_occs_event)
             self.root.bind_all("<Command-.>", self._cancel_occs_event)
             self.root.bind_all("<Command-Shift-M>", self._convert_and_map_event)
@@ -8363,6 +8457,8 @@ class AToolApp:
             self.root.bind_all("<Control-Alt-M>", self._remap_event)
             self.root.bind_all("<Control-p>", self._preview_event)
             self.root.bind_all("<Control-P>", self._preview_event)
+            self.root.bind_all("<Control-e>", self._send_email_event)
+            self.root.bind_all("<Control-E>", self._send_email_event)
             self.root.bind_all("<Control-period>", self._cancel_occs_event)
             self.root.bind_all("<Control-.>", self._cancel_occs_event)
             self.root.bind_all("<Control-Shift-M>", self._convert_and_map_event)
@@ -8427,6 +8523,10 @@ class AToolApp:
 
     def _preview_event(self, event: tk.Event) -> str:
         self.preview_occs_package()
+        return "break"
+
+    def _send_email_event(self, event: tk.Event) -> str:
+        self.send_occs_email()
         return "break"
 
     def _cancel_occs_event(self, event: tk.Event) -> str:
@@ -9293,6 +9393,265 @@ class AToolApp:
         x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def send_occs_email(self) -> None:
+        """Submit the currently mapped JSON to OCCS as an EMAIL render request."""
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Send Email", "An OCCS operation is already in progress.")
+            return
+        data_file_text = self.current_data_file_path or ""
+        if self.current_data_payload is None or not data_file_text:
+            messagebox.showinfo("Send Email", "Map a JSON data file before sending email.")
+            return
+        data_file_path = Path(os.path.expanduser(data_file_text))
+        if not data_file_path.exists() or not data_file_path.is_file():
+            messagebox.showerror("Send Email", f"Mapped JSON file not found:\n{data_file_path}")
+            return
+
+        defaults = self._get_occs_email_defaults()
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Send Email")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        ttk.Label(container, text="Mapped JSON:").grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        ttk.Label(container, text=str(data_file_path), wraplength=500, justify=tk.LEFT).grid(
+            row=0,
+            column=1,
+            sticky="w",
+        )
+        ttk.Label(container, text="Recipient email(s):").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(10, 0),
+        )
+        recipients_var = tk.StringVar(value=defaults["recipients"])
+        recipients_entry = ttk.Entry(container, textvariable=recipients_var, width=58)
+        recipients_entry.grid(row=1, column=1, sticky="ew", pady=(10, 0))
+        ttk.Label(container, text="Separate multiple addresses with commas.").grid(
+            row=2,
+            column=1,
+            sticky="w",
+            pady=(2, 0),
+        )
+        ttk.Label(container, text="Config UUID:").grid(
+            row=3,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+            pady=(10, 0),
+        )
+        config_uuid_var = tk.StringVar(value=defaults["config_uuid"])
+        config_uuid_entry = ttk.Entry(container, textvariable=config_uuid_var, width=58)
+        config_uuid_entry.grid(row=3, column=1, sticky="ew", pady=(10, 0))
+        ttk.Label(
+            container,
+            text="Defaults are read from OCCS_EMAIL_RECIPIENTS and OCCS_EMAIL_CONFIG_UUID when configured.",
+            wraplength=500,
+            justify=tk.LEFT,
+        ).grid(row=4, column=1, sticky="w", pady=(6, 0))
+
+        dry_run_status_var = tk.StringVar(value="Run Dry Run to validate the email request before generating it.")
+        ttk.Label(
+            container,
+            textvariable=dry_run_status_var,
+            wraplength=500,
+            justify=tk.LEFT,
+        ).grid(row=5, column=1, sticky="w", pady=(10, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        dry_run_verified: tuple[str, str] | None = None
+        generate_button = ttk.Button(buttons, text="Generate", state=tk.DISABLED)
+
+        def _current_inputs() -> tuple[str, str]:
+            return recipients_var.get().strip(), config_uuid_var.get().strip()
+
+        def _validate_inputs() -> tuple[str, str] | None:
+            recipients, config_uuid = _current_inputs()
+            if not recipients:
+                messagebox.showerror("Send Email", "Recipient email is required.", parent=dialog)
+                recipients_entry.focus_set()
+                return None
+            if not config_uuid:
+                messagebox.showerror("Send Email", "Config UUID is required.", parent=dialog)
+                config_uuid_entry.focus_set()
+                return None
+            return recipients, config_uuid
+
+        def _reset_dry_run(*_args: object) -> None:
+            nonlocal dry_run_verified
+            dry_run_verified = None
+            generate_button.config(state=tk.DISABLED, default="normal")
+            dry_run_status_var.set("Run Dry Run again after changing a recipient or Config UUID.")
+
+        recipients_var.trace_add("write", _reset_dry_run)
+        config_uuid_var.trace_add("write", _reset_dry_run)
+
+        def _submit() -> None:
+            inputs = _validate_inputs()
+            if inputs is None:
+                return
+            recipients, config_uuid = inputs
+            if dry_run_verified != inputs:
+                messagebox.showinfo("Send Email", "Run Dry Run with the current recipient and Config UUID before generating email.", parent=dialog)
+                return
+            try:
+                email_input_path = self._build_occs_email_input(data_file_path, recipients)
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Send Email", f"Could not prepare email input:\n\n{error}", parent=dialog)
+                return
+            dialog.destroy()
+
+            def _remove_temporary_email_input() -> None:
+                if email_input_path == data_file_path:
+                    return
+                try:
+                    email_input_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+            def _on_success(_result: dict[str, object]) -> None:
+                _remove_temporary_email_input()
+                messagebox.showinfo("Send Email", "Email submitted to OCCS.")
+
+            def _on_failure(error: Exception) -> None:
+                _remove_temporary_email_input()
+                messagebox.showerror("Send Email", str(error))
+
+            self._run_occs_command_async(
+                [
+                    "preview",
+                    "--input",
+                    str(email_input_path),
+                    "--render-type",
+                    "EMAIL",
+                    "--email-config-uuid",
+                    config_uuid,
+                    "--recipient",
+                    recipients,
+                    "--send-email",
+                ],
+                "Sending email through OCCS...",
+                _on_success,
+                on_failure=_on_failure,
+            )
+
+        def _dry_run() -> None:
+            inputs = _validate_inputs()
+            if inputs is None:
+                return
+            recipients, config_uuid = inputs
+            try:
+                email_input_path = self._build_occs_email_input(data_file_path, recipients)
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Send Email", f"Could not prepare email input:\n\n{error}", parent=dialog)
+                return
+
+            dry_run_button.config(state=tk.DISABLED)
+            dry_run_status_var.set("Running dry run...")
+
+            def _remove_temporary_email_input() -> None:
+                if email_input_path != data_file_path:
+                    try:
+                        email_input_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+            def _on_success(_result: dict[str, object]) -> None:
+                nonlocal dry_run_verified
+                _remove_temporary_email_input()
+                if not dialog.winfo_exists():
+                    return
+                if _current_inputs() != inputs:
+                    dry_run_status_var.set("Recipient or Config UUID changed while the dry run was running. Run it again.")
+                    dry_run_button.config(state=tk.NORMAL)
+                    return
+                dry_run_verified = inputs
+                dry_run_status_var.set(
+                    f"Dry run passed. Recipients: {recipients}\nConfig UUID: {config_uuid}\nNo email was sent."
+                )
+                generate_button.config(state=tk.NORMAL, default="active")
+                generate_button.focus_set()
+                dry_run_button.config(state=tk.NORMAL)
+
+            def _on_failure(error: Exception) -> None:
+                _remove_temporary_email_input()
+                if not dialog.winfo_exists():
+                    return
+                dry_run_status_var.set(f"Dry run failed: {error}")
+                dry_run_button.config(state=tk.NORMAL)
+
+            self._run_occs_command_async(
+                [
+                    "preview",
+                    "--input",
+                    str(email_input_path),
+                    "--render-type",
+                    "EMAIL",
+                    "--email-config-uuid",
+                    config_uuid,
+                    "--recipient",
+                    recipients,
+                ],
+                "Validating email request through OCCS...",
+                _on_success,
+                on_failure=_on_failure,
+            )
+
+        dry_run_button = ttk.Button(buttons, text="Dry Run", command=_dry_run, default="active")
+        dry_run_button.grid(row=0, column=1, padx=(0, 8))
+        generate_button.config(command=_submit)
+        generate_button.grid(row=0, column=2)
+        dialog.bind("<Return>", lambda _event: _submit())
+        dry_run_button.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _build_occs_email_input(self, data_file_path: Path, recipients: str) -> Path:
+        """Add the recipient structure required by OCCS CLI without changing mapped JSON."""
+        if not isinstance(self.current_data_payload, dict):
+            raise ValueError("Mapped JSON must be an object to send email.")
+        bill_print = self.current_data_payload.get("billPrint")
+        if not isinstance(bill_print, dict):
+            raise ValueError("Mapped JSON must contain a billPrint object to send email.")
+        bill_details = bill_print.get("billDetails")
+        if not isinstance(bill_details, dict):
+            raise ValueError("Mapped JSON must contain billPrint.billDetails to send email.")
+        cm_elements = bill_details.get("cmElements")
+        if not isinstance(cm_elements, dict):
+            raise ValueError("Mapped JSON must contain billPrint.billDetails.cmElements to send email.")
+        e_bill = cm_elements.get("eBill")
+        if isinstance(e_bill, dict) and isinstance(e_bill.get("recipientEmails"), list):
+            return data_file_path
+
+        recipient_list = [email.strip() for email in recipients.split(",") if email.strip()]
+        if not recipient_list:
+            raise ValueError("Recipient email is required.")
+        email_payload = copy.deepcopy(self.current_data_payload)
+        email_bill_details = email_payload["billPrint"]["billDetails"]
+        email_cm_elements = email_bill_details["cmElements"]
+        email_e_bill = email_cm_elements.get("eBill")
+        if not isinstance(email_e_bill, dict):
+            email_e_bill = {}
+            email_cm_elements["eBill"] = email_e_bill
+        email_e_bill["recipientEmails"] = [{"email": email} for email in recipient_list]
+
+        temp_path = Path(tempfile.gettempdir()) / f"atool-email-{time.time_ns()}.json"
+        with open(temp_path, "w", encoding="utf-8") as target:
+            json.dump(email_payload, target)
+        return temp_path
 
     def save_occs_package(self) -> None:
         if self._occs_operation_in_progress:
@@ -10697,6 +11056,7 @@ class AToolApp:
 
         self._occs_operation_in_progress = True
         self._occs_cancel_requested = False
+        self._update_package_menu_states()
         self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
@@ -10727,6 +11087,7 @@ class AToolApp:
 
         self._occs_operation_in_progress = True
         self._occs_cancel_requested = False
+        self._update_package_menu_states()
         self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
@@ -10747,6 +11108,7 @@ class AToolApp:
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
         self._occs_cancel_requested = False
+        self._update_package_menu_states()
         self._stop_occs_status_timer()
         self._restore_default_status_text()
         if callable(on_success):
@@ -10760,6 +11122,7 @@ class AToolApp:
     ) -> None:
         self._occs_operation_in_progress = False
         self._occs_cancel_requested = False
+        self._update_package_menu_states()
         self._stop_occs_status_timer()
         self._restore_default_status_text()
         if isinstance(error, OccsCommandCancelled):
@@ -13083,6 +13446,7 @@ class AToolApp:
             return
 
         self._occs_operation_in_progress = True
+        self._update_package_menu_states()
         self._start_occs_status_timer(f"Loading Comms package versions for {package_name}...")
         self._debug_log(f"OCCS package version probe started: {package_name}")
 
