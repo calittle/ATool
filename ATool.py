@@ -15824,7 +15824,7 @@ class AToolApp:
             if occs_package or occs_version:
                 package_name = occs_package or self.current_package_name or "(unknown)"
                 version_name = occs_version or "(unknown)"
-                return f"{package_name} V {version_name} ({self.current_occs_shared_mode})"
+                return f"{package_name} [{version_name}] ({self.current_occs_shared_mode})"
         return "Package: (none)"
 
     def _restore_default_status_text(self) -> None:
