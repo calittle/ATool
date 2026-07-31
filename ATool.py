@@ -166,7 +166,7 @@ class AToolApp:
         self.root.title("ATool")
         self._restore_window_geometry()
 
-        self.status_text = tk.StringVar(value="File: (none) | Package: (none)")
+        self.status_text = tk.StringVar(value="Package: (none)")
         self.operation_status_text = tk.StringVar(value="")
         self.data_status_text = tk.StringVar(value="Data: (none)")
         self.mapping_status_text = tk.StringVar(value="")
@@ -556,7 +556,12 @@ class AToolApp:
 
     def _create_main_layout(self) -> None:
         frame = ttk.Frame(self.root, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
+        # Keep the status bar in its own non-expanding grid row.  With both
+        # widgets packed, the expanding content frame could consume the
+        # available height while the window was being made smaller.
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        frame.grid(row=0, column=0, sticky="nsew")
 
         title_row = ttk.Frame(frame)
         title_row.pack(fill=tk.X)
@@ -604,7 +609,7 @@ class AToolApp:
         self._set_empty_fields_tree("No fields loaded")
 
         status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, borderwidth=1, padding=(8, 4))
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        status_bar.grid(row=1, column=0, sticky="ew")
         status_bar.columnconfigure(0, weight=1)
         status_bar.columnconfigure(1, weight=1)
 
@@ -15813,18 +15818,14 @@ class AToolApp:
         )
 
     def _default_status_text(self) -> str:
-        file_name = os.path.basename(self.current_file_path) if self.current_file_path else "(none)"
-        package_name = self.current_package_name if self.current_package_name else "(none)"
-        occs_suffix = ""
         if self.current_occs_manifest:
             occs_package = self._occs_manifest_package_short_name(self.current_occs_manifest)
             occs_version = self._occs_manifest_version_short_name(self.current_occs_manifest)
             if occs_package or occs_version:
-                occs_suffix = f" | Package Version: {occs_package} {occs_version}".rstrip()
-                if self.current_occs_shared_package_dir is not None and self.current_occs_shared_mode != "local":
-                    occs_suffix = f"{occs_suffix} ({self.current_occs_shared_mode})"
-        dirty_suffix = " | Local package changes" if self.package_bundle_dirty else ""
-        return f"File: {file_name} | Package: {package_name}{occs_suffix}{dirty_suffix}"
+                package_name = occs_package or self.current_package_name or "(unknown)"
+                version_name = occs_version or "(unknown)"
+                return f"{package_name} V {version_name} ({self.current_occs_shared_mode})"
+        return "Package: (none)"
 
     def _restore_default_status_text(self) -> None:
         self._status_note_job = None
