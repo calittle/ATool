@@ -216,6 +216,9 @@ class AToolApp:
         self.package_document_always_trigger_var = tk.BooleanVar(value=False)
         self._package_document_row_details: dict[str, dict[str, object]] = {}
         self._active_package_document_row: dict[str, object] | None = None
+        self._package_document_drag_start: tuple[int, int] | None = None
+        self._package_document_drag_selection: tuple[str, ...] = ()
+        self._package_document_dragging = False
 
         self._configure_platform_appearance()
         self._create_menu()
@@ -11646,6 +11649,9 @@ class AToolApp:
         tree.tag_configure("warning", foreground="#9a5b00")
         tree.tag_configure("error", foreground="#b00020")
         tree.bind("<<TreeviewSelect>>", self._on_package_documents_select)
+        tree.bind("<ButtonPress-1>", self._on_package_documents_drag_start, add="+")
+        tree.bind("<B1-Motion>", self._on_package_documents_drag_motion, add="+")
+        tree.bind("<ButtonRelease-1>", self._on_package_documents_drop, add="+")
         self.package_documents_tree = tree
 
         detail_frame = ttk.Frame(body)
@@ -11684,6 +11690,10 @@ class AToolApp:
             row=0,
             column=4,
         )
+        ttk.Label(
+            controls,
+            text="Select one or more associated documents and drag them to a new position.",
+        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(6, 0))
 
         ttk.Label(detail_frame, text="AT Condition").grid(row=2, column=0, sticky="w")
         condition_frame = ttk.Frame(detail_frame)
@@ -11858,6 +11868,121 @@ class AToolApp:
             lines.extend(f"- {item}" for item in diagnostics)
         self._set_package_documents_detail("\n".join(lines))
         self._select_at_document_for_package_row(row)
+
+    def _on_package_documents_drag_start(self, event: tk.Event) -> None:
+        """Capture a group before Treeview's click handling can collapse it."""
+        tree = self.package_documents_tree
+        self._package_document_drag_start = (event.x, event.y)
+        self._package_document_dragging = False
+        self._package_document_drag_selection = ()
+        if tree is None:
+            return
+        clicked_node = tree.identify_row(event.y)
+        selected_nodes = tree.selection()
+        if clicked_node and clicked_node in selected_nodes:
+            self._package_document_drag_selection = selected_nodes
+
+    def _on_package_documents_drag_motion(self, event: tk.Event) -> None:
+        if not self.package_documents_tree or self._package_document_drag_start is None:
+            return
+        start_x, start_y = self._package_document_drag_start
+        if abs(event.x - start_x) < 5 and abs(event.y - start_y) < 5:
+            return
+        selected_nodes = self._package_document_drag_selection or self.package_documents_tree.selection()
+        if not selected_nodes:
+            return
+        # A plain click on a selected row normally reduces the selection to that
+        # row. Restore the captured selection only once this becomes a drag, so
+        # ordinary clicking retains the platform's expected selection behavior.
+        self.package_documents_tree.selection_set(selected_nodes)
+        self._package_document_dragging = True
+        self.package_documents_tree.configure(cursor="fleur")
+
+    def _on_package_documents_drop(self, event: tk.Event) -> None:
+        tree = self.package_documents_tree
+        dragging = self._package_document_dragging
+        dragged_nodes = self._package_document_drag_selection or (tree.selection() if tree else ())
+        self._package_document_drag_start = None
+        self._package_document_drag_selection = ()
+        self._package_document_dragging = False
+        if tree:
+            tree.configure(cursor="")
+        if not tree or not dragging:
+            return
+        if self.package_documents_sort_column != "order" or self.package_documents_sort_reverse:
+            messagebox.showinfo("Package Documents", "Sort by Order (ascending) before dragging documents to reorder them.")
+            return
+        selected_rows = [
+            self._package_document_row_details[node_id]
+            for node_id in dragged_nodes
+            if node_id in self._package_document_row_details
+        ]
+        if not selected_rows:
+            return
+        target_node = tree.identify_row(event.y)
+        if not target_node:
+            children = tree.get_children()
+            if not children:
+                return
+            target_node = children[-1]
+            drop_after = True
+        else:
+            bounds = tree.bbox(target_node)
+            drop_after = bool(bounds and event.y > bounds[1] + bounds[3] / 2)
+        target_row = self._package_document_row_details.get(target_node)
+        if not target_row:
+            return
+        self._move_package_documents_to_drop_position(selected_rows, target_row, drop_after=drop_after)
+
+    def _move_package_documents_to_drop_position(
+        self,
+        selected_rows: list[dict[str, object]],
+        target_row: dict[str, object],
+        *,
+        drop_after: bool,
+    ) -> None:
+        """Move a selected group as a block, preserving its internal package order."""
+        if not all(row.get("associated") and isinstance(row.get("order"), int) for row in selected_rows):
+            messagebox.showinfo("Package Documents", "Only associated documents with numeric order values can be dragged to reorder.")
+            return
+        if not target_row.get("associated") or not isinstance(target_row.get("order"), int):
+            messagebox.showinfo("Package Documents", "Drop the documents on an associated document with a numeric order value.")
+            return
+        selected_uuids = {str(row.get("document_uuid", "")) for row in selected_rows}
+        target_uuid = str(target_row.get("document_uuid", ""))
+        if not target_uuid or target_uuid in selected_uuids:
+            return
+        ordered_rows = [
+            row
+            for row in self._build_package_document_rows()
+            if row.get("associated") and isinstance(row.get("order"), int)
+        ]
+        ordered_rows.sort(key=self._package_document_row_sort_key)
+        moving_rows = [row for row in ordered_rows if str(row.get("document_uuid", "")) in selected_uuids]
+        remaining_rows = [row for row in ordered_rows if str(row.get("document_uuid", "")) not in selected_uuids]
+        target_index = next(
+            (index for index, row in enumerate(remaining_rows) if str(row.get("document_uuid", "")) == target_uuid),
+            -1,
+        )
+        if not moving_rows or target_index < 0:
+            return
+        insert_index = target_index + (1 if drop_after else 0)
+        reordered_rows = remaining_rows[:insert_index] + moving_rows + remaining_rows[insert_index:]
+        order_values = sorted(int(row["order"]) for row in ordered_rows)
+        changed = False
+        for row, order in zip(reordered_rows, order_values):
+            document_uuid = str(row.get("document_uuid", ""))
+            if int(row["order"]) == order:
+                continue
+            if not self._set_package_association_order(document_uuid, current_order=order):
+                return
+            changed = True
+        if not changed:
+            return
+        self._write_package_association_files()
+        self._render_documents_tree()
+        self._refresh_package_documents_manager()
+        self._select_package_documents_by_uuid(selected_uuids)
 
     def _select_at_document_for_package_row(self, row: dict[str, object]) -> None:
         document_ref = row.get("document_ref")
@@ -12201,6 +12326,21 @@ class AToolApp:
             self.package_documents_tree.see(node_id)
             self._on_package_documents_select(tk.Event())
             return
+
+    def _select_package_documents_by_uuid(self, document_uuids: set[str]) -> None:
+        if not self.package_documents_tree or not document_uuids:
+            return
+        node_ids = [
+            node_id
+            for node_id, row in self._package_document_row_details.items()
+            if str(row.get("document_uuid", "")) in document_uuids
+        ]
+        if not node_ids:
+            return
+        self.package_documents_tree.selection_set(node_ids)
+        self.package_documents_tree.focus(node_ids[0])
+        self.package_documents_tree.see(node_ids[0])
+        self._on_package_documents_select(tk.Event())
 
     def _select_package_document_by_name(self, document_name: str) -> None:
         if not self.package_documents_tree:
