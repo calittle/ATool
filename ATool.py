@@ -38,6 +38,7 @@ class AToolApp:
     OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
     OCCS_PACKAGE_GET_TIMEOUT_MS = 360000
     SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
+    SHARED_PACKAGE_HISTORY_LIMIT = 5
     OCCS_CONVERT_XML_TIMEOUT_MS = 180000
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_PREVIEW_TIMEOUT_SECONDS = {
@@ -11038,6 +11039,32 @@ class AToolApp:
             f"Run OCCS migrate?\n\nSource: {source_session}\nTarget: {target_session}",
         ):
             return
+        refresh_order = [target_session, source_session, self._get_occs_session_alias()]
+        refresh_sessions = list(dict.fromkeys(alias for alias in refresh_order if alias))
+        self._refresh_occs_sessions_then_migrate(refresh_sessions, source_session, target_session)
+
+    def _refresh_occs_sessions_then_migrate(
+        self,
+        session_aliases: list[str],
+        source_session: str,
+        target_session: str,
+    ) -> None:
+        if session_aliases:
+            session_alias = session_aliases[0]
+            self._run_occs_command_async(
+                ["login", "--session", session_alias],
+                f"Refreshing OCCS session {session_alias}...",
+                lambda _result, remaining=session_aliases[1:]: self._refresh_occs_sessions_then_migrate(
+                    remaining,
+                    source_session,
+                    target_session,
+                ),
+                on_failure=lambda error, failed_session=session_alias: messagebox.showerror(
+                    "Migrate Config",
+                    f"Could not refresh OCCS session {failed_session}.\n\nDetails: {error}",
+                ),
+            )
+            return
         self._run_occs_command_async(
             [
                 "migrate",
@@ -11247,7 +11274,7 @@ class AToolApp:
             if completed.returncode != 0:
                 message = self._occs_error_message(parsed, stderr, completed.returncode)
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(message)
+                    self._run_occs_login_for_retry(command_args, message)
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -11257,7 +11284,7 @@ class AToolApp:
             if parsed.get("ok") is False:
                 message = self._occs_error_message(parsed, stderr, completed.returncode)
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(message)
+                    self._run_occs_login_for_retry(command_args, message)
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -11274,7 +11301,7 @@ class AToolApp:
             if completed.returncode != 0:
                 message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(message)
+                    self._run_occs_login_for_retry(command_args, message)
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -11292,6 +11319,7 @@ class AToolApp:
         timeout_message: str = "OCCS CLI command timed out.",
     ) -> subprocess.CompletedProcess[str]:
         command = self._build_occs_command(args)
+        self._debug_log(f"OCCS CLI command: {' '.join(command)}")
         process: subprocess.Popen[str] | None = None
         try:
             process = subprocess.Popen(
@@ -11337,15 +11365,20 @@ class AToolApp:
         except (OSError, ProcessLookupError):
             return
 
-    def _run_occs_login_for_retry(self, original_error: str) -> None:
-        self._debug_log("OCCS authorization failed; running `occs login` before retrying.")
+    def _run_occs_login_for_retry(self, command_args: list[str], original_error: str) -> None:
+        session_alias = self._occs_session_alias_for_command(command_args)
+        login_args = ["login"]
+        if session_alias:
+            login_args.extend(["--session", session_alias])
+        session_text = f" for session {session_alias}" if session_alias else ""
+        self._debug_log(f"OCCS authorization failed; running `occs login`{session_text} before retrying.")
         self.root.after(
             0,
-            lambda: self._set_occs_status_timer_message("OCCS session expired. Running occs login..."),
+            lambda: self._set_occs_status_timer_message(f"OCCS session expired. Refreshing{session_text}..."),
         )
         try:
             completed = self._run_occs_cli(
-                ["login"],
+                login_args,
                 timeout_seconds=self.OCCS_LOGIN_TIMEOUT_SECONDS,
                 stdin=subprocess.DEVNULL,
                 timeout_message="Automatic `occs login` timed out.",
@@ -11359,6 +11392,13 @@ class AToolApp:
             message = stderr or stdout or f"`occs login` exited with status {completed.returncode}."
             raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {message}")
         self._debug_log("OCCS login completed; retrying original command.")
+
+    def _occs_session_alias_for_command(self, command_args: list[str]) -> str:
+        try:
+            index = command_args.index("--session")
+            return str(command_args[index + 1]).strip()
+        except (ValueError, IndexError):
+            return self._get_occs_session_alias()
 
     def _should_retry_occs_after_login(self, command_args: list[str], message: str) -> bool:
         if not command_args or command_args[0] == "login":
@@ -13157,10 +13197,32 @@ class AToolApp:
         history_dir = package_dir / "published" / "history" / self._shared_publication_folder_name(owner)
         self._copy_occs_bundle_to_shared(context, published_dir)
         self._copy_occs_bundle_to_shared(context, history_dir)
+        self._prune_shared_package_history(history_dir.parent)
         entry = self._shared_package_entry_from_package_dir(package_dir)
         if entry is None:
             raise OSError("Shared package folder was updated but could not be reloaded.")
         return entry
+
+    def _prune_shared_package_history(self, history_root: Path) -> None:
+        try:
+            history_dirs = sorted(
+                (path for path in history_root.iterdir() if path.is_dir()),
+                key=lambda path: path.name,
+                reverse=True,
+            )
+        except OSError as error:
+            self._debug_log(f"Could not list shared package history for cleanup: {error}")
+            return
+
+        for stale_dir in history_dirs[self.SHARED_PACKAGE_HISTORY_LIMIT :]:
+            try:
+                self._retry_shared_folder_operation(
+                    lambda stale_dir=stale_dir: shutil.rmtree(stale_dir),
+                    f"remove old shared package history {stale_dir}",
+                )
+                self._debug_log(f"Removed old shared package history: {stale_dir}")
+            except OSError as error:
+                self._debug_log(f"Could not remove old shared package history {stale_dir}: {error}")
 
     def _shared_package_dir_for_manifest(self, manifest: dict[str, object]) -> Path:
         workspace_dir = self._ensure_occs_shared_workspace_dir()
