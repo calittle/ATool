@@ -6,6 +6,7 @@ import platform
 import re
 import signal
 import copy
+import errno
 import shutil
 import socket
 import subprocess
@@ -35,6 +36,8 @@ class AToolApp:
     MACOS_SELECTION_BACKGROUND = "#0a84ff"
     OCCS_SPECIFIC_VERSION_TIMEOUT_MS = 60000
     OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
+    OCCS_PACKAGE_GET_TIMEOUT_MS = 360000
+    SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
     OCCS_CONVERT_XML_TIMEOUT_MS = 180000
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_PREVIEW_TIMEOUT_SECONDS = {
@@ -10130,8 +10133,15 @@ class AToolApp:
             package_dir = entry.get("package_dir")
             lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir)) if isinstance(package_dir, Path) else None
             entry["lock"] = lock_payload
+            unavailable_reason = str(entry.get("unavailable_reason", "")).strip()
             status = "Available"
-            if lock_payload:
+            if unavailable_reason:
+                status = (
+                    "Unavailable — shared-folder timeout"
+                    if "operation timed out" in unavailable_reason.lower()
+                    else "Unavailable — shared folder could not be read"
+                )
+            if lock_payload and not unavailable_reason:
                 status = f"Locked by {self._shared_lock_owner_text(lock_payload)}"
             item_id = tree.insert(
                 "",
@@ -10177,6 +10187,15 @@ class AToolApp:
                 return
             entry = entry_by_id.get(selection[0])
             if not entry:
+                return
+            unavailable_reason = str(entry.get("unavailable_reason", "")).strip()
+            if unavailable_reason:
+                messagebox.showwarning(
+                    title,
+                    "This shared package cannot be opened because its manifest could not be read.\n\n"
+                    f"Details: {unavailable_reason}",
+                    parent=dialog,
+                )
                 return
             dialog.destroy()
             if callable(on_select):
@@ -11525,9 +11544,16 @@ class AToolApp:
 
     def _read_occs_manifest(self, bundle_dir: str) -> dict[str, object]:
         manifest_path = Path(os.path.expanduser(bundle_dir)) / "occs-package.json"
-        try:
+
+        def _read_manifest() -> object:
             with open(manifest_path, "r", encoding="utf-8") as source:
-                manifest = json.load(source)
+                return json.load(source)
+
+        try:
+            manifest = self._retry_shared_folder_operation(
+                _read_manifest,
+                f"read shared package manifest {manifest_path}",
+            )
         except (OSError, json.JSONDecodeError) as error:
             raise ValueError(f"Could not read OCCS bundle manifest:\n{manifest_path}\n\nDetails: {error}") from error
         if not isinstance(manifest, dict):
@@ -12970,10 +12996,7 @@ class AToolApp:
         return work_dir / f"{package_segment}-{version_segment}-{timestamp}"
 
     def _occs_package_get_timeout_ms(self, version_name: str) -> int:
-        normalized = str(version_name or "").strip().lower()
-        if not normalized or normalized == "latest":
-            return self.OCCS_LATEST_VERSION_TIMEOUT_MS
-        return self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS
+        return self.OCCS_PACKAGE_GET_TIMEOUT_MS
 
     def _build_occs_local_copy_path(
         self,
@@ -13011,8 +13034,18 @@ class AToolApp:
             return None
         try:
             manifest = self._read_occs_manifest(str(published_dir))
-        except ValueError:
-            return None
+        except ValueError as error:
+            return {
+                "workspace_dir": package_dir.parent.parent.parent,
+                "package_dir": package_dir,
+                "published_dir": published_dir,
+                "package_name": package_dir.parent.name,
+                "version_name": package_dir.name,
+                "manifest": {},
+                "publication": {},
+                "lock": None,
+                "unavailable_reason": str(error),
+            }
         publication = self._read_json_object(published_dir / "publication.json")
         package_name = self._occs_manifest_package_short_name(manifest) or package_dir.parent.name
         version_name = self._occs_manifest_version_short_name(manifest) or package_dir.name
@@ -13327,7 +13360,10 @@ class AToolApp:
         bundle_dir = context.get("bundle_dir")
         if not isinstance(manifest, dict) or not isinstance(bundle_dir, Path):
             raise OSError("Invalid package version context.")
-        target_dir.mkdir(parents=True, exist_ok=True)
+        self._retry_shared_folder_operation(
+            lambda: target_dir.mkdir(parents=True, exist_ok=True),
+            f"create shared folder {target_dir}",
+        )
         source_files = {
             "occs-package.json": bundle_dir / "occs-package.json",
             "assembly-template.json": Path(self._occs_bundle_assembly_template_path(str(bundle_dir), manifest)),
@@ -13339,7 +13375,11 @@ class AToolApp:
         for target_name, source_path in source_files.items():
             if not source_path.exists():
                 raise OSError(f"Missing package version file: {source_path}")
-            shutil.copy2(source_path, target_dir / target_name)
+            target_path = target_dir / target_name
+            self._retry_shared_folder_operation(
+                lambda source_path=source_path, target_path=target_path: shutil.copy2(source_path, target_path),
+                f"write shared package file {target_path}",
+            )
         source_hashes = manifest.get("sourceHashes") if isinstance(manifest, dict) else {}
         source_info = manifest.get("source") if isinstance(manifest, dict) else {}
         package_name = str(context.get("package_name", ""))
@@ -13367,8 +13407,33 @@ class AToolApp:
                 "sourceHashes": source_hashes if isinstance(source_hashes, dict) else {},
             },
         }
-        with open(target_dir / "publication.json", "w", encoding="utf-8") as target:
-            json.dump(publication, target, indent=2)
+        publication_path = target_dir / "publication.json"
+
+        def _write_publication() -> None:
+            with open(publication_path, "w", encoding="utf-8") as target:
+                json.dump(publication, target, indent=2)
+
+        self._retry_shared_folder_operation(
+            _write_publication,
+            f"write shared package file {publication_path}",
+        )
+
+    def _retry_shared_folder_operation(self, operation: object, description: str) -> object:
+        if not callable(operation):
+            raise ValueError("Shared folder operation is not callable.")
+        delays = self.SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS
+        for attempt in range(len(delays) + 1):
+            try:
+                return operation()
+            except OSError as error:
+                if error.errno != errno.ETIMEDOUT or attempt == len(delays):
+                    raise
+                delay = delays[attempt]
+                self._debug_log(
+                    f"Shared folder operation timed out; retrying in {delay} seconds "
+                    f"({attempt + 1}/{len(delays)}): {description}"
+                )
+                time.sleep(delay)
 
     def _shared_publication_folder_name(self, owner: dict[str, str]) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
