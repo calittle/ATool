@@ -34,22 +34,10 @@ class AToolApp:
     MACOS_CONTENT_BACKGROUND = "#ffffff"
     MACOS_TEXT_FOREGROUND = "#1f1f1f"
     MACOS_SELECTION_BACKGROUND = "#0a84ff"
-    OCCS_SPECIFIC_VERSION_TIMEOUT_MS = 60000
-    OCCS_LATEST_VERSION_TIMEOUT_MS = 120000
-    OCCS_PACKAGE_GET_TIMEOUT_MS = 360000
     SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
     SHARED_PACKAGE_HISTORY_LIMIT = 5
-    OCCS_CONVERT_XML_TIMEOUT_MS = 180000
+    DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
-    OCCS_PREVIEW_TIMEOUT_SECONDS = {
-        "PDF": 60,
-        "HTML": 30,
-        "TEXT": 20,
-        "CSV": 20,
-        "JSON": 20,
-        "METADATA": 20,
-    }
-    OCCS_LOGIN_TIMEOUT_SECONDS = 120
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     SUBPROCESS_OUTPUT_ENCODING = "utf-8"
     SUBPROCESS_OUTPUT_ERRORS = "replace"
@@ -66,6 +54,7 @@ class AToolApp:
         "occs": {
             "cli_path": "",
             "work_dir": "",
+            "request_timeout_seconds": DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS,
             "session_alias": "",
             "config_source_session_alias": "np",
             "config_target_session_alias": "pp",
@@ -4691,6 +4680,7 @@ class AToolApp:
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
+        request_timeout_seconds_var = tk.StringVar(value=str(self._get_occs_request_timeout_seconds()))
         session_alias_var = tk.StringVar(value=self._get_occs_session_alias())
         config_source_session_alias_var = tk.StringVar(value=self._get_occs_config_source_session_alias())
         config_target_session_alias_var = tk.StringVar(value=self._get_occs_config_target_session_alias())
@@ -4755,33 +4745,41 @@ class AToolApp:
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="Session Alias:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
-        session_alias_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(occs_group, text="Request Timeout (seconds):").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(occs_group, textvariable=request_timeout_seconds_var, width=12).grid(
+            row=2,
+            column=1,
+            sticky="w",
+            pady=(8, 0),
+        )
 
-        ttk.Label(occs_group, text="Config Source Session:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Session Alias:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
+        session_alias_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Config Source Session:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_source_session_alias_entry = ttk.Entry(
             occs_group,
             textvariable=config_source_session_alias_var,
             width=54,
         )
-        config_source_session_alias_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_source_session_alias_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config Target Session:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Config Target Session:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_target_session_alias_entry = ttk.Entry(
             occs_group,
             textvariable=config_target_session_alias_var,
             width=54,
         )
-        config_target_session_alias_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_target_session_alias_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config ID Filter:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Config ID Filter:").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
-        config_id_filter_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_id_filter_entry.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
-        shared_workspace_entry.grid(row=6, column=1, sticky="ew", pady=(8, 0))
+        shared_workspace_entry.grid(row=7, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
@@ -4796,23 +4794,23 @@ class AToolApp:
                 shared_workspace_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
-            row=6,
+            row=7,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="User Name:").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         retain_lock_check = ttk.Checkbutton(
             occs_group,
             text="Retain lock on package after update",
             variable=retain_lock_after_shared_update_var,
         )
-        retain_lock_check.grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        retain_lock_check.grid(row=9, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
@@ -4876,6 +4874,14 @@ class AToolApp:
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
 
         def _save_settings() -> None:
+            request_timeout_seconds = self._safe_int(request_timeout_seconds_var.get().strip())
+            if request_timeout_seconds is None or request_timeout_seconds <= 0:
+                messagebox.showerror(
+                    "User Settings",
+                    "Request Timeout must be a positive number of seconds.",
+                    parent=dialog,
+                )
+                return
             config_id_filter = config_id_filter_var.get().strip()
             if config_id_filter:
                 try:
@@ -4892,6 +4898,7 @@ class AToolApp:
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
+            self._set_occs_request_timeout_seconds(request_timeout_seconds)
             self._set_occs_session_alias(session_alias_var.get())
             self._set_occs_config_source_session_alias(config_source_session_alias_var.get())
             self._set_occs_config_target_session_alias(config_target_session_alias_var.get())
@@ -4943,6 +4950,10 @@ class AToolApp:
     def _set_occs_work_dir(self, work_dir: str) -> None:
         section = self._occs_settings_section()
         section["work_dir"] = str(work_dir or "").strip()
+
+    def _set_occs_request_timeout_seconds(self, timeout_seconds: int) -> None:
+        section = self._occs_settings_section()
+        section["request_timeout_seconds"] = max(int(timeout_seconds), 1)
 
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
@@ -5014,6 +5025,14 @@ class AToolApp:
         if isinstance(section, dict):
             configured = str(section.get("work_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_work_dir())
+
+    def _get_occs_request_timeout_seconds(self) -> int:
+        section = self.user_settings.get("occs")
+        configured = self._safe_int(section.get("request_timeout_seconds")) if isinstance(section, dict) else None
+        return configured if configured is not None and configured > 0 else self.DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS
+
+    def _get_occs_request_timeout_ms(self) -> int:
+        return self._get_occs_request_timeout_seconds() * 1000
 
     def _get_occs_session_alias(self) -> str:
         section = self.user_settings.get("occs")
@@ -5476,6 +5495,9 @@ class AToolApp:
             retain_lock_value = occs.get("retain_lock_after_shared_update")
             if isinstance(retain_lock_value, bool):
                 settings["occs"]["retain_lock_after_shared_update"] = retain_lock_value
+            request_timeout_seconds = self._safe_int(occs.get("request_timeout_seconds"))
+            if request_timeout_seconds is not None and request_timeout_seconds > 0:
+                settings["occs"]["request_timeout_seconds"] = request_timeout_seconds
             settings["occs"]["last_preview_render_types"] = self._normalize_preview_render_types(
                 occs.get("last_preview_render_types")
             )
@@ -8609,7 +8631,7 @@ class AToolApp:
                 "package",
                 "list",
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             "Listing Comms packages...",
             lambda result: self._open_occs_package_list_dialog(self._normalize_occs_packages(result)),
@@ -9728,7 +9750,7 @@ class AToolApp:
                 "--session",
                 source_session,
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             f"Loading Comms Config IDs from {source_session}...",
             lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
@@ -10736,7 +10758,7 @@ class AToolApp:
                 config_id,
                 "--dry-run",
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             "Running Comms publish dry run...",
             lambda result, selected_config_id=config_id: self._on_occs_save_dry_run_complete(
@@ -10787,7 +10809,7 @@ class AToolApp:
                 "--config-id",
                 config_id,
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             "Publishing package to Comms...",
             self._on_occs_package_save_complete,
@@ -10858,7 +10880,7 @@ class AToolApp:
             [
                 "list-configs",
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             "Resolving locked Config ID...",
             lambda result, lock_name=locked_config, stage=retry_stage: self._retry_occs_package_save_with_locked_config(
@@ -10912,7 +10934,7 @@ class AToolApp:
                 "--session",
                 source_session,
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             f"Loading Config IDs from {source_session}...",
             lambda result, selected_session=source_session: self._open_occs_config_close_dialog(
@@ -11379,7 +11401,7 @@ class AToolApp:
         try:
             completed = self._run_occs_cli(
                 login_args,
-                timeout_seconds=self.OCCS_LOGIN_TIMEOUT_SECONDS,
+                timeout_seconds=self._get_occs_request_timeout_seconds(),
                 stdin=subprocess.DEVNULL,
                 timeout_message="Automatic `occs login` timed out.",
             )
@@ -12749,7 +12771,7 @@ class AToolApp:
             "--output",
             str(path),
             "--timeout",
-            "60000",
+            str(self._get_occs_request_timeout_ms()),
         ]
         if query:
             args.extend(["--name", query])
@@ -13036,7 +13058,7 @@ class AToolApp:
         return work_dir / f"{package_segment}-{version_segment}-{timestamp}"
 
     def _occs_package_get_timeout_ms(self, version_name: str) -> int:
-        return self.OCCS_PACKAGE_GET_TIMEOUT_MS
+        return self._get_occs_request_timeout_ms()
 
     def _build_occs_local_copy_path(
         self,
@@ -13696,7 +13718,7 @@ class AToolApp:
                 "list",
                 package_text,
                 "--timeout",
-                str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ],
             f"Loading Comms package versions for {package_text}...",
             lambda result, selected_package=package_text: self._open_or_probe_occs_package_version_dialog(
@@ -13794,7 +13816,7 @@ class AToolApp:
             "--output",
             str(probe_output),
             "--timeout",
-            str(self.OCCS_SPECIFIC_VERSION_TIMEOUT_MS),
+            str(self._get_occs_request_timeout_ms()),
             "--json",
         ]
         login_attempted = False
@@ -14451,11 +14473,7 @@ class AToolApp:
         return "\n".join(lines)
 
     def _default_preview_timeout_seconds(self, render_types: list[str]) -> int:
-        total = sum(
-            self.OCCS_PREVIEW_TIMEOUT_SECONDS.get(render_type, 20)
-            for render_type in render_types
-        )
-        return max(total, 1)
+        return self._get_occs_request_timeout_seconds()
 
     def _build_occs_preview_output_base(self, data_file_path: Path, package_name: str) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -14785,7 +14803,7 @@ class AToolApp:
                 "--output",
                 str(output_path),
                 "--timeout",
-                str(self.OCCS_CONVERT_XML_TIMEOUT_MS),
+                str(self._get_occs_request_timeout_ms()),
             ]
             if reroot:
                 args.extend(["--reroot", reroot])

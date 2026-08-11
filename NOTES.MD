@@ -14,6 +14,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - User Settings now include `Confirm on Quit`, enabled by default. When enabled, ATool asks for confirmation before quitting from Cmd+Q, File > Exit, or the window close control.
 - User Settings now include an OCCS `Config ID Filter` regular expression. When set, the Publish Package to Comms Config ID dropdown only shows matching Config IDs, names, or labels.
 - User Settings now include Config Source and Target session aliases, defaulting to `np` and `pp`, for Config close and migration commands.
+- User Settings now include a default OCCS request timeout in seconds (360 by default), used for package, config, conversion, and automatic-login operations.
 
 ## Config Management
 
