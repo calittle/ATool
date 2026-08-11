@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import traceback
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
@@ -3199,8 +3200,27 @@ class AToolApp:
         return text[: max(0, limit - 3)] + "..."
 
     @staticmethod
-    def _sanitize_package_text(value: object) -> str:
-        return str(value or "").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    def _mojibake_score(value: str) -> int:
+        """Score common UTF-8 bytes that were decoded as Windows-1252 text."""
+        return len(re.findall(r"(?:Ã.|Â.|â.{1,2}|ð.|[À-ÿ][\u0080-\u00bf]|[€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ])", value))
+
+    @classmethod
+    def _repair_utf8_mojibake(cls, value: str) -> str:
+        """Repair a safe, high-confidence Windows-1252/UTF-8 decoding mistake once."""
+        score = cls._mojibake_score(value)
+        if score == 0:
+            return value
+        try:
+            repaired = value.encode("cp1252").decode("utf-8")
+        except UnicodeError:
+            return value
+        return repaired if cls._mojibake_score(repaired) < score else value
+
+    @classmethod
+    def _sanitize_package_text(cls, value: object) -> str:
+        text = unicodedata.normalize("NFC", str(value or ""))
+        text = re.sub(r"[\x00-\x1f\x7f-\x9f]+", " ", text)
+        return cls._repair_utf8_mojibake(text)
 
     @classmethod
     def _sanitize_package_text_object(cls, value: object) -> bool:
@@ -3225,6 +3245,41 @@ class AToolApp:
                 elif isinstance(item, (dict, list)):
                     changed = cls._sanitize_package_text_object(item) or changed
             return changed
+        return False
+
+    @classmethod
+    def _payload_condition_validation_issues(cls, value: object, path: str = "$") -> list[str]:
+        """Return validation errors for persisted Condition values only."""
+        issues: list[str] = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                item_path = f"{path}.{key}"
+                if key == "Condition" and isinstance(item, str):
+                    condition_issues, _warnings = cls._at_condition_validation_messages(item)
+                    issues.extend(f"{item_path}: {issue}" for issue in condition_issues)
+                elif isinstance(item, (dict, list)):
+                    issues.extend(cls._payload_condition_validation_issues(item, item_path))
+            return issues
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                issues.extend(cls._payload_condition_validation_issues(item, f"{path}[{index}]"))
+        return issues
+
+    def _sanitize_and_validate_payload_for_save(self) -> bool:
+        if self.current_payload is None:
+            return True
+        self._sanitize_package_text_object(self.current_payload)
+        issues = self._payload_condition_validation_issues(self.current_payload)
+        if not issues:
+            return True
+        preview = "\n".join(f"- {issue}" for issue in issues[:8])
+        suffix = "\n- …" if len(issues) > 8 else ""
+        messagebox.showerror(
+            "Invalid Conditions",
+            "ATool did not save the template because one or more Condition values are invalid.\n\n"
+            + preview
+            + suffix,
+        )
         return False
 
     def _delete_condition_library_entry(self) -> None:
@@ -15119,7 +15174,8 @@ class AToolApp:
         self._sync_active_layout_form_to_model()
         self._sync_all_fields_to_payload()
         self._sync_condition_library_to_payload()
-        self._sanitize_package_text_object(self.current_payload)
+        if not self._sanitize_and_validate_payload_for_save():
+            return False
         backup_path = self._build_backup_path(self.current_file_path)
         source_backup_path: str | None = None
         wrote_source_file = False
@@ -15182,7 +15238,8 @@ class AToolApp:
         self._sync_active_layout_form_to_model()
         self._sync_all_fields_to_payload()
         self._sync_condition_library_to_payload()
-        self._sanitize_package_text_object(self.current_payload)
+        if not self._sanitize_and_validate_payload_for_save():
+            return False
 
         entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
         if entry is None:
@@ -15368,7 +15425,7 @@ class AToolApp:
         self._update_window_title()
         if sanitized_loaded_text:
             self._show_temporary_status(
-                "Removed unsupported line breaks from package text; save before publishing.",
+                "Sanitized package text; save before publishing.",
                 duration_ms=7000,
             )
 
