@@ -5052,6 +5052,59 @@ class AToolApp:
             return "pp"
         return str(section.get("config_target_session_alias", "pp")).strip() or "pp"
 
+    @staticmethod
+    def _occs_saved_session_target(session_alias: str) -> dict[str, str]:
+        """Return the saved OCCS target for an alias without exposing credentials."""
+        alias = str(session_alias or "").strip()
+        if not alias:
+            return {}
+        try:
+            with open(Path.home() / ".occs-session.json", "r", encoding="utf-8") as source:
+                store = json.load(source)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(store, dict):
+            return {}
+        sessions = store.get("sessions")
+        aliases = store.get("aliases")
+        if not isinstance(sessions, dict):
+            # Support the legacy single-session file format.
+            sessions = {}
+            key = ".".join(
+                part for part in (
+                    str(store.get("customer", "")).strip(),
+                    str(store.get("region", "")).strip(),
+                ) if part
+            )
+            tenancy = str(store.get("tenancy", "")).strip()
+            if key and tenancy:
+                sessions[f"{key}/{tenancy}"] = store
+        session_key = aliases.get(alias, alias) if isinstance(aliases, dict) else alias
+        session = sessions.get(session_key)
+        if not isinstance(session, dict):
+            return {}
+        target = {
+            "customer": str(session.get("customer", "")).strip(),
+            "region": str(session.get("region", "")).strip(),
+            "tenancy": str(session.get("tenancy", "")).strip(),
+        }
+        return target if all(target.values()) else {}
+
+    def _occs_login_args_for_session(self, session_alias: str) -> list[str]:
+        login_args = ["login"]
+        alias = str(session_alias or "").strip()
+        if not alias:
+            return login_args
+        login_args.extend(["--session", alias])
+        target = self._occs_saved_session_target(alias)
+        if target:
+            login_args.extend([
+                "--customer", target["customer"],
+                "--region", target["region"],
+                "--tenancy", target["tenancy"],
+            ])
+        return login_args
+
     def _get_occs_config_id_filter(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -11074,7 +11127,7 @@ class AToolApp:
         if session_aliases:
             session_alias = session_aliases[0]
             self._run_occs_command_async(
-                ["login", "--session", session_alias],
+                self._occs_login_args_for_session(session_alias),
                 f"Refreshing OCCS session {session_alias}...",
                 lambda _result, remaining=session_aliases[1:]: self._refresh_occs_sessions_then_migrate(
                     remaining,
@@ -11389,9 +11442,7 @@ class AToolApp:
 
     def _run_occs_login_for_retry(self, command_args: list[str], original_error: str) -> None:
         session_alias = self._occs_session_alias_for_command(command_args)
-        login_args = ["login"]
-        if session_alias:
-            login_args.extend(["--session", session_alias])
+        login_args = self._occs_login_args_for_session(session_alias)
         session_text = f" for session {session_alias}" if session_alias else ""
         self._debug_log(f"OCCS authorization failed; running `occs login`{session_text} before retrying.")
         self.root.after(
