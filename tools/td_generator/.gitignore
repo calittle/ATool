@@ -1,0 +1,5 @@
+# Local TD deliverables, render evidence, resource indexes, and XML conversions.
+generated/
+
+# ATool HTML previews created beside source sample inputs.
+samples/**/*-preview-*.html
