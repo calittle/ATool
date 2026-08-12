@@ -21,6 +21,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from xml.etree import ElementTree
 
+from atool_core.condition_evaluator import ConditionEvaluator
+
 
 class OccsCommandCancelled(RuntimeError):
     pass
@@ -17119,11 +17121,8 @@ class AToolApp:
         comms_compatible: bool = True,
         warnings: list[str] | None = None,
     ) -> bool:
-        text = self._extract_condition_body(condition)
-        if not text:
-            return True
-        return self._evaluate_condition_expression(
-            text,
+        return ConditionEvaluator(self._loaded_fields)._evaluate_document_condition(
+            condition,
             data_payload,
             comms_compatible=comms_compatible,
             warnings=warnings,
