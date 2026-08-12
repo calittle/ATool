@@ -3,3 +3,4 @@ generated/
 
 # ATool HTML previews created beside source sample inputs.
 samples/**/*-preview-*.html
+comms_cache/
