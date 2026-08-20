@@ -89,6 +89,8 @@ class AToolApp:
         self._field_node_details: dict[str, dict[str, object]] = {}
         self._document_node_details: dict[str, dict[str, object]] = {}
         self._layout_node_details: dict[str, dict[str, object]] = {}
+        self._layout_path_value_cache: dict[tuple[int, str], list[object]] = {}
+        self._layout_condition_cache: dict[tuple[int, int, str], bool] = {}
         self._triggered_document_names: set[str] = set()
         self.documents_panel_width = self._load_saved_documents_panel_width()
         self.document_metadata_collapsed = self._load_document_details_section_collapsed("metadata")
@@ -99,6 +101,12 @@ class AToolApp:
         self._fields_window_geometry_job: str | None = None
         self.layouts_window: tk.Toplevel | None = None
         self._layouts_window_geometry_job: str | None = None
+        self.data_browser_window: tk.Toplevel | None = None
+        self.data_browser_search_var = tk.StringVar(value="")
+        self.data_browser_search_mode_var = tk.StringVar(value="Auto")
+        self.data_browser_status_var = tk.StringVar(value="Map a data file to inspect it.")
+        self._data_browser_node_values: dict[str, object] = {}
+        self._data_browser_search_values: dict[str, object] = {}
         self._local_occs_cleanup_window: tk.Toplevel | None = None
         self._refresh_local_occs_cleanup_dialog = None
         self.condition_library_window: tk.Toplevel | None = None
@@ -467,6 +475,10 @@ class AToolApp:
         window_menu.add_command(
             label="Show Package Documents",
             command=self.show_package_documents_manager,
+        )
+        window_menu.add_command(
+            label="Show Data Browser",
+            command=self._show_data_browser_window,
         )
 
         menu_bar.add_cascade(label="File", menu=file_menu)
@@ -1565,6 +1577,221 @@ class AToolApp:
                 }
             }
         )
+
+    def _create_data_browser_window(self) -> None:
+        if self.data_browser_window is not None and self.data_browser_window.winfo_exists():
+            return
+        self.data_browser_window = self._create_toplevel(self.root)
+        self.data_browser_window.title("ATool - Data Browser")
+        self.data_browser_window.minsize(680, 440)
+        self._attach_app_menu(self.data_browser_window)
+        self.data_browser_window.protocol("WM_DELETE_WINDOW", self._hide_data_browser_window)
+        self._bind_search_shortcut(self.data_browser_window, self._focus_data_browser_search_event)
+
+        container = ttk.Frame(self.data_browser_window, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
+
+        toolbar = ttk.Frame(container)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        toolbar.columnconfigure(1, weight=1)
+        ttk.Label(toolbar, text="Search:").grid(row=0, column=0, sticky="w")
+        self.data_browser_search_entry = ttk.Entry(toolbar, textvariable=self.data_browser_search_var)
+        self.data_browser_search_entry.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self.data_browser_search_entry.bind("<Return>", self._search_data_browser_event)
+        mode = ttk.Combobox(
+            toolbar,
+            textvariable=self.data_browser_search_mode_var,
+            values=("Auto", "JSONPath", "Full Text"),
+            state="readonly",
+            width=11,
+        )
+        mode.grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(toolbar, text="Search", command=self._search_data_browser).grid(row=0, column=3)
+        ttk.Button(toolbar, text="Clear", command=self._clear_data_browser_search).grid(row=0, column=4, padx=(6, 0))
+        ttk.Label(
+            container,
+            text="Use a JSONPath such as $.customer.name or $..billId, or search any text in the mapped data.",
+            foreground="#555555",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+
+        panes = ttk.Panedwindow(container, orient=tk.VERTICAL)
+        panes.grid(row=2, column=0, sticky="nsew")
+        tree_frame = ttk.Frame(panes)
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        self.data_browser_tree = ttk.Treeview(tree_frame, columns=("value",), show="tree headings")
+        self.data_browser_tree.heading("#0", text="JSON Path / Key")
+        self.data_browser_tree.heading("value", text="Value")
+        self.data_browser_tree.column("#0", width=360, stretch=True)
+        self.data_browser_tree.column("value", width=420, stretch=True)
+        self.data_browser_tree.grid(row=0, column=0, sticky="nsew")
+        tree_y_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.data_browser_tree.yview)
+        tree_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.data_browser_tree.configure(yscrollcommand=tree_y_scroll.set)
+        self.data_browser_tree.bind("<<TreeviewSelect>>", self._on_data_browser_tree_select)
+
+        details_frame = ttk.Frame(panes)
+        details_frame.columnconfigure(0, weight=1)
+        details_frame.rowconfigure(1, weight=1)
+        ttk.Label(details_frame, text="Selected value:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.data_browser_details = tk.Text(details_frame, height=9, wrap="none", state=tk.DISABLED)
+        self.data_browser_details.grid(row=1, column=0, sticky="nsew")
+        details_y_scroll = ttk.Scrollbar(details_frame, orient=tk.VERTICAL, command=self.data_browser_details.yview)
+        details_y_scroll.grid(row=1, column=1, sticky="ns")
+        self.data_browser_details.configure(yscrollcommand=details_y_scroll.set)
+        panes.add(tree_frame, weight=3)
+        panes.add(details_frame, weight=2)
+        ttk.Label(container, textvariable=self.data_browser_status_var, anchor=tk.W).grid(
+            row=3, column=0, sticky="ew", pady=(8, 0)
+        )
+        self._refresh_data_browser()
+
+    def _show_data_browser_window(self) -> None:
+        self._create_data_browser_window()
+        assert self.data_browser_window is not None
+        self.data_browser_window.deiconify()
+        self.data_browser_window.lift()
+        self.data_browser_window.focus_force()
+        self._focus_data_browser_search()
+
+    def _hide_data_browser_window(self) -> None:
+        if self.data_browser_window is not None and self.data_browser_window.winfo_exists():
+            self.data_browser_window.withdraw()
+
+    def _focus_data_browser_search_event(self, _event: tk.Event) -> str:
+        self._focus_data_browser_search()
+        return "break"
+
+    def _focus_data_browser_search(self) -> None:
+        if hasattr(self, "data_browser_search_entry"):
+            self._focus_entry_widget(self.data_browser_search_entry)
+
+    def _search_data_browser_event(self, _event: tk.Event) -> str:
+        self._search_data_browser()
+        return "break"
+
+    def _clear_data_browser_search(self) -> None:
+        self.data_browser_search_var.set("")
+        self._refresh_data_browser()
+        self._focus_data_browser_search()
+
+    def _refresh_data_browser(self) -> None:
+        if self.data_browser_window is None or not self.data_browser_window.winfo_exists():
+            return
+        if not hasattr(self, "data_browser_tree"):
+            return
+        self.data_browser_tree.delete(*self.data_browser_tree.get_children())
+        self._data_browser_node_values = {}
+        self._data_browser_search_values = {}
+        self._set_readonly_text_widget_value(self.data_browser_details, "")
+        payload = self.current_data_payload
+        if payload is None:
+            self.data_browser_status_var.set("Map a data file to inspect it.")
+            return
+        self._populate_data_browser_node("", "$", payload)
+        self.data_browser_status_var.set("Mapped data loaded. Enter a JSONPath or full-text search.")
+
+    def _populate_data_browser_node(self, parent: str, path: str, value: object) -> None:
+        if not hasattr(self, "data_browser_tree"):
+            return
+        if len(self._data_browser_node_values) >= 10000:
+            if not parent:
+                self.data_browser_status_var.set("Data tree limited to 10,000 nodes; use search to narrow it.")
+            return
+        display_key = "$" if path == "$" else path.rsplit(".", 1)[-1]
+        if isinstance(value, list) and path.endswith("]"):
+            display_key = path.rsplit("[", 1)[-1]
+        value_preview = self._data_browser_value_preview(value)
+        node_id = self.data_browser_tree.insert(parent, "end", text=display_key, values=(value_preview,), open=False)
+        self._data_browser_node_values[node_id] = value
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = self._data_browser_child_path(path, str(key))
+                self._populate_data_browser_node(node_id, child_path, child)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                self._populate_data_browser_node(node_id, f"{path}[{index}]", child)
+
+    @staticmethod
+    def _data_browser_child_path(parent_path: str, key: str) -> str:
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            return f"{parent_path}.{key}"
+        return f"{parent_path}[{json.dumps(key, ensure_ascii=False)}]"
+
+    @staticmethod
+    def _data_browser_value_preview(value: object) -> str:
+        if isinstance(value, dict):
+            return f"{{…}} ({len(value)} key(s))"
+        if isinstance(value, list):
+            return f"[…] ({len(value)} item(s))"
+        text = json.dumps(value, ensure_ascii=False)
+        return text if len(text) <= 180 else f"{text[:177]}…"
+
+    def _on_data_browser_tree_select(self, _event: tk.Event) -> None:
+        selected = self.data_browser_tree.selection()
+        if not selected:
+            return
+        value = self._data_browser_node_values.get(selected[0])
+        if value is None and selected[0] not in self._data_browser_node_values:
+            value = self._data_browser_search_values.get(selected[0])
+        self._set_readonly_text_widget_value(
+            self.data_browser_details,
+            json.dumps(value, indent=2, ensure_ascii=False),
+        )
+
+    def _search_data_browser(self) -> None:
+        query = self.data_browser_search_var.get().strip()
+        if not query:
+            self._refresh_data_browser()
+            return
+        if self.current_data_payload is None:
+            self.data_browser_status_var.set("Map a data file before searching.")
+            return
+        mode = self.data_browser_search_mode_var.get()
+        use_jsonpath = mode == "JSONPath" or (mode == "Auto" and query.startswith("$"))
+        self.data_browser_tree.delete(*self.data_browser_tree.get_children())
+        self._data_browser_node_values = {}
+        self._data_browser_search_values = {}
+        self._set_readonly_text_widget_value(self.data_browser_details, "")
+        if use_jsonpath:
+            values = self._extract_values_by_path(self.current_data_payload, query)
+            for index, value in enumerate(values, start=1):
+                node_id = self.data_browser_tree.insert("", "end", text=f"Result {index}", values=(self._data_browser_value_preview(value),))
+                self._data_browser_node_values[node_id] = value
+            self.data_browser_status_var.set(f"JSONPath returned {len(values)} result(s).")
+            return
+
+        matches = self._find_data_browser_text_matches(self.current_data_payload, query)
+        for path, value in matches:
+            node_id = self.data_browser_tree.insert("", "end", text=path, values=(self._data_browser_value_preview(value),))
+            self._data_browser_node_values[node_id] = value
+        self.data_browser_status_var.set(f"Full-text search returned {len(matches)} result(s).")
+
+    def _find_data_browser_text_matches(self, payload: object, query: str) -> list[tuple[str, object]]:
+        needle = query.casefold()
+        matches: list[tuple[str, object]] = []
+
+        def visit(value: object, path: str) -> None:
+            if len(matches) >= 1000:
+                return
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    child_path = self._data_browser_child_path(path, str(key))
+                    if needle in str(key).casefold():
+                        matches.append((child_path, child))
+                    visit(child, child_path)
+                return
+            if isinstance(value, list):
+                for index, child in enumerate(value):
+                    visit(child, f"{path}[{index}]")
+                return
+            if needle in str(value).casefold():
+                matches.append((path, value))
+
+        visit(payload, "$")
+        return matches
 
     def _create_layouts_window(self) -> None:
         if self.layouts_window is not None and self.layouts_window.winfo_exists():
@@ -5693,6 +5920,23 @@ class AToolApp:
             self._set_empty_layouts_tree("No layouts found")
         self._update_layout_context_buttons()
 
+    def _clear_layout_mapping_caches(self) -> None:
+        """Discard memoized layout lookups when mapped data or layout rules change."""
+        self._layout_path_value_cache.clear()
+        self._layout_condition_cache.clear()
+
+    def _extract_layout_values_by_path(self, payload: object, path: str) -> list[object]:
+        normalized_path = path.strip()
+        if not normalized_path:
+            return []
+        cache_key = (id(payload), normalized_path)
+        cached = self._layout_path_value_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        values = self._extract_values_by_path(payload, normalized_path)
+        self._layout_path_value_cache[cache_key] = values
+        return values
+
     def _insert_layout_node(self, parent_node: str, layout: dict[str, object]) -> None:
         node_text = self._build_layout_tree_label("layout", layout)
         node_id = self.layouts_tree.insert(parent_node, "end", text=node_text, open=False)
@@ -5949,7 +6193,7 @@ class AToolApp:
                 return "(field has no path)"
             iteration_details = self._find_iteration_details_for_layout_node()
             if not iteration_details:
-                values = self._extract_values_by_path(self.current_data_payload, path)
+                values = self._extract_layout_values_by_path(self.current_data_payload, path)
                 return self._format_mapped_nodeset_preview(values) if values else "(no mapped value)"
 
             iteration_ref = iteration_details.get("source_ref")
@@ -5963,7 +6207,7 @@ class AToolApp:
                 return "(no iterator rows)"
             row_lines: list[str] = []
             for row_index, item in enumerate(iteration_items, start=1):
-                row_values = self._extract_values_by_path(item, path)
+                row_values = self._extract_layout_values_by_path(item, path)
                 if row_values:
                     row_preview = self._format_mapped_nodeset_preview(row_values)
                 else:
@@ -6000,7 +6244,13 @@ class AToolApp:
         condition_text = str(source_ref.get("Condition", "")).strip()
         if not condition_text:
             return True
-        return self._evaluate_document_condition(condition_text, self.current_data_payload)
+        cache_key = (id(self.current_data_payload), id(source_ref), condition_text)
+        cached = self._layout_condition_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = self._evaluate_document_condition(condition_text, self.current_data_payload)
+        self._layout_condition_cache[cache_key] = result
+        return result
 
     def _layout_mapping_passed_for_node_details(self, details: dict[str, object]) -> bool:
         if self.current_data_payload is None:
@@ -6017,7 +6267,7 @@ class AToolApp:
         if node_kind == "field":
             iteration_details = self._find_iteration_details_for_layout_details(details)
             if not iteration_details:
-                return bool(self._extract_values_by_path(self.current_data_payload, path))
+                return bool(self._extract_layout_values_by_path(self.current_data_payload, path))
             iteration_ref = iteration_details.get("source_ref")
             if not isinstance(iteration_ref, dict):
                 return False
@@ -6027,14 +6277,14 @@ class AToolApp:
             iteration_items = self._extract_iteration_items(iteration_ref, self.current_data_payload)
             if not iteration_items:
                 return False
-            return all(self._extract_values_by_path(item, path) for item in iteration_items)
+            return all(self._extract_layout_values_by_path(item, path) for item in iteration_items)
         return False
 
     def _extract_iteration_items(self, iteration_ref: dict[str, object], payload: object) -> list[object]:
         path = str(iteration_ref.get("Path", "")).strip()
         if not path:
             return []
-        values = self._extract_values_by_path(payload, path)
+        values = self._extract_layout_values_by_path(payload, path)
         items: list[object] = []
         for value in values:
             if isinstance(value, list):
@@ -6215,6 +6465,7 @@ class AToolApp:
 
         if not changed:
             return
+        self._clear_layout_mapping_caches()
         self._touch_selected_document_updated()
         self._set_dirty(True)
         if node_kind == "condition":
@@ -8835,6 +9086,7 @@ class AToolApp:
     def _clear_current_package_state(self) -> None:
         self._mapping_job_id += 1
         self._mapping_in_progress = False
+        self._clear_layout_mapping_caches()
         self.current_payload = None
         self.current_file_path = None
         self.current_source_file_path = None
@@ -8864,6 +9116,7 @@ class AToolApp:
         self._render_fields_tree()
         self.data_status_text.set("Data: (none)")
         self.mapping_status_text.set("")
+        self._refresh_data_browser()
         self.document_count_text.set("Documents: 0")
         self.field_count_text.set("Fields: 0")
         self.root.title("ATool")
@@ -15139,6 +15392,7 @@ class AToolApp:
     def clear_mapping(self) -> None:
         self._mapping_job_id += 1
         self._mapping_in_progress = False
+        self._clear_layout_mapping_caches()
         self.current_data_payload = None
         self.current_data_file_path = None
         self._show_triggered_documents_only = False
@@ -15146,6 +15400,7 @@ class AToolApp:
         self._triggered_document_names = set()
         self.data_status_text.set("Data: (none)")
         self.mapping_status_text.set("")
+        self._refresh_data_browser()
         for field in self._loaded_fields:
             field.pop("mapped_values", None)
         for document in self._loaded_documents:
@@ -15392,6 +15647,7 @@ class AToolApp:
         self._populate_condition_library_form(None)
         self._mapping_job_id += 1
         self._mapping_in_progress = False
+        self._clear_layout_mapping_caches()
         self.current_data_payload = None
         self.current_data_file_path = None
         self._show_triggered_documents_only = False
@@ -15411,6 +15667,7 @@ class AToolApp:
         self.status_text.set(self._default_status_text())
         self.data_status_text.set("Data: (none)")
         self.mapping_status_text.set("")
+        self._refresh_data_browser()
         self.document_count_text.set(f"Documents: {len(documents)}")
         self.field_count_text.set(f"Fields: {len(fields)}")
         self._update_mapping_controls()
@@ -15566,8 +15823,10 @@ class AToolApp:
             return
         self._mapping_in_progress = False
         self.mapping_status_text.set("")
+        self._clear_layout_mapping_caches()
         self.current_data_payload = data_payload
         self._show_triggered_documents_only = True
+        self._refresh_data_browser()
 
         for index, mapped_values in mapped_values_by_index.items():
             if 0 <= index < len(self._loaded_fields):
@@ -16300,6 +16559,8 @@ class AToolApp:
             self.condition_library_window.destroy()
         if self.package_documents_window is not None and self.package_documents_window.winfo_exists():
             self.package_documents_window.destroy()
+        if self.data_browser_window is not None and self.data_browser_window.winfo_exists():
+            self.data_browser_window.destroy()
         self.root.destroy()
 
     def _prompt_save_if_dirty(self) -> bool:
@@ -16655,11 +16916,22 @@ class AToolApp:
         )
 
     def _format_mapped_nodeset_preview(self, mapped_values: list[object]) -> str:
-        preview_items = mapped_values[:5]
+        preview_items = [self._format_mapping_value_preview(value) for value in mapped_values[:5]]
         preview_json = json.dumps(preview_items, ensure_ascii=False)
         if len(mapped_values) > 5:
             return f"{preview_json} (+{len(mapped_values) - 5} more)"
         return preview_json
+
+    @staticmethod
+    def _format_mapping_value_preview(value: object) -> object:
+        """Keep mapping diagnostics useful without rendering entire mapped objects."""
+        if isinstance(value, dict):
+            return f"{{…}} ({len(value)} key(s))"
+        if isinstance(value, list):
+            return f"[…] ({len(value)} item(s))"
+        if isinstance(value, str) and len(value) > 300:
+            return f"{value[:297]}…"
+        return value
 
     def _build_document_condition_breakdown(
         self,
