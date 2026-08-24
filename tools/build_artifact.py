@@ -22,6 +22,9 @@ PACKAGE_FILES = (
     "Run_ATool.zsh",
     "README.md",
 )
+PACKAGE_DIRECTORIES = (
+    "atool_core",
+)
 LOCAL_CONFIG_FILE = ".atool-build.local.json"
 
 
@@ -106,6 +109,34 @@ def read_package_file(repo_root: Path, relative_path: str, source: str) -> bytes
     if result.returncode == 0:
         return result.stdout
     return file_path.read_bytes()
+
+
+def package_directory_files(repo_root: Path, source: str) -> tuple[str, ...]:
+    """Return every tracked/runtime file in package directories for the release zip."""
+    if source == "head":
+        relative_paths = git_output(
+            repo_root,
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "HEAD",
+            "--",
+            *PACKAGE_DIRECTORIES,
+            default="",
+        ).splitlines()
+        return tuple(path for path in relative_paths if path)
+
+    relative_paths: list[str] = []
+    for directory in PACKAGE_DIRECTORIES:
+        directory_path = repo_root / directory
+        if not directory_path.is_dir():
+            raise RuntimeError(f"Required package directory is missing: {directory}")
+        relative_paths.extend(
+            str(path.relative_to(repo_root))
+            for path in directory_path.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        )
+    return tuple(sorted(relative_paths))
 
 
 def read_release_notes_body(repo_root: Path, source: str) -> str:
@@ -212,6 +243,8 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
 
     with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for relative_path in PACKAGE_FILES:
+            archive.writestr(relative_path, read_package_file(repo_root, relative_path, source))
+        for relative_path in package_directory_files(repo_root, source):
             archive.writestr(relative_path, read_package_file(repo_root, relative_path, source))
         archive.writestr(
             "NOTES.MD",

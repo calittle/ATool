@@ -7,6 +7,7 @@ For automated builds.
 Shar the ATool folder or a zip containing:
 
 - `ATool.py`
+- `atool_core/` (the application support package)
 - `Run_ATool.bat`
 - `Run_ATool.zsh`
 - `README.md`
@@ -75,4 +76,3 @@ Build from the current working tree:
 ```bash
 python3 tools/build_artifact.py --source worktree
 ```
-
