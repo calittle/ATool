@@ -67,6 +67,8 @@ class AToolApp:
             "shared_workspace_dir": "",
             "user_name": "",
             "retain_lock_after_shared_update": False,
+            "use_static_xsd_conversion": False,
+            "static_xsd_path": "",
             "package_mru": [],
             "preview_open_programs": {
                 "PDF": "",
@@ -4972,6 +4974,8 @@ class AToolApp:
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
         retain_lock_after_shared_update_var = tk.BooleanVar(value=self._get_retain_lock_after_shared_update_setting())
+        use_static_xsd_conversion_var = tk.BooleanVar(value=self._get_use_static_xsd_conversion_setting())
+        static_xsd_path_var = tk.StringVar(value=self._get_static_xsd_path())
         preview_program_vars = {
             render_type: tk.StringVar(value=self._get_occs_preview_open_program(render_type))
             for render_type in self.OCCS_PREVIEW_RENDER_TYPES
@@ -5096,6 +5100,41 @@ class AToolApp:
         )
         retain_lock_check.grid(row=9, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
+        static_xsd_check = ttk.Checkbutton(
+            occs_group,
+            text="Use local XSD for XML conversion (bypass OCCS conversion API)",
+            variable=use_static_xsd_conversion_var,
+        )
+        static_xsd_check.grid(row=10, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Static XSD: ").grid(row=11, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        static_xsd_entry = ttk.Entry(occs_group, textvariable=static_xsd_path_var, width=54)
+        static_xsd_entry.grid(row=11, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_static_xsd() -> None:
+            current_path = static_xsd_path_var.get().strip()
+            initial_dir = os.path.dirname(current_path) if current_path else str(Path.home())
+            selected_path = self._run_file_dialog(
+                filedialog.askopenfilename,
+                dialog,
+                title="Select XML Schema Definition",
+                initialdir=initial_dir or None,
+                filetypes=[
+                    ("XML Schema Files", "*.xsd *.XSD"),
+                    ("All Files", "*.*"),
+                ],
+            )
+            if selected_path:
+                static_xsd_path_var.set(selected_path)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_static_xsd).grid(
+            row=11,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
         preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         preview_group.columnconfigure(1, weight=1)
@@ -5177,6 +5216,22 @@ class AToolApp:
                         parent=dialog,
                     )
                     return
+            static_xsd_path = static_xsd_path_var.get().strip()
+            if use_static_xsd_conversion_var.get():
+                if not static_xsd_path:
+                    messagebox.showerror(
+                        "User Settings",
+                        "Select an XSD before enabling local XML conversion.",
+                        parent=dialog,
+                    )
+                    return
+                if not Path(os.path.expanduser(static_xsd_path)).is_file():
+                    messagebox.showerror(
+                        "User Settings",
+                        f"XSD file not found:\n{static_xsd_path}",
+                        parent=dialog,
+                    )
+                    return
             self._set_confirm_on_quit_enabled(bool(confirm_on_quit_var.get()))
             self._set_document_collapse_enabled(bool(collapse_var.get()))
             self._set_debug_logging_enabled(bool(debug_var.get()))
@@ -5190,6 +5245,8 @@ class AToolApp:
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
             self._set_retain_lock_after_shared_update_enabled(bool(retain_lock_after_shared_update_var.get()))
+            self._set_use_static_xsd_conversion_enabled(bool(use_static_xsd_conversion_var.get()))
+            self._set_static_xsd_path(static_xsd_path)
             for render_type, variable in preview_program_vars.items():
                 self._set_occs_preview_open_program(render_type, variable.get())
             self._save_user_settings()
@@ -5266,6 +5323,14 @@ class AToolApp:
     def _set_retain_lock_after_shared_update_enabled(self, enabled: bool) -> None:
         section = self._occs_settings_section()
         section["retain_lock_after_shared_update"] = enabled
+
+    def _set_use_static_xsd_conversion_enabled(self, enabled: bool) -> None:
+        section = self._occs_settings_section()
+        section["use_static_xsd_conversion"] = enabled
+
+    def _set_static_xsd_path(self, xsd_path: str) -> None:
+        section = self._occs_settings_section()
+        section["static_xsd_path"] = str(xsd_path or "").strip()
 
     def _set_occs_preview_open_program(self, render_type: str, program: str) -> None:
         section = self._occs_settings_section()
@@ -5572,6 +5637,16 @@ class AToolApp:
             return value
         return False
 
+    def _get_use_static_xsd_conversion_setting(self) -> bool:
+        section = self.user_settings.get("occs")
+        return isinstance(section, dict) and bool(section.get("use_static_xsd_conversion"))
+
+    def _get_static_xsd_path(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return os.path.expanduser(str(section.get("static_xsd_path", "")).strip())
+
     def _get_occs_preview_open_program(self, render_type: str) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -5825,6 +5900,7 @@ class AToolApp:
                 "last_config_id",
                 "shared_workspace_dir",
                 "user_name",
+                "static_xsd_path",
             ):
                 value = occs.get(key)
                 if isinstance(value, str):
@@ -5832,6 +5908,9 @@ class AToolApp:
             retain_lock_value = occs.get("retain_lock_after_shared_update")
             if isinstance(retain_lock_value, bool):
                 settings["occs"]["retain_lock_after_shared_update"] = retain_lock_value
+            static_xsd_value = occs.get("use_static_xsd_conversion")
+            if isinstance(static_xsd_value, bool):
+                settings["occs"]["use_static_xsd_conversion"] = static_xsd_value
             request_timeout_seconds = self._safe_int(occs.get("request_timeout_seconds"))
             if request_timeout_seconds is not None and request_timeout_seconds > 0:
                 settings["occs"]["request_timeout_seconds"] = request_timeout_seconds
@@ -15171,6 +15250,17 @@ class AToolApp:
             if bill_id:
                 extract_expression = bill_id if "=" in bill_id else f"billId={bill_id}"
                 args.extend(["--extract", extract_expression])
+            if self._get_use_static_xsd_conversion_setting():
+                static_xsd_path = self._get_static_xsd_path()
+                if not static_xsd_path or not Path(static_xsd_path).is_file():
+                    messagebox.showerror(
+                        dialog_title,
+                        "Local XSD conversion is enabled, but the configured XSD file cannot be found. "
+                        "Update it in User Settings.",
+                        parent=dialog,
+                    )
+                    return
+                args.extend(["--xsd", static_xsd_path])
 
             dialog.destroy()
             self._run_occs_command_async(

@@ -310,3 +310,4 @@ On save, ATool:
 - Mapping runs in the background.
 - Check status bar (`Mapping: Running/Idle`).
 - Optional debug logging can be enabled in user settings.
+- User Settings can route XML conversion through a selected local XSD instead of the OCCS XML conversion API. Enable **Use local XSD for XML conversion** and choose the XSD file; the setting is used by both Convert XML and Convert and Map.
