@@ -15130,7 +15130,7 @@ class AToolApp:
         container.columnconfigure(1, weight=1)
 
         xml_file_var = tk.StringVar(value="")
-        reroot_var = tk.StringVar(value="billPrint")
+        reroot_var = tk.StringVar(value="")
         bill_id_var = tk.StringVar(value="All")
         bill_id_values: list[str] = []
 
@@ -15159,7 +15159,7 @@ class AToolApp:
             padx=(6, 0),
         )
 
-        ttk.Label(container, text="Reroot:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Reroot (auto):").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         reroot_entry = ttk.Entry(container, textvariable=reroot_var, width=58)
         reroot_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
