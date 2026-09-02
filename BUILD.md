@@ -4,7 +4,7 @@ For automated builds.
 
 ## Distribution
 
-Shar the ATool folder or a zip containing:
+Share the ATool folder or a zip containing:
 
 - `ATool.py`
 - `atool_core/` (the application support package)
