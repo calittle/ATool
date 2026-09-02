@@ -65,6 +65,8 @@ class AToolApp:
             "last_config_id": "",
             "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
+            "models_dir": "",
+            "comms_cache_dir": "",
             "user_name": "",
             "retain_lock_after_shared_update": False,
             "use_static_xsd_conversion": False,
@@ -649,6 +651,17 @@ class AToolApp:
 
         label = ttk.Label(header, text="Documents", font=("TkDefaultFont", 12, "bold"))
         label.grid(row=0, column=0, sticky="w")
+
+        self.view_model_button = ttk.Button(
+            header,
+            text="View Model",
+            command=self._view_selected_document_model,
+        )
+        self.view_model_button.grid(row=0, column=1, sticky="e")
+        self._attach_tooltip(
+            self.view_model_button,
+            "Open the selected document's generated Comms model in your default browser.",
+        )
 
         controls = ttk.Frame(panel)
         controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -4884,6 +4897,103 @@ class AToolApp:
             self.remove_document_button.config(state=selected_state)
         if hasattr(self, "add_layout_button"):
             self.add_layout_button.config(state=selected_state)
+        if hasattr(self, "view_model_button"):
+            self.view_model_button.config(state=selected_state)
+
+    def _view_selected_document_model(self) -> None:
+        """Open or generate the selected document's cached Comms inspector."""
+        selected_doc = self._get_selected_document_ref()
+        if selected_doc is None:
+            messagebox.showinfo("View Model", "Select a document first.")
+            return
+
+        package_name = str(self.current_package_name or "").strip()
+        document_name = str(selected_doc.get("name", "")).strip()
+        if not package_name or package_name == "(none)" or not document_name:
+            messagebox.showinfo("View Model", "Open an assembly template and select a document first.")
+            return
+
+        models_dir_text = self._get_occs_models_dir()
+        if not models_dir_text:
+            messagebox.showinfo(
+                "View Model",
+                "Set Models Directory in User Settings before viewing a document model.",
+            )
+            return
+        model_package_dir = Path(models_dir_text) / package_name
+        inspector_path = model_package_dir / f"{document_name}-inspector.html"
+        if inspector_path.is_file():
+            try:
+                self._open_model_inspector(inspector_path)
+            except OSError as error:
+                messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+            return
+
+        comms_cache_text = self._get_occs_comms_cache_dir()
+        comms_cache_dir = Path(comms_cache_text) if comms_cache_text else None
+        if comms_cache_dir is None or not self._comms_cache_has_files(comms_cache_dir):
+            messagebox.showinfo(
+                "View Model",
+                "The inspector file is not available. Set Comms Cache Directory and run "
+                "`occs get-everything` to obtain a Comms cache before using View Model.",
+            )
+            return
+
+        try:
+            model_package_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            messagebox.showerror(
+                "View Model",
+                f"Could not create the model package directory:\n{model_package_dir}\n\nDetails: {error}",
+            )
+            return
+
+        args = [
+            "mockup",
+            document_name,
+            "--cache",
+            str(comms_cache_dir),
+            "--package",
+            package_name,
+            "--output",
+            str(inspector_path),
+        ]
+
+        def _on_success(_result: dict[str, object]) -> None:
+            if not inspector_path.is_file():
+                messagebox.showerror(
+                    "View Model",
+                    f"OCCS mockup completed but did not create the inspector file:\n{inspector_path}",
+                )
+                return
+            try:
+                self._open_model_inspector(inspector_path)
+            except OSError as error:
+                messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+
+        def _on_failure(error: Exception) -> None:
+            messagebox.showerror(
+                "View Model",
+                f"Could not generate a model inspector for {document_name}.\n\n{error}",
+            )
+
+        self._run_occs_command_async(
+            args,
+            f"Generating model for {document_name}...",
+            _on_success,
+            _on_failure,
+        )
+
+    @staticmethod
+    def _comms_cache_has_files(cache_dir: Path) -> bool:
+        try:
+            return cache_dir.is_dir() and any(path.is_file() for path in cache_dir.rglob("*"))
+        except OSError:
+            return False
+
+    def _open_model_inspector(self, inspector_path: Path) -> None:
+        """Use the configured HTML opener, or the system default when unset."""
+        self._open_occs_preview_output("HTML", inspector_path)
 
     def _update_layout_context_buttons(self) -> None:
         node_kind = ""
@@ -4972,6 +5082,8 @@ class AToolApp:
         config_target_session_alias_var = tk.StringVar(value=self._get_occs_config_target_session_alias())
         config_id_filter_var = tk.StringVar(value=self._get_occs_config_id_filter())
         shared_workspace_var = tk.StringVar(value=self._get_occs_shared_workspace_dir())
+        models_dir_var = tk.StringVar(value=self._get_occs_models_dir())
+        comms_cache_dir_var = tk.StringVar(value=self._get_occs_comms_cache_dir())
         occs_user_name_var = tk.StringVar(value=self._get_occs_user_name())
         retain_lock_after_shared_update_var = tk.BooleanVar(value=self._get_retain_lock_after_shared_update_setting())
         use_static_xsd_conversion_var = tk.BooleanVar(value=self._get_use_static_xsd_conversion_setting())
@@ -5089,27 +5201,71 @@ class AToolApp:
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Models Directory:").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(occs_group, textvariable=models_dir_var, width=54).grid(row=8, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_models_dir() -> None:
+            current_path = models_dir_var.get().strip()
+            selected_dir = self._run_file_dialog(
+                filedialog.askdirectory,
+                dialog,
+                title="Select Models Directory",
+                initialdir=current_path or str(Path.home()),
+            )
+            if selected_dir:
+                models_dir_var.set(selected_dir)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_models_dir).grid(
+            row=8,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
+        ttk.Label(occs_group, text="Comms Cache Directory:").grid(row=9, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(occs_group, textvariable=comms_cache_dir_var, width=54).grid(row=9, column=1, sticky="ew", pady=(8, 0))
+
+        def _browse_comms_cache_dir() -> None:
+            current_path = comms_cache_dir_var.get().strip()
+            selected_dir = self._run_file_dialog(
+                filedialog.askdirectory,
+                dialog,
+                title="Select Comms Cache Directory",
+                initialdir=current_path or str(Path.home()),
+            )
+            if selected_dir:
+                comms_cache_dir_var.set(selected_dir)
+
+        ttk.Button(occs_group, text="Browse...", command=_browse_comms_cache_dir).grid(
+            row=9,
+            column=2,
+            sticky="e",
+            padx=(6, 0),
+            pady=(8, 0),
+        )
+
+        ttk.Label(occs_group, text="User Name:").grid(row=10, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=10, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         retain_lock_check = ttk.Checkbutton(
             occs_group,
             text="Retain lock on package after update",
             variable=retain_lock_after_shared_update_var,
         )
-        retain_lock_check.grid(row=9, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        retain_lock_check.grid(row=11, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         static_xsd_check = ttk.Checkbutton(
             occs_group,
             text="Use local XSD for XML conversion (bypass OCCS conversion API)",
             variable=use_static_xsd_conversion_var,
         )
-        static_xsd_check.grid(row=10, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        static_xsd_check.grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Static XSD: ").grid(row=11, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Static XSD: ").grid(row=13, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         static_xsd_entry = ttk.Entry(occs_group, textvariable=static_xsd_path_var, width=54)
-        static_xsd_entry.grid(row=11, column=1, sticky="ew", pady=(8, 0))
+        static_xsd_entry.grid(row=13, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_static_xsd() -> None:
             current_path = static_xsd_path_var.get().strip()
@@ -5128,7 +5284,7 @@ class AToolApp:
                 static_xsd_path_var.set(selected_path)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_static_xsd).grid(
-            row=11,
+            row=13,
             column=2,
             sticky="e",
             padx=(6, 0),
@@ -5243,6 +5399,8 @@ class AToolApp:
             self._set_occs_config_target_session_alias(config_target_session_alias_var.get())
             self._set_occs_config_id_filter(config_id_filter)
             self._set_occs_shared_workspace_dir(shared_workspace_var.get())
+            self._set_occs_models_dir(models_dir_var.get())
+            self._set_occs_comms_cache_dir(comms_cache_dir_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
             self._set_retain_lock_after_shared_update_enabled(bool(retain_lock_after_shared_update_var.get()))
             self._set_use_static_xsd_conversion_enabled(bool(use_static_xsd_conversion_var.get()))
@@ -5315,6 +5473,14 @@ class AToolApp:
     def _set_occs_shared_workspace_dir(self, shared_workspace_dir: str) -> None:
         section = self._occs_settings_section()
         section["shared_workspace_dir"] = str(shared_workspace_dir or "").strip()
+
+    def _set_occs_models_dir(self, models_dir: str) -> None:
+        section = self._occs_settings_section()
+        section["models_dir"] = str(models_dir or "").strip()
+
+    def _set_occs_comms_cache_dir(self, comms_cache_dir: str) -> None:
+        section = self._occs_settings_section()
+        section["comms_cache_dir"] = str(comms_cache_dir or "").strip()
 
     def _set_occs_user_name(self, user_name: str) -> None:
         section = self._occs_settings_section()
@@ -5506,6 +5672,16 @@ class AToolApp:
         if isinstance(section, dict):
             configured = str(section.get("shared_workspace_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_shared_workspace_dir())
+
+    def _get_occs_models_dir(self) -> str:
+        section = self.user_settings.get("occs")
+        configured = str(section.get("models_dir", "")).strip() if isinstance(section, dict) else ""
+        return os.path.expanduser(configured)
+
+    def _get_occs_comms_cache_dir(self) -> str:
+        section = self.user_settings.get("occs")
+        configured = str(section.get("comms_cache_dir", "")).strip() if isinstance(section, dict) else ""
+        return os.path.expanduser(configured)
 
     @staticmethod
     def _path_is_within(path: Path, parent: Path) -> bool:
@@ -5899,6 +6075,8 @@ class AToolApp:
                 "config_id_filter",
                 "last_config_id",
                 "shared_workspace_dir",
+                "models_dir",
+                "comms_cache_dir",
                 "user_name",
                 "static_xsd_path",
             ):
