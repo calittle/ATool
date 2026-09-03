@@ -168,6 +168,7 @@ class AToolApp:
         self._send_email_menu_entries: list[tuple[tk.Menu, int]] = []
         self._package_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self._resources_menu_entries: list[tuple[tk.Menu, int, str]] = []
+        self._model_menu_entries: list[tuple[tk.Menu, int]] = []
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -418,6 +419,12 @@ class AToolApp:
         resources_menu.add_command(label="Cancel Download All", command=self.cancel_occs_download_all, state=tk.DISABLED)
         self._resources_menu_entries.append((resources_menu, resources_menu.index(tk.END), "cancel_download_all"))
 
+        model_menu = tk.Menu(menu_bar, tearoff=0)
+        model_menu.add_command(label="View", command=self._view_selected_document_model, state=tk.DISABLED)
+        self._model_menu_entries.append((model_menu, model_menu.index(tk.END)))
+        model_menu.add_command(label="Generate", command=self._generate_selected_document_model, state=tk.DISABLED)
+        self._model_menu_entries.append((model_menu, model_menu.index(tk.END)))
+
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
         preview_accelerator = "Cmd+P" if self._is_macos() else "Ctrl+P"
@@ -510,6 +517,7 @@ class AToolApp:
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
         menu_bar.add_cascade(label="Resources", menu=resources_menu)
+        menu_bar.add_cascade(label="Model", menu=model_menu)
         menu_bar.add_cascade(label="Config", menu=config_menu)
         menu_bar.add_cascade(label="Data", menu=data_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
@@ -680,10 +688,11 @@ class AToolApp:
             text="View Model",
             command=self._view_selected_document_model,
         )
+        self.view_model_button.bind("<Shift-Button-1>", self._regenerate_and_view_selected_document_model)
         self.view_model_button.grid(row=0, column=1, sticky="e")
         self._attach_tooltip(
             self.view_model_button,
-            "Open the selected document's generated Comms model in your default browser.",
+            "Open the selected document's generated Comms model in your default browser. Shift-click to regenerate first.",
         )
 
         controls = ttk.Frame(panel)
@@ -4934,30 +4943,54 @@ class AToolApp:
             self.add_layout_button.config(state=selected_state)
         if hasattr(self, "view_model_button"):
             self.view_model_button.config(state=selected_state)
+        self._update_model_menu_states(selected_doc is not None)
+
+    def _update_model_menu_states(self, document_selected: bool) -> None:
+        state = tk.NORMAL if document_selected else tk.DISABLED
+        active_entries: list[tuple[tk.Menu, int]] = []
+        for menu, index in self._model_menu_entries:
+            try:
+                menu.entryconfig(index, state=state)
+                active_entries.append((menu, index))
+            except tk.TclError:
+                continue
+        self._model_menu_entries = active_entries
 
     def _view_selected_document_model(self) -> None:
         """Open or generate the selected document's cached Comms inspector."""
+        self._run_selected_document_model_action(open_after_generation=True, regenerate=False)
+
+    def _regenerate_and_view_selected_document_model(self, _event: tk.Event) -> str:
+        """Regenerate and open the selected document model on Shift-click."""
+        self._run_selected_document_model_action(open_after_generation=True, regenerate=True)
+        return "break"
+
+    def _generate_selected_document_model(self) -> None:
+        """Regenerate the selected document's model without opening it."""
+        self._run_selected_document_model_action(open_after_generation=False, regenerate=True)
+
+    def _run_selected_document_model_action(self, open_after_generation: bool, regenerate: bool) -> None:
         selected_doc = self._get_selected_document_ref()
         if selected_doc is None:
-            messagebox.showinfo("View Model", "Select a document first.")
+            messagebox.showinfo("Model", "Select a document first.")
             return
 
         package_name = str(self.current_package_name or "").strip()
         document_name = str(selected_doc.get("name", "")).strip()
         if not package_name or package_name == "(none)" or not document_name:
-            messagebox.showinfo("View Model", "Open an assembly template and select a document first.")
+            messagebox.showinfo("Model", "Open an assembly template and select a document first.")
             return
 
         models_dir_text = self._get_occs_models_dir()
         if not models_dir_text:
             messagebox.showinfo(
-                "View Model",
-                "Set Models Directory in User Settings before viewing a document model.",
+                "Model",
+                "Set Models Directory in User Settings before generating or viewing a document model.",
             )
             return
         model_package_dir = Path(models_dir_text) / package_name
         inspector_path = model_package_dir / f"{document_name}-inspector.html"
-        if inspector_path.is_file():
+        if inspector_path.is_file() and not regenerate:
             try:
                 self._open_model_inspector(inspector_path)
             except OSError as error:
@@ -4968,9 +5001,8 @@ class AToolApp:
         comms_cache_dir = Path(comms_cache_text) if comms_cache_text else None
         if comms_cache_dir is None or not self._comms_cache_has_files(comms_cache_dir):
             messagebox.showinfo(
-                "View Model",
-                "The inspector file is not available. Set Comms Cache Directory and run "
-                "`occs get-everything` to obtain a Comms cache before using View Model.",
+                "Model",
+                "Set Comms Cache Directory and download resources before generating a document model.",
             )
             return
 
@@ -4978,7 +5010,7 @@ class AToolApp:
             model_package_dir.mkdir(parents=True, exist_ok=True)
         except OSError as error:
             messagebox.showerror(
-                "View Model",
+                "Model",
                 f"Could not create the model package directory:\n{model_package_dir}\n\nDetails: {error}",
             )
             return
@@ -4997,18 +5029,21 @@ class AToolApp:
         def _on_success(_result: dict[str, object]) -> None:
             if not inspector_path.is_file():
                 messagebox.showerror(
-                    "View Model",
+                    "Model",
                     f"OCCS mockup completed but did not create the inspector file:\n{inspector_path}",
                 )
                 return
-            try:
-                self._open_model_inspector(inspector_path)
-            except OSError as error:
-                messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+            if open_after_generation:
+                try:
+                    self._open_model_inspector(inspector_path)
+                except OSError as error:
+                    messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+            else:
+                self._show_temporary_status(f"Generated model for {document_name}", duration_ms=5000)
 
         def _on_failure(error: Exception) -> None:
             messagebox.showerror(
-                "View Model",
+                "Model",
                 f"Could not generate a model inspector for {document_name}.\n\n{error}",
             )
 
