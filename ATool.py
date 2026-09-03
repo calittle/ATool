@@ -678,22 +678,9 @@ class AToolApp:
 
         header = ttk.Frame(panel)
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        header.columnconfigure(0, weight=1)
 
         label = ttk.Label(header, text="Documents", font=("TkDefaultFont", 12, "bold"))
         label.grid(row=0, column=0, sticky="w")
-
-        self.view_model_button = ttk.Button(
-            header,
-            text="View Model",
-            command=self._view_selected_document_model,
-        )
-        self.view_model_button.bind("<Shift-Button-1>", self._regenerate_and_view_selected_document_model)
-        self.view_model_button.grid(row=0, column=1, sticky="e")
-        self._attach_tooltip(
-            self.view_model_button,
-            "Open the selected document's generated Comms model in your default browser. Shift-click to regenerate first.",
-        )
 
         controls = ttk.Frame(panel)
         controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -706,6 +693,17 @@ class AToolApp:
             command=self._toggle_document_view_mode,
         )
         self._attach_tooltip(self.documents_view_toggle_button, "Toggle document view mode (Flat/Hierarchy).")
+
+        self.view_model_button = ttk.Button(
+            controls,
+            text="View Model",
+            command=self._view_selected_document_model,
+        )
+        self.view_model_button.bind("<Shift-Button-1>", self._regenerate_and_view_selected_document_model)
+        self._attach_tooltip(
+            self.view_model_button,
+            "Open the selected document's generated Comms model in your default browser. Shift-click to regenerate first.",
+        )
 
         self.clear_mapping_button = ttk.Button(
             controls,
@@ -744,6 +742,7 @@ class AToolApp:
 
         self._document_toolbar_buttons = [
             self.documents_view_toggle_button,
+            self.view_model_button,
             self.clear_mapping_button,
             self.document_mapping_filter_button,
             self.add_document_button,
