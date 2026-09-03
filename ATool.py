@@ -42,13 +42,13 @@ class AToolApp:
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_RESOURCE_CACHE_TYPES = (
-        ("Package", "get-package", "packages"),
-        ("Style", "get-style", "styles"),
-        ("Layout", "get-layout", "layouts"),
-        ("Content", "get-content", "contents"),
-        ("Font", "get-font", "fonts"),
-        ("Document", "get-document", "documents"),
-        ("Chart", "get-chart", "charts"),
+        ("Package", "get-package", "list-packages", "packages"),
+        ("Style", "get-style", "list-styles", "styles"),
+        ("Layout", "get-layout", "list-layouts", "layouts"),
+        ("Content", "get-content", "list-contents", "contents"),
+        ("Font", "get-font", "list-fonts", "fonts"),
+        ("Document", "get-document", "list-documents", "documents"),
+        ("Chart", "get-chart", "list-charts", "charts"),
     )
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     SUBPROCESS_OUTPUT_ENCODING = "utf-8"
@@ -162,8 +162,12 @@ class AToolApp:
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
         self._occs_process_lock = threading.Lock()
+        self._occs_download_all_in_progress = False
+        self._occs_download_all_cancel_requested = False
+        self._occs_download_all_process: subprocess.Popen[str] | None = None
         self._send_email_menu_entries: list[tuple[tk.Menu, int]] = []
         self._package_menu_entries: list[tuple[tk.Menu, int, str]] = []
+        self._resources_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -408,6 +412,11 @@ class AToolApp:
 
         resources_menu = tk.Menu(menu_bar, tearoff=0)
         resources_menu.add_command(label="Download Single...", command=self.get_occs_resource_to_cache)
+        resources_menu.add_command(label="Download...", command=self.download_occs_resource_type)
+        resources_menu.add_separator()
+        resources_menu.add_command(label="Download All", command=self.download_all_occs_resources)
+        resources_menu.add_command(label="Cancel Download All", command=self.cancel_occs_download_all, state=tk.DISABLED)
+        self._resources_menu_entries.append((resources_menu, resources_menu.index(tk.END), "cancel_download_all"))
 
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
@@ -4866,6 +4875,18 @@ class AToolApp:
             except tk.TclError:
                 continue
         self._package_menu_entries = active_entries
+
+    def _update_resources_menu_states(self) -> None:
+        active_entries: list[tuple[tk.Menu, int, str]] = []
+        for menu, index, entry_name in self._resources_menu_entries:
+            if entry_name != "cancel_download_all":
+                continue
+            try:
+                menu.entryconfig(index, state=tk.NORMAL if self._occs_download_all_in_progress else tk.DISABLED)
+                active_entries.append((menu, index, entry_name))
+            except tk.TclError:
+                continue
+        self._resources_menu_entries = active_entries
 
     def _toggle_triggered_document_filter(self) -> None:
         if self.current_data_payload is None:
@@ -11810,9 +11831,6 @@ class AToolApp:
 
     def get_occs_resource_to_cache(self) -> None:
         """Refresh one OCCS resource category in the configured Comms cache."""
-        if self._occs_operation_in_progress:
-            messagebox.showinfo("Get Resource to Cache", "An OCCS operation is already in progress.")
-            return
         cache_dir_text = self._get_occs_comms_cache_dir()
         if not cache_dir_text:
             messagebox.showerror(
@@ -11896,7 +11914,7 @@ class AToolApp:
                 return
             dialog.destroy()
             self._record_occs_resource_cache_mru(resource_name, resource_type)
-            self._run_occs_resource_cache_refresh(resource_name, resource_type, command[1], cache_dir / command[2])
+            self._run_occs_resource_cache_refresh(resource_name, resource_type, command[1], cache_dir / command[3])
 
         ttk.Button(buttons, text="Refresh Cache", command=_submit).grid(row=0, column=1)
         resource_entry.focus_set()
@@ -11912,13 +11930,136 @@ class AToolApp:
         command: str,
         output_dir: Path,
     ) -> None:
-        self._run_occs_command_async(
+        self._run_occs_resource_command_async(
             [command, resource_name, "--output", str(output_dir)],
             f"Refreshing {resource_type.lower()} cache for {resource_name}...",
             lambda result: self._on_occs_resource_cache_refresh_complete(
                 result, resource_name, resource_type, output_dir
             ),
             on_failure=lambda error: messagebox.showerror("Get Resource to Cache", str(error)),
+        )
+
+    def download_occs_resource_type(self) -> None:
+        """Download every resource from one selected OCCS category."""
+        cache_dir_text = self._get_occs_comms_cache_dir()
+        if not cache_dir_text:
+            messagebox.showerror(
+                "Download Resources",
+                "Set a Comms Cache Folder in Settings > User Settings before downloading resources.",
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Download Resources")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.columnconfigure(1, weight=1)
+        resource_types = [item[0] for item in self.OCCS_RESOURCE_CACHE_TYPES]
+        resource_type_var = tk.StringVar(value=resource_types[0])
+
+        ttk.Label(container, text="Type:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Combobox(
+            container,
+            textvariable=resource_type_var,
+            values=resource_types,
+            state="readonly",
+            width=20,
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Label(
+            container,
+            text=f"Downloads all resources of the selected type into:\n{Path(cache_dir_text)}",
+            justify="left",
+            wraplength=380,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            resource_type = resource_type_var.get().strip()
+            resource = next((item for item in self.OCCS_RESOURCE_CACHE_TYPES if item[0] == resource_type), None)
+            if resource is None:
+                messagebox.showerror("Download Resources", "Select a valid resource type.", parent=dialog)
+                return
+            dialog.destroy()
+            self._run_occs_resource_type_download(resource_type, resource[2], Path(cache_dir_text) / resource[3])
+
+        ttk.Button(buttons, text="Download", command=_submit).grid(row=0, column=1)
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def download_all_occs_resources(self) -> None:
+        """Download the complete OCCS resource cache."""
+        if self._occs_download_all_in_progress:
+            messagebox.showinfo("Download All Resources", "A Download All operation is already in progress.")
+            return
+        cache_dir_text = self._get_occs_comms_cache_dir()
+        if not cache_dir_text:
+            messagebox.showerror(
+                "Download All Resources",
+                "Set a Comms Cache Folder in Settings > User Settings before downloading resources.",
+            )
+            return
+        cache_dir = Path(cache_dir_text)
+        self._occs_download_all_in_progress = True
+        self._occs_download_all_cancel_requested = False
+        self._update_resources_menu_states()
+
+        def _complete(result: dict[str, object]) -> None:
+            self._finish_occs_download_all()
+            self._on_occs_resource_type_download_complete(result, "all resources", cache_dir)
+
+        def _fail(error: Exception) -> None:
+            canceled = isinstance(error, OccsCommandCancelled)
+            self._finish_occs_download_all()
+            if canceled:
+                self._show_temporary_status("Download All canceled", duration_ms=5000)
+                return
+            messagebox.showerror("Download All Resources", str(error))
+
+        self._run_occs_resource_command_async(
+            ["get-everything", "--output", str(cache_dir)],
+            "Downloading all resource caches...",
+            _complete,
+            on_failure=_fail,
+            process_slot="_occs_download_all_process",
+            cancellation_requested=lambda: self._occs_download_all_cancel_requested,
+        )
+
+    def cancel_occs_download_all(self) -> None:
+        """Cancel the independently running Download All process."""
+        if not self._occs_download_all_in_progress:
+            return
+        self._occs_download_all_cancel_requested = True
+        self._terminate_tracked_occs_process("_occs_download_all_process")
+
+    def _finish_occs_download_all(self) -> None:
+        self._occs_download_all_in_progress = False
+        self._occs_download_all_cancel_requested = False
+        self._update_resources_menu_states()
+
+    def _run_occs_resource_type_download(self, resource_type: str, command: str, output_dir: Path) -> None:
+        self._run_occs_resource_command_async(
+            [command, "--output", str(output_dir)],
+            f"Downloading {resource_type.lower()} resources...",
+            lambda result: self._on_occs_resource_type_download_complete(result, resource_type.lower(), output_dir),
+            on_failure=lambda error: messagebox.showerror("Download Resources", str(error)),
+        )
+
+    def _on_occs_resource_type_download_complete(
+        self, result: dict[str, object], resource_description: str, output_dir: Path
+    ) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        detail = f"\n\n{stdout}" if stdout else ""
+        self._show_temporary_status(f"Downloaded {resource_description}", duration_ms=5000)
+        messagebox.showinfo(
+            "Download Resources",
+            f"Downloaded {resource_description}.\n\nCache folder:\n{output_dir}{detail}",
         )
 
     def _on_occs_resource_cache_refresh_complete(
@@ -12014,6 +12155,77 @@ class AToolApp:
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
 
+    def _run_occs_resource_command_async(
+        self,
+        args: list[str],
+        status_message: str,
+        on_success: object,
+        on_failure: object | None = None,
+        *,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
+    ) -> None:
+        """Run a cache download without reserving the shared OCCS operation slot."""
+        self._debug_log(f"OCCS resource command started: {' '.join(args)}")
+
+        def _worker() -> None:
+            try:
+                result = self._run_occs_resource_command(
+                    args,
+                    process_slot=process_slot,
+                    cancellation_requested=cancellation_requested,
+                )
+                self.root.after(0, lambda result=result: on_success(result) if callable(on_success) else None)
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+
+                def _report_failure(error: Exception = error, stack: str = stack) -> None:
+                    self._debug_log(f"OCCS resource command failed:\n{stack}")
+                    if callable(on_failure):
+                        on_failure(error)
+                    else:
+                        messagebox.showerror("OCCS Error", str(error))
+
+                self.root.after(0, _report_failure)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _run_occs_resource_command(
+        self,
+        args: list[str],
+        *,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
+    ) -> dict[str, object]:
+        """Run an OCCS resource command with its own process and cancellation state."""
+        command_args = [str(arg) for arg in args]
+        login_attempted = False
+        while True:
+            completed = self._run_occs_cli(
+                command_args,
+                track_active_process=False,
+                honor_cancellation=False,
+                process_slot=process_slot,
+                cancellation_requested=cancellation_requested,
+            )
+            stdout = (completed.stdout or "").strip()
+            stderr = (completed.stderr or "").strip()
+            if completed.returncode == 0:
+                return {"stdout": stdout, "stderr": stderr, "returnCode": completed.returncode}
+            message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
+            if not login_attempted and self._should_retry_occs_after_login(command_args, message):
+                self._run_occs_login_for_retry(
+                    command_args,
+                    message,
+                    track_active_process=False,
+                    update_status=False,
+                    process_slot=process_slot,
+                    cancellation_requested=cancellation_requested,
+                )
+                login_attempted = True
+                continue
+            raise RuntimeError(message)
+
     def _run_occs_json_command_async(
         self,
         args: list[str],
@@ -12085,8 +12297,11 @@ class AToolApp:
         self._terminate_active_occs_process()
 
     def _terminate_active_occs_process(self) -> None:
+        self._terminate_tracked_occs_process("_occs_process")
+
+    def _terminate_tracked_occs_process(self, process_slot: str) -> None:
         with self._occs_process_lock:
-            process = self._occs_process
+            process = getattr(self, process_slot, None)
 
         if process is None or process.poll() is not None:
             return
@@ -12157,6 +12372,11 @@ class AToolApp:
         timeout_seconds: int = 600,
         stdin: object | None = None,
         timeout_message: str = "OCCS CLI command timed out.",
+        *,
+        track_active_process: bool = True,
+        honor_cancellation: bool = True,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = self._build_occs_command(args)
         self._debug_log(f"OCCS CLI command: {' '.join(command)}")
@@ -12173,10 +12393,18 @@ class AToolApp:
                 stdin=stdin,
                 start_new_session=(platform.system() != "Windows"),
             )
-            with self._occs_process_lock:
-                self._occs_process = process
+            if process_slot:
+                with self._occs_process_lock:
+                    setattr(self, process_slot, process)
+            elif track_active_process:
+                with self._occs_process_lock:
+                    self._occs_process = process
+            if callable(cancellation_requested) and cancellation_requested():
+                self._terminate_process(process)
             stdout, stderr = process.communicate(timeout=timeout_seconds)
-            if self._occs_cancel_requested:
+            if (honor_cancellation and self._occs_cancel_requested) or (
+                callable(cancellation_requested) and cancellation_requested()
+            ):
                 raise OccsCommandCancelled("OCCS CLI command canceled.")
             return subprocess.CompletedProcess(
                 command,
@@ -12192,9 +12420,14 @@ class AToolApp:
                 process.communicate()
             raise RuntimeError(timeout_message) from error
         finally:
-            with self._occs_process_lock:
-                if self._occs_process is process:
-                    self._occs_process = None
+            if process_slot:
+                with self._occs_process_lock:
+                    if getattr(self, process_slot, None) is process:
+                        setattr(self, process_slot, None)
+            elif track_active_process:
+                with self._occs_process_lock:
+                    if self._occs_process is process:
+                        self._occs_process = None
 
     def _terminate_process(self, process: subprocess.Popen[str]) -> None:
         try:
@@ -12205,21 +12438,35 @@ class AToolApp:
         except (OSError, ProcessLookupError):
             return
 
-    def _run_occs_login_for_retry(self, command_args: list[str], original_error: str) -> None:
+    def _run_occs_login_for_retry(
+        self,
+        command_args: list[str],
+        original_error: str,
+        *,
+        track_active_process: bool = True,
+        update_status: bool = True,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
+    ) -> None:
         session_alias = self._occs_session_alias_for_command(command_args)
         login_args = self._occs_login_args_for_session(session_alias)
         session_text = f" for session {session_alias}" if session_alias else ""
         self._debug_log(f"OCCS authorization failed; running `occs login`{session_text} before retrying.")
-        self.root.after(
-            0,
-            lambda: self._set_occs_status_timer_message(f"OCCS session expired. Refreshing{session_text}..."),
-        )
+        if update_status:
+            self.root.after(
+                0,
+                lambda: self._set_occs_status_timer_message(f"OCCS session expired. Refreshing{session_text}..."),
+            )
         try:
             completed = self._run_occs_cli(
                 login_args,
                 timeout_seconds=self._get_occs_request_timeout_seconds(),
                 stdin=subprocess.DEVNULL,
                 timeout_message="Automatic `occs login` timed out.",
+                track_active_process=track_active_process,
+                honor_cancellation=track_active_process,
+                process_slot=process_slot,
+                cancellation_requested=cancellation_requested,
             )
         except RuntimeError as error:
             raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {error}") from error
@@ -17027,6 +17274,7 @@ class AToolApp:
             self.package_documents_window.destroy()
         if self.data_browser_window is not None and self.data_browser_window.winfo_exists():
             self.data_browser_window.destroy()
+        self.cancel_occs_download_all()
         self.root.destroy()
 
     def _prompt_save_if_dirty(self) -> bool:
