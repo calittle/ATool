@@ -41,6 +41,14 @@ class AToolApp:
     SHARED_PACKAGE_HISTORY_LIMIT = 5
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
+    OCCS_RESOURCE_CACHE_TYPES = (
+        ("Package", "list-packages", "packages"),
+        ("Style", "list-styles", "styles"),
+        ("Layout", "list-layouts", "layouts"),
+        ("Content", "list-contents", "contents"),
+        ("Font", "list-fonts", "fonts"),
+        ("Document", "list-documents", "documents"),
+    )
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     SUBPROCESS_OUTPUT_ENCODING = "utf-8"
     SUBPROCESS_OUTPUT_ERRORS = "replace"
@@ -72,6 +80,7 @@ class AToolApp:
             "use_static_xsd_conversion": False,
             "static_xsd_path": "",
             "package_mru": [],
+            "resource_cache_mru": [],
             "preview_open_programs": {
                 "PDF": "",
                 "HTML": "",
@@ -393,6 +402,8 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
+        config_menu.add_command(label="Get Resource to Cache", command=self.get_occs_resource_to_cache)
+        config_menu.add_separator()
         config_menu.add_command(label="Close...", command=self.close_occs_config)
         config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
 
@@ -5858,6 +5869,33 @@ class AToolApp:
             return []
         return self._normalize_occs_package_mru(section.get("package_mru"))
 
+    def _get_occs_resource_cache_mru(self) -> list[dict[str, str]]:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return []
+        return self._normalize_occs_resource_cache_mru(section.get("resource_cache_mru"))
+
+    def _record_occs_resource_cache_mru(self, resource_name: str, resource_type: str) -> None:
+        name = str(resource_name or "").strip()
+        resource_type = str(resource_type or "").strip()
+        valid_types = {item[0] for item in self.OCCS_RESOURCE_CACHE_TYPES}
+        if not name or resource_type not in valid_types:
+            return
+        normalized_name = name.lower()
+        filtered = [
+            item for item in self._get_occs_resource_cache_mru()
+            if not (
+                item.get("name", "").lower() == normalized_name
+                and item.get("type", "") == resource_type
+            )
+        ]
+        section = self._occs_settings_section()
+        section["resource_cache_mru"] = [
+            {"name": name, "type": resource_type, "lastUsedAt": self._current_timestamp()},
+            *filtered,
+        ][:5]
+        self._save_user_settings()
+
     def _record_occs_package_mru(self, package_name: str, version_name: str) -> None:
         package_text = str(package_name or "").strip()
         version_text = str(version_name or "").strip()
@@ -5945,6 +5983,32 @@ class AToolApp:
                     "package": package_name,
                     "version": version_name,
                     "lastOpenedAt": str(raw_entry.get("lastOpenedAt", "")).strip(),
+                }
+            )
+            if len(normalized) >= 5:
+                break
+        return normalized
+
+    def _normalize_occs_resource_cache_mru(self, raw_entries: object) -> list[dict[str, str]]:
+        if not isinstance(raw_entries, list):
+            return []
+        valid_types = {item[0] for item in self.OCCS_RESOURCE_CACHE_TYPES}
+        normalized: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            name = str(raw_entry.get("name", "")).strip()
+            resource_type = str(raw_entry.get("type", "")).strip()
+            key = (name.lower(), resource_type)
+            if not name or resource_type not in valid_types or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "name": name,
+                    "type": resource_type,
+                    "lastUsedAt": str(raw_entry.get("lastUsedAt", "")).strip(),
                 }
             )
             if len(normalized) >= 5:
@@ -6099,6 +6163,9 @@ class AToolApp:
             if timeout_seconds is not None and timeout_seconds > 0:
                 settings["occs"]["last_preview_timeout_seconds"] = timeout_seconds
             settings["occs"]["package_mru"] = self._normalize_occs_package_mru(occs.get("package_mru"))
+            settings["occs"]["resource_cache_mru"] = self._normalize_occs_resource_cache_mru(
+                occs.get("resource_cache_mru")
+            )
             settings["occs"]["preview_open_programs"] = self._normalize_occs_preview_open_programs(
                 occs.get("preview_open_programs")
             )
@@ -11736,6 +11803,134 @@ class AToolApp:
         messagebox.showinfo(
             "Migrate Config",
             f"Migration complete.\n\nSource: {source_session}\nTarget: {target_session}{detail}",
+        )
+
+    def get_occs_resource_to_cache(self) -> None:
+        """Refresh one OCCS resource category in the configured Comms cache."""
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Get Resource to Cache", "An OCCS operation is already in progress.")
+            return
+        cache_dir_text = self._get_occs_comms_cache_dir()
+        if not cache_dir_text:
+            messagebox.showerror(
+                "Get Resource to Cache",
+                "Set a Comms Cache Folder in Settings > User Settings before refreshing a resource.",
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Get Resource to Cache")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.columnconfigure(1, weight=1)
+
+        resource_types = [item[0] for item in self.OCCS_RESOURCE_CACHE_TYPES]
+        recent_entries = self._get_occs_resource_cache_mru()
+        resource_var = tk.StringVar()
+        resource_type_var = tk.StringVar(value=resource_types[0])
+        recent_labels: dict[str, dict[str, str]] = {}
+        for entry in recent_entries:
+            label = f"{entry['type']}: {entry['name']}"
+            recent_labels[label] = entry
+
+        ttk.Label(container, text="Resource name:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        resource_entry = ttk.Entry(container, textvariable=resource_var, width=42)
+        resource_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(container, text="Type:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        resource_type_combo = ttk.Combobox(
+            container,
+            textvariable=resource_type_var,
+            values=resource_types,
+            state="readonly",
+            width=20,
+        )
+        resource_type_combo.grid(row=1, column=1, sticky="w", pady=(8, 0))
+
+        if recent_labels:
+            recent_var = tk.StringVar()
+            ttk.Label(container, text="Recent:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+            recent_combo = ttk.Combobox(
+                container,
+                textvariable=recent_var,
+                values=list(recent_labels),
+                state="readonly",
+                width=42,
+            )
+            recent_combo.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+            def _use_recent(_event: tk.Event | None = None) -> None:
+                entry = recent_labels.get(recent_var.get())
+                if entry:
+                    resource_var.set(entry["name"])
+                    resource_type_var.set(entry["type"])
+
+            recent_combo.bind("<<ComboboxSelected>>", _use_recent)
+
+        cache_dir = Path(cache_dir_text)
+        ttk.Label(
+            container,
+            text=f"Refreshes the selected type into:\n{cache_dir}",
+            justify="left",
+            wraplength=380,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            resource_name = resource_var.get().strip()
+            resource_type = resource_type_var.get().strip()
+            if not resource_name:
+                messagebox.showerror("Get Resource to Cache", "A resource name is required.", parent=dialog)
+                return
+            command = next((item for item in self.OCCS_RESOURCE_CACHE_TYPES if item[0] == resource_type), None)
+            if command is None:
+                messagebox.showerror("Get Resource to Cache", "Select a valid resource type.", parent=dialog)
+                return
+            dialog.destroy()
+            self._record_occs_resource_cache_mru(resource_name, resource_type)
+            self._run_occs_resource_cache_refresh(resource_name, resource_type, command[1], cache_dir / command[2])
+
+        ttk.Button(buttons, text="Refresh Cache", command=_submit).grid(row=0, column=1)
+        resource_entry.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _run_occs_resource_cache_refresh(
+        self,
+        resource_name: str,
+        resource_type: str,
+        command: str,
+        output_dir: Path,
+    ) -> None:
+        self._run_occs_command_async(
+            [command, "--output", str(output_dir)],
+            f"Refreshing {resource_type.lower()} cache for {resource_name}...",
+            lambda result: self._on_occs_resource_cache_refresh_complete(
+                result, resource_name, resource_type, output_dir
+            ),
+            on_failure=lambda error: messagebox.showerror("Get Resource to Cache", str(error)),
+        )
+
+    def _on_occs_resource_cache_refresh_complete(
+        self,
+        result: dict[str, object],
+        resource_name: str,
+        resource_type: str,
+        output_dir: Path,
+    ) -> None:
+        stdout = str(result.get("stdout", "")).strip()
+        detail = f"\n\n{stdout}" if stdout else ""
+        self._show_temporary_status(f"Refreshed {resource_type.lower()} cache: {resource_name}", duration_ms=5000)
+        messagebox.showinfo(
+            "Get Resource to Cache",
+            f"Refreshed the {resource_type.lower()} cache for {resource_name}.\n\nCache folder:\n{output_dir}{detail}",
         )
 
     def _sync_shared_package_after_comms_publish(self) -> str:
