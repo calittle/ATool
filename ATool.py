@@ -168,7 +168,7 @@ class AToolApp:
         self._send_email_menu_entries: list[tuple[tk.Menu, int]] = []
         self._package_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self._resources_menu_entries: list[tuple[tk.Menu, int, str]] = []
-        self._model_menu_entries: list[tuple[tk.Menu, int]] = []
+        self._model_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -421,9 +421,11 @@ class AToolApp:
 
         model_menu = tk.Menu(menu_bar, tearoff=0)
         model_menu.add_command(label="View", command=self._view_selected_document_model, state=tk.DISABLED)
-        self._model_menu_entries.append((model_menu, model_menu.index(tk.END)))
+        self._model_menu_entries.append((model_menu, model_menu.index(tk.END), "View"))
         model_menu.add_command(label="Generate", command=self._generate_selected_document_model, state=tk.DISABLED)
-        self._model_menu_entries.append((model_menu, model_menu.index(tk.END)))
+        self._model_menu_entries.append((model_menu, model_menu.index(tk.END), "Generate"))
+        model_menu.add_command(label="Generate all", command=self._generate_all_document_models, state=tk.DISABLED)
+        self._model_menu_entries.append((model_menu, model_menu.index(tk.END), "Generate all"))
 
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
@@ -4942,15 +4944,23 @@ class AToolApp:
             self.add_layout_button.config(state=selected_state)
         if hasattr(self, "view_model_button"):
             self.view_model_button.config(state=selected_state)
-        self._update_model_menu_states(selected_doc is not None)
+        self._update_model_menu_states(selected_doc)
 
-    def _update_model_menu_states(self, document_selected: bool) -> None:
-        state = tk.NORMAL if document_selected else tk.DISABLED
-        active_entries: list[tuple[tk.Menu, int]] = []
-        for menu, index in self._model_menu_entries:
+    def _update_model_menu_states(self, selected_doc: dict[str, object] | None) -> None:
+        document_name = str(selected_doc.get("name", "")).strip() if selected_doc else ""
+        package_name = str(self.current_package_name or "").strip()
+        has_package = bool(package_name and package_name != "(none)")
+        active_entries: list[tuple[tk.Menu, int, str]] = []
+        for menu, index, action in self._model_menu_entries:
             try:
-                menu.entryconfig(index, state=state)
-                active_entries.append((menu, index))
+                if action == "Generate all":
+                    label = f"Generate all ({package_name})" if has_package else action
+                    state = tk.NORMAL if has_package else tk.DISABLED
+                else:
+                    label = f"{action} ({document_name})" if document_name else action
+                    state = tk.NORMAL if selected_doc is not None else tk.DISABLED
+                menu.entryconfig(index, label=label, state=state)
+                active_entries.append((menu, index, action))
             except tk.TclError:
                 continue
         self._model_menu_entries = active_entries
@@ -4967,6 +4977,58 @@ class AToolApp:
     def _generate_selected_document_model(self) -> None:
         """Regenerate the selected document's model without opening it."""
         self._run_selected_document_model_action(open_after_generation=False, regenerate=True)
+
+    def _generate_all_document_models(self) -> None:
+        """Generate model inspectors for every cached document in the current package."""
+        package_name = str(self.current_package_name or "").strip()
+        if not package_name or package_name == "(none)":
+            messagebox.showinfo("Generate All Models", "Open an assembly template first.")
+            return
+        models_dir_text = self._get_occs_models_dir()
+        if not models_dir_text:
+            messagebox.showinfo(
+                "Generate All Models",
+                "Set Models Directory in User Settings before generating package models.",
+            )
+            return
+        comms_cache_text = self._get_occs_comms_cache_dir()
+        comms_cache_dir = Path(comms_cache_text) if comms_cache_text else None
+        if comms_cache_dir is None or not self._comms_cache_has_files(comms_cache_dir):
+            messagebox.showinfo(
+                "Generate All Models",
+                "Set Comms Cache Directory and download resources before generating package models.",
+            )
+            return
+        output_dir = Path(models_dir_text) / package_name
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            messagebox.showerror(
+                "Generate All Models",
+                f"Could not create the model package directory:\n{output_dir}\n\nDetails: {error}",
+            )
+            return
+
+        self._run_occs_command_async(
+            [
+                "mockup",
+                "--package",
+                package_name,
+                "--all",
+                "--cache",
+                str(comms_cache_dir),
+                "--output",
+                str(output_dir),
+            ],
+            f"Generating models for {package_name}...",
+            lambda _result: self._show_temporary_status(
+                f"Generated models for {package_name}", duration_ms=5000
+            ),
+            lambda error: messagebox.showerror(
+                "Generate All Models",
+                f"Could not generate models for {package_name}.\n\n{error}",
+            ),
+        )
 
     def _run_selected_document_model_action(self, open_after_generation: bool, regenerate: bool) -> None:
         selected_doc = self._get_selected_document_ref()
