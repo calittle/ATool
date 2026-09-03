@@ -42,12 +42,13 @@ class AToolApp:
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_RESOURCE_CACHE_TYPES = (
-        ("Package", "list-packages", "packages"),
-        ("Style", "list-styles", "styles"),
-        ("Layout", "list-layouts", "layouts"),
-        ("Content", "list-contents", "contents"),
-        ("Font", "list-fonts", "fonts"),
-        ("Document", "list-documents", "documents"),
+        ("Package", "get-package", "packages"),
+        ("Style", "get-style", "styles"),
+        ("Layout", "get-layout", "layouts"),
+        ("Content", "get-content", "contents"),
+        ("Font", "get-font", "fonts"),
+        ("Document", "get-document", "documents"),
+        ("Chart", "get-chart", "charts"),
     )
     OCCS_LOCAL_CLEANUP_DEFAULT_DAYS = 14
     SUBPROCESS_OUTPUT_ENCODING = "utf-8"
@@ -402,10 +403,11 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
-        config_menu.add_command(label="Get Resource to Cache", command=self.get_occs_resource_to_cache)
-        config_menu.add_separator()
         config_menu.add_command(label="Close...", command=self.close_occs_config)
         config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
+
+        resources_menu = tk.Menu(menu_bar, tearoff=0)
+        resources_menu.add_command(label="Download Single...", command=self.get_occs_resource_to_cache)
 
         package_menu = tk.Menu(menu_bar, tearoff=0)
         open_accelerator = "Cmd+O" if self._is_macos() else "Alt+O"
@@ -498,6 +500,7 @@ class AToolApp:
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
+        menu_bar.add_cascade(label="Resources", menu=resources_menu)
         menu_bar.add_cascade(label="Config", menu=config_menu)
         menu_bar.add_cascade(label="Data", menu=data_menu)
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
@@ -11910,7 +11913,7 @@ class AToolApp:
         output_dir: Path,
     ) -> None:
         self._run_occs_command_async(
-            [command, "--output", str(output_dir)],
+            [command, resource_name, "--output", str(output_dir)],
             f"Refreshing {resource_type.lower()} cache for {resource_name}...",
             lambda result: self._on_occs_resource_cache_refresh_complete(
                 result, resource_name, resource_type, output_dir
