@@ -11849,13 +11849,21 @@ class AToolApp:
         container = ttk.Frame(dialog, padding=14)
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(1, weight=1)
+        container.rowconfigure(2, weight=1)
 
         session_label = session_alias or "OCCS default session"
-        ttk.Label(
+        count_label = ttk.Label(
             container,
-            text=f"{len(configs)} open Config ID{'s' if len(configs) != 1 else ''} in {session_label}",
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        )
+        count_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        filter_var = tk.StringVar()
+        filter_frame = ttk.Frame(container)
+        filter_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        filter_frame.columnconfigure(1, weight=1)
+        ttk.Label(filter_frame, text="Filter:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        filter_entry = ttk.Entry(filter_frame, textvariable=filter_var)
+        filter_entry.grid(row=0, column=1, sticky="ew")
 
         columns = ("id", "short_name", "name", "description", "status", "effective_at")
         tree = ttk.Treeview(container, columns=columns, show="headings", height=min(max(len(configs), 6), 18))
@@ -11872,27 +11880,13 @@ class AToolApp:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths[column], stretch=column in {"name", "description"})
         config_by_item: dict[str, dict[str, str]] = {}
-        for config in configs:
-            item_id = tree.insert(
-                "",
-                tk.END,
-                values=(
-                    config.get("id", ""),
-                    config.get("shortName", ""),
-                    config.get("name", ""),
-                    config.get("description", ""),
-                    config.get("status", ""),
-                    config.get("effectiveAt", ""),
-                ),
-            )
-            config_by_item[item_id] = config
-        tree.grid(row=1, column=0, sticky="nsew")
+        tree.grid(row=2, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
-        scrollbar.grid(row=1, column=1, sticky="ns")
+        scrollbar.grid(row=2, column=1, sticky="ns")
         tree.configure(yscrollcommand=scrollbar.set)
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
         close_config_button = ttk.Button(buttons, text="Close Config ID", state=tk.DISABLED)
         close_config_button.grid(row=0, column=1)
@@ -11903,6 +11897,51 @@ class AToolApp:
 
         def _update_close_button(*_args: object) -> None:
             close_config_button.configure(state=tk.NORMAL if _selected_config() is not None else tk.DISABLED)
+
+        def _config_sort_key(config: dict[str, str]) -> tuple[int, int | str]:
+            config_id = config.get("id", "").strip()
+            try:
+                return (1, int(config_id))
+            except ValueError:
+                return (0, config_id.casefold())
+
+        sorted_configs = sorted(configs, key=_config_sort_key, reverse=True)
+
+        def _refresh_configs(*_args: object) -> None:
+            filter_text = filter_var.get().strip().casefold()
+            displayed_configs = [
+                config
+                for config in sorted_configs
+                if not filter_text
+                or filter_text in " ".join(
+                    config.get(key, "")
+                    for key in ("id", "shortName", "name", "description", "status", "effectiveAt")
+                ).casefold()
+            ]
+            count_label.configure(
+                text=(
+                    f"{len(displayed_configs)} of {len(configs)} open Config ID"
+                    f"{'s' if len(configs) != 1 else ''} in {session_label}"
+                )
+            )
+            for item_id in tree.get_children():
+                tree.delete(item_id)
+            config_by_item.clear()
+            for config in displayed_configs:
+                item_id = tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        config.get("id", ""),
+                        config.get("shortName", ""),
+                        config.get("name", ""),
+                        config.get("description", ""),
+                        config.get("status", ""),
+                        config.get("effectiveAt", ""),
+                    ),
+                )
+                config_by_item[item_id] = config
+            _update_close_button()
 
         def _close_selected_config() -> None:
             config = _selected_config()
@@ -11925,6 +11964,9 @@ class AToolApp:
 
         close_config_button.configure(command=_close_selected_config)
         tree.bind("<<TreeviewSelect>>", _update_close_button)
+        filter_var.trace_add("write", _refresh_configs)
+        _refresh_configs()
+        filter_entry.focus_set()
         dialog.geometry("1100x460")
 
     def close_occs_config(self) -> None:
