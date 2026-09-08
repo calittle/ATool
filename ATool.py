@@ -368,8 +368,6 @@ class AToolApp:
             accelerator=open_session_accelerator,
             command=self.open_last_session,
         )
-        file_menu.add_command(label="Close Package", command=self.close_current_package)
-        file_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         file_menu.add_separator()
         file_menu.add_command(label="About ATool", command=self._show_about_dialog)
         file_menu.add_separator()
@@ -463,6 +461,8 @@ class AToolApp:
         )
         package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
         package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
+        package_menu.add_command(label="Close Package", command=self.close_current_package)
+        package_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         package_menu.add_separator()
         package_menu.add_command(
             label="Get Packages from Comms...",
