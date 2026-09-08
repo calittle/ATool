@@ -18,6 +18,8 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 
 ## Config Management
 
+- Added `Config > Create...`, which creates an open Config ID through `occs create-config` using the configured OCCS session and request timeout.
+- Added `Config > List`, which shows the open Config IDs returned by `occs list-configs` for the configured OCCS session and lets the user close a selected Config ID.
 - Added `Config > Get Resource to Cache`, which refreshes the selected Package, Style, Layout, Content, Font, or Document cache from Comms into the Comms Cache Folder configured in User Settings. The dialog remembers the five most recently requested name/type pairs.
 - Added `Config > Close...`, which loads open Config IDs from the configured source session, applies the Config ID Filter, and runs `occs close-config --session <source> --config-id <config>`.
 - After a Config closes successfully, ATool now asks whether to run migration immediately.

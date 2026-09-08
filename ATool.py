@@ -406,6 +406,9 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
+        config_menu.add_command(label="Create...", command=self.create_occs_config)
+        config_menu.add_command(label="List", command=self.list_occs_configs)
+        config_menu.add_separator()
         config_menu.add_command(label="Close...", command=self.close_occs_config)
         config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
 
@@ -11730,6 +11733,200 @@ class AToolApp:
                 return config.get("id") or config.get("shortName") or target
         return target
 
+    def create_occs_config(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Create Config", "An OCCS operation is already in progress.")
+            return
+
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Create Config")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+
+        session_alias = self._get_occs_session_alias()
+        session_label = session_alias or "OCCS default session"
+        short_name_var = tk.StringVar()
+        name_var = tk.StringVar()
+        description_var = tk.StringVar()
+
+        ttk.Label(container, text="Session:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(container, text=session_label).grid(row=0, column=1, sticky="w")
+        ttk.Label(container, text="Short name:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        short_name_entry = ttk.Entry(container, textvariable=short_name_var, width=54)
+        short_name_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+        ttk.Label(container, text="Name:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(container, textvariable=name_var, width=54).grid(row=2, column=1, sticky="ew", pady=(8, 0))
+        ttk.Label(container, text="Description:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(container, textvariable=description_var, width=54).grid(row=3, column=1, sticky="ew", pady=(8, 0))
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _submit() -> None:
+            short_name = short_name_var.get().strip()
+            if not short_name:
+                messagebox.showerror("Create Config", "A Config short name is required.", parent=dialog)
+                return
+            name = name_var.get().strip()
+            description = description_var.get().strip()
+            if not messagebox.askyesno(
+                "Confirm Create Config",
+                f"Create open Config ID in {session_label}?\n\n{short_name}",
+                parent=dialog,
+            ):
+                return
+            dialog.destroy()
+            self._run_occs_json_command_async(
+                [
+                    "create-config",
+                    "--short-name",
+                    short_name,
+                    "--name",
+                    name or short_name,
+                    "--desc",
+                    description,
+                    "--timeout",
+                    str(self._get_occs_request_timeout_ms()),
+                ],
+                f"Creating Config ID {short_name}...",
+                lambda result, selected_session=session_label: self._on_occs_config_create_complete(
+                    result,
+                    selected_session,
+                ),
+                on_failure=lambda error: messagebox.showerror("Create Config", str(error)),
+            )
+
+        ttk.Button(buttons, text="Create", command=_submit).grid(row=0, column=1)
+        short_name_entry.focus_set()
+        dialog.bind("<Return>", lambda _event: _submit())
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+
+    def _on_occs_config_create_complete(self, result: dict[str, object], session_label: str) -> None:
+        config = result.get("config")
+        config_data = config if isinstance(config, dict) else {}
+        short_name = str(config_data.get("shortName", "")).strip()
+        config_id = str(config_data.get("id", "")).strip()
+        label = self._format_occs_config_label({"shortName": short_name, "id": config_id})
+        self._set_last_occs_config_id(config_id or short_name)
+        self._show_temporary_status("Config created", duration_ms=5000)
+        detail = f"\n\nConfig ID: {config_id}" if config_id else ""
+        messagebox.showinfo(
+            "Create Config",
+            f"Created open Config in {session_label}:\n\n{label or 'Config'}{detail}",
+        )
+
+    def list_occs_configs(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("List Configs", "An OCCS operation is already in progress.")
+            return
+        session_alias = self._get_occs_session_alias()
+        self._run_occs_json_command_async(
+            ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
+            "Listing open Config IDs...",
+            lambda result, selected_session=session_alias: self._open_occs_config_list_dialog(
+                self._normalize_occs_configs(result),
+                selected_session,
+            ),
+            on_failure=lambda error: messagebox.showerror("List Configs", str(error)),
+        )
+
+    def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Open Config IDs")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        session_label = session_alias or "OCCS default session"
+        ttk.Label(
+            container,
+            text=f"{len(configs)} open Config ID{'s' if len(configs) != 1 else ''} in {session_label}",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        columns = ("id", "short_name", "name", "description", "status", "effective_at")
+        tree = ttk.Treeview(container, columns=columns, show="headings", height=min(max(len(configs), 6), 18))
+        headings = {
+            "id": "Config ID",
+            "short_name": "Short Name",
+            "name": "Name",
+            "description": "Description",
+            "status": "Status",
+            "effective_at": "Effective At",
+        }
+        widths = {"id": 110, "short_name": 170, "name": 200, "description": 300, "status": 100, "effective_at": 165}
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], stretch=column in {"name", "description"})
+        config_by_item: dict[str, dict[str, str]] = {}
+        for config in configs:
+            item_id = tree.insert(
+                "",
+                tk.END,
+                values=(
+                    config.get("id", ""),
+                    config.get("shortName", ""),
+                    config.get("name", ""),
+                    config.get("description", ""),
+                    config.get("status", ""),
+                    config.get("effectiveAt", ""),
+                ),
+            )
+            config_by_item[item_id] = config
+        tree.grid(row=1, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        close_config_button = ttk.Button(buttons, text="Close Config ID", state=tk.DISABLED)
+        close_config_button.grid(row=0, column=1)
+
+        def _selected_config() -> dict[str, str] | None:
+            selected_items = tree.selection()
+            return config_by_item.get(selected_items[0]) if selected_items else None
+
+        def _update_close_button(*_args: object) -> None:
+            close_config_button.configure(state=tk.NORMAL if _selected_config() is not None else tk.DISABLED)
+
+        def _close_selected_config() -> None:
+            config = _selected_config()
+            if config is None:
+                return
+            config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
+            if not config_id:
+                messagebox.showerror("Close Config", "The selected Config ID has no usable ID.", parent=dialog)
+                return
+            label = self._format_occs_config_label(config) or config_id
+            if not messagebox.askyesno(
+                "Confirm Close Config",
+                f"Close Config ID in {session_label}?\n\n{label}",
+                parent=dialog,
+            ):
+                return
+            self._set_last_occs_config_id(config_id)
+            dialog.destroy()
+            self._run_occs_config_close(session_alias, config_id)
+
+        close_config_button.configure(command=_close_selected_config)
+        tree.bind("<<TreeviewSelect>>", _update_close_button)
+        dialog.geometry("1100x460")
+
     def close_occs_config(self) -> None:
         if self._occs_operation_in_progress:
             messagebox.showinfo("Close Config", "An OCCS operation is already in progress.")
@@ -11825,15 +12022,13 @@ class AToolApp:
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
     def _run_occs_config_close(self, source_session: str, config_id: str) -> None:
+        command = ["close-config"]
+        if source_session:
+            command.extend(["--session", source_session])
+        command.extend(["--config-id", config_id])
         self._run_occs_command_async(
-            [
-                "close-config",
-                "--session",
-                source_session,
-                "--config-id",
-                config_id,
-            ],
-            f"Closing Config ID {config_id} in {source_session}...",
+            command,
+            f"Closing Config ID {config_id} in {source_session or 'the OCCS default session'}...",
             lambda result, selected_session=source_session, selected_config_id=config_id: self._on_occs_config_close_complete(
                 result,
                 selected_session,
@@ -11850,10 +12045,11 @@ class AToolApp:
     ) -> None:
         stdout = str(result.get("stdout", "")).strip()
         detail = f"\n\n{stdout}" if stdout else ""
+        session_label = source_session or "the OCCS default session"
         self._show_temporary_status("Config closed", duration_ms=5000)
         if messagebox.askyesno(
             "Close Config",
-            f"Config ID closed in {source_session}:\n\n{config_id}{detail}\n\nMigrate now?",
+            f"Config ID closed in {session_label}:\n\n{config_id}{detail}\n\nMigrate now?",
         ):
             self.migrate_occs_config(confirm=False)
 
@@ -12626,7 +12822,7 @@ class AToolApp:
         command_name = command_args[0]
         if command_name == "package":
             return [command_name, "--session", session_alias, *command_args[1:]]
-        if command_name in {"preview", "convertxml", "list-configs"}:
+        if command_name in {"preview", "convertxml", "list-configs", "create-config"}:
             return [command_name, "--session", session_alias, *command_args[1:]]
         return command_args
 
