@@ -1,5 +1,14 @@
 # ATool User Guide
 
+> ## UNSUPPORTED — NOT AN ORACLE PRODUCT
+>
+> This is an independent open-source utility. It is not an Oracle product and
+> is not supported, endorsed, maintained, or warranted by Oracle. Use it at
+> your own risk; obtain support for Oracle products through Oracle's official
+> support channels.
+>
+> ATool is licensed under the [GNU General Public License, version 3](LICENSE).
+
 ATool (Assembly Template Tool) is a cross-platform Python desktop app for working with Oracle Communications Cloud Service (OCCS) Packages and Assembly Templates.
 
 ## Requirements
