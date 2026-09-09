@@ -18,13 +18,14 @@ or user-specific files under `~/.atool/`.
 
 ## Automated Build Artifact
 
-This repo includes a local post-commit build hook. When enabled, each commit
-builds a zip artifact from the committed `HEAD` snapshot and writes it to:
+GitHub Actions builds a ZIP from every push to `main`. The ZIP is available
+from the corresponding Actions run as an artifact. On a pushed version tag
+such as `v1.0.1`, GitHub Actions builds the same ZIP and attaches it to a
+GitHub Release, creating that release with generated notes if needed.
+
+The build writes:
 
 - `dist/ATool-<timestamp>-<commit>.zip`
-
-If a local SharePoint/OneDrive sync folder is configured, the same artifact is
-also copied there, along with a stable `ATool-latest.zip` file.
 
 Each release zip includes a generated `NOTES.MD` file with commit details and a
 short change summary for the packaged snapshot.
@@ -36,36 +37,20 @@ dialog also shows the source snapshot, build timestamp, and artifact name. For
 local development runs without `BUILD_INFO.txt`, ATool falls back to the current
 repo's short git hash and adds `-dirty` when there are uncommitted changes.
 
-### Enable the Git Hook
-
-Run this once from the repo root:
+To publish a release, create and push an annotated version tag:
 
 ```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/post-commit tools/build_artifact.py
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
 ```
 
-### Configure the SharePoint Destination
-
-Use either an environment variable:
-
-```bash
-export ATOOL_ARTIFACT_DIR="/path/to/local/SharePoint/folder"
-```
-
-Or create a local, ignored `.atool-build.local.json` file:
-
-```json
-{
-  "sharepoint_dir": "/path/to/local/SharePoint/folder"
-}
-```
-
-The checked-in `.atool-build.local.json.example` shows the expected shape.
+For an existing tag whose release needs an asset added later, open the
+**Publish release artifact** workflow in GitHub Actions, select **Run
+workflow**, and provide the tag name. The workflow packages that exact tag.
 
 ### Build Manually
 
-Build from the latest committed snapshot:
+Build locally from the latest committed snapshot:
 
 ```bash
 python3 tools/build_artifact.py --source head

@@ -1,0 +1,33 @@
+name: Build main artifact
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package ATool
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build distribution ZIP
+        run: python3 tools/build_artifact.py --source head
+
+      - name: Upload distribution ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: atool-main-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
