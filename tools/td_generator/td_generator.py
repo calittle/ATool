@@ -995,11 +995,13 @@ def scenario_delta_lines(
         if candidate["payload"] == baseline["payload"]:
             continue
         candidate_present = document_id in candidate["rendered_documents"]
-        changed_clauses = [
-            f"{describe_condition(atom, clauses)} ({'true' if baseline_atoms[atom] else 'false'} → {'true' if evaluator._evaluator._evaluate_condition_expression(atom, candidate['payload_data']) else 'false'})"
-            for atom in baseline_atoms
-            if baseline_atoms[atom] != evaluator._evaluator._evaluate_condition_expression(atom, candidate["payload_data"])
-        ]
+        changed_clauses = []
+        for atom, baseline_value in baseline_atoms.items():
+            candidate_value = evaluator._evaluator._evaluate_condition_expression(atom, candidate["payload_data"])
+            if baseline_value != candidate_value:
+                changed_clauses.append(
+                    f"{describe_condition(atom, clauses)} ({'true' if baseline_value else 'false'} → {'true' if candidate_value else 'false'})"
+                )
         if not baseline_present and not candidate_present:
             continue
         label = f" — {candidate['label']}" if candidate.get("label") else ""

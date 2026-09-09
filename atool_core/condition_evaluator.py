@@ -7,6 +7,11 @@ import re
 class ConditionEvaluator:
     def __init__(self, fields: list[dict[str, object]] | None = None) -> None:
         self._loaded_fields = fields or []
+        # An evaluator is normally scoped to one mapping run.  Paths and their
+        # results are reused heavily by fields and document conditions, so keep
+        # the cache local to that run (and therefore safe from stale payloads).
+        self._path_segments_cache: dict[str, tuple[str, ...]] = {}
+        self._path_values_cache: dict[tuple[int, str], list[object]] = {}
 
     def _evaluate_document_condition(
             self,
@@ -681,10 +686,20 @@ class ConditionEvaluator:
             if not normalized_path:
                 return []
 
-            if normalized_path.startswith("$.."):
-                return self._extract_values_by_deep_path(payload, normalized_path[3:])
+            cache_key = (id(payload), normalized_path)
+            cached = self._path_values_cache.get(cache_key)
+            if cached is not None:
+                return cached
 
-            segments = self._path_to_segments(normalized_path)
+            if normalized_path.startswith("$.."):
+                values = self._extract_values_by_deep_path(payload, normalized_path[3:])
+                self._path_values_cache[cache_key] = values
+                return values
+
+            segments = self._path_segments_cache.get(normalized_path)
+            if segments is None:
+                segments = tuple(self._path_to_segments(normalized_path))
+                self._path_segments_cache[normalized_path] = segments
             if not segments:
                 return []
             nodes: list[object] = [payload]
@@ -695,6 +710,7 @@ class ConditionEvaluator:
                 nodes = next_nodes
                 if not nodes:
                     break
+            self._path_values_cache[cache_key] = nodes
             return nodes
 
     def _extract_values_by_deep_path(self, payload: object, deep_expression: str) -> list[object]:
@@ -720,16 +736,18 @@ class ConditionEvaluator:
             return results
 
     def _deep_find_values(self, node: object, key: str) -> list[object]:
+            # An explicit stack avoids recursive-call overhead and recursion
+            # limits for the deeply nested payloads accepted by ATool.
             matches: list[object] = []
-            if isinstance(node, dict):
-                if key in node:
-                    matches.append(node[key])
-                for value in node.values():
-                    matches.extend(self._deep_find_values(value, key))
-                return matches
-            if isinstance(node, list):
-                for item in node:
-                    matches.extend(self._deep_find_values(item, key))
+            stack: list[object] = [node]
+            while stack:
+                current = stack.pop()
+                if isinstance(current, dict):
+                    if key in current:
+                        matches.append(current[key])
+                    stack.extend(reversed(list(current.values())))
+                elif isinstance(current, list):
+                    stack.extend(reversed(current))
             return matches
 
     def _resolve_path_segment(self, node: object, segment: str) -> list[object]:

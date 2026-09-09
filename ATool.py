@@ -121,6 +121,7 @@ class AToolApp:
         self.data_browser_status_var = tk.StringVar(value="Map a data file to inspect it.")
         self._data_browser_node_values: dict[str, object] = {}
         self._data_browser_search_values: dict[str, object] = {}
+        self._data_browser_pending_children: dict[str, tuple[str, object]] = {}
         self._local_occs_cleanup_window: tk.Toplevel | None = None
         self._refresh_local_occs_cleanup_dialog = None
         self.condition_library_window: tk.Toplevel | None = None
@@ -1682,6 +1683,7 @@ class AToolApp:
         tree_y_scroll.grid(row=0, column=1, sticky="ns")
         self.data_browser_tree.configure(yscrollcommand=tree_y_scroll.set)
         self.data_browser_tree.bind("<<TreeviewSelect>>", self._on_data_browser_tree_select)
+        self.data_browser_tree.bind("<<TreeviewOpen>>", self._on_data_browser_tree_open)
 
         details_frame = ttk.Frame(panes)
         details_frame.columnconfigure(0, weight=1)
@@ -1736,31 +1738,51 @@ class AToolApp:
         self.data_browser_tree.delete(*self.data_browser_tree.get_children())
         self._data_browser_node_values = {}
         self._data_browser_search_values = {}
+        self._data_browser_pending_children = {}
         self._set_readonly_text_widget_value(self.data_browser_details, "")
         payload = self.current_data_payload
         if payload is None:
             self.data_browser_status_var.set("Map a data file to inspect it.")
             return
-        self._populate_data_browser_node("", "$", payload)
-        self.data_browser_status_var.set("Mapped data loaded. Enter a JSONPath or full-text search.")
+        root_node = self._populate_data_browser_node("", "$", payload)
+        if root_node:
+            self._populate_data_browser_children(root_node)
+        self.data_browser_status_var.set("Mapped data loaded. Expand nodes or enter a JSONPath/full-text search.")
 
-    def _populate_data_browser_node(self, parent: str, path: str, value: object) -> None:
+    def _populate_data_browser_node(self, parent: str, path: str, value: object) -> str | None:
         if not hasattr(self, "data_browser_tree"):
-            return
+            return None
         if len(self._data_browser_node_values) >= 10000:
             if not parent:
                 self.data_browser_status_var.set("Data tree limited to 10,000 nodes; use search to narrow it.")
-            return
+            return None
         display_key = "$" if path == "$" else path.rsplit(".", 1)[-1]
         if isinstance(value, list) and path.endswith("]"):
             display_key = path.rsplit("[", 1)[-1]
         value_preview = self._data_browser_value_preview(value)
         node_id = self.data_browser_tree.insert(parent, "end", text=display_key, values=(value_preview,), open=False)
         self._data_browser_node_values[node_id] = value
+        if isinstance(value, (dict, list)) and value:
+            self._data_browser_pending_children[node_id] = (path, value)
+            # A placeholder gives ttk a disclosure arrow without eagerly
+            # constructing the complete (and potentially huge) tree.
+            self.data_browser_tree.insert(node_id, "end", text="Loading…")
+        return node_id
+
+    def _on_data_browser_tree_open(self, _event: tk.Event) -> None:
+        node_id = self.data_browser_tree.focus()
+        if node_id:
+            self._populate_data_browser_children(node_id)
+
+    def _populate_data_browser_children(self, node_id: str) -> None:
+        pending = self._data_browser_pending_children.pop(node_id, None)
+        if pending is None:
+            return
+        path, value = pending
+        self.data_browser_tree.delete(*self.data_browser_tree.get_children(node_id))
         if isinstance(value, dict):
             for key, child in value.items():
-                child_path = self._data_browser_child_path(path, str(key))
-                self._populate_data_browser_node(node_id, child_path, child)
+                self._populate_data_browser_node(node_id, self._data_browser_child_path(path, str(key)), child)
         elif isinstance(value, list):
             for index, child in enumerate(value):
                 self._populate_data_browser_node(node_id, f"{path}[{index}]", child)
@@ -1805,6 +1827,7 @@ class AToolApp:
         self.data_browser_tree.delete(*self.data_browser_tree.get_children())
         self._data_browser_node_values = {}
         self._data_browser_search_values = {}
+        self._data_browser_pending_children = {}
         self._set_readonly_text_widget_value(self.data_browser_details, "")
         if use_jsonpath:
             values = self._extract_values_by_path(self.current_data_payload, query)
@@ -6390,6 +6413,7 @@ class AToolApp:
         details = {
             "node_kind": "layout",
             "source_ref": layout,
+            "node_id": node_id,
         }
         self._layout_node_details[node_id] = details
         self._apply_layout_mapping_tag(node_id, details)
@@ -6403,6 +6427,7 @@ class AToolApp:
         details = {
             "node_kind": "content",
             "source_ref": content,
+            "node_id": node_id,
         }
         self._layout_node_details[node_id] = details
         self._apply_layout_mapping_tag(node_id, details)
@@ -6415,6 +6440,7 @@ class AToolApp:
             self._layout_node_details[iter_node_id] = {
                 "node_kind": "iteration",
                 "source_ref": iteration,
+                "node_id": iter_node_id,
             }
             self._apply_layout_mapping_tag(iter_node_id, self._layout_node_details[iter_node_id])
             self._insert_condition_child(iter_node_id, iteration)
@@ -6427,6 +6453,7 @@ class AToolApp:
                 self._layout_node_details[field_node_id] = {
                     "node_kind": "field",
                     "source_ref": field,
+                    "node_id": field_node_id,
                 }
                 self._apply_layout_mapping_tag(field_node_id, self._layout_node_details[field_node_id])
                 self._insert_condition_child(field_node_id, field)
@@ -6753,7 +6780,7 @@ class AToolApp:
             source_ref = node_details.get("source_ref")
             if isinstance(source_ref, dict):
                 condition_text = str(source_ref.get("Condition", "")).strip()
-                if condition_text and not self._evaluate_document_condition(condition_text, self.current_data_payload):
+                if condition_text and not self._layout_condition_passed(source_ref):
                     return False
         return True
 
@@ -6772,7 +6799,7 @@ class AToolApp:
                 source_ref = node_details.get("source_ref")
                 if isinstance(source_ref, dict):
                     condition_text = str(source_ref.get("Condition", "")).strip()
-                    if condition_text and not self._evaluate_document_condition(condition_text, self.current_data_payload):
+                    if condition_text and not self._layout_condition_passed(source_ref):
                         return False
             node_id = self.layouts_tree.parent(node_id)
         return True
@@ -6783,10 +6810,8 @@ class AToolApp:
         return self._find_iteration_details_for_node(self._active_layout_node_id)
 
     def _find_iteration_details_for_layout_details(self, target_details: dict[str, object]) -> dict[str, object] | None:
-        for node_id, details in self._layout_node_details.items():
-            if details is target_details:
-                return self._find_iteration_details_for_node(node_id)
-        return None
+        node_id = target_details.get("node_id")
+        return self._find_iteration_details_for_node(node_id) if isinstance(node_id, str) else None
 
     def _find_iteration_details_for_node(self, node_id: str) -> dict[str, object] | None:
         while node_id:
@@ -8602,6 +8627,7 @@ class AToolApp:
             if len(warning_lines) > 5:
                 trigger_text += f"\n- ... and {len(warning_lines) - 5} more"
         self.document_triggered_text.set(trigger_text)
+        self._ensure_document_match_diagnostics(document)
         self._set_document_match_details(document)
         updated = str(document.get("updated", "")).strip()
         self.document_updated_text.set(updated if updated else "-")
@@ -8613,6 +8639,24 @@ class AToolApp:
         self._update_document_triggered_visibility()
         self._apply_document_details_section_visibility()
         self._updating_document_form = False
+
+    def _ensure_document_match_diagnostics(self, document: dict[str, object]) -> None:
+        """Build expensive clause diagnostics only for the document being viewed."""
+        if self.current_data_payload is None:
+            return
+        if isinstance(document.get("condition_match_details"), list):
+            return
+        condition = str(document.get("condition", ""))
+        triggered = bool(document.get("triggered"))
+        document["condition_breakdown"] = self._build_document_condition_breakdown(
+            condition,
+            self.current_data_payload,
+            is_triggered=triggered,
+        )
+        document["condition_match_details"] = self._build_document_condition_match_details(
+            condition,
+            self.current_data_payload,
+        )
 
     def _clear_document_details(self) -> None:
         self._updating_document_form = True
@@ -8684,6 +8728,7 @@ class AToolApp:
         source_document = document.get("document_ref")
         if not isinstance(source_document, dict):
             source_document = document
+        self._ensure_document_match_diagnostics(source_document)
         details = source_document.get("condition_match_details")
         if not isinstance(details, list) or not details:
             self._set_readonly_text_widget_value(widget, self._format_document_match_details(source_document))
@@ -16783,8 +16828,6 @@ class AToolApp:
             str(document.get("condition", ""))
             for document in self._loaded_documents
         ]
-        condition_library_entries = copy.deepcopy(self._condition_library_entries)
-
         def _worker() -> None:
             try:
                 parse_start_time = time.perf_counter()
@@ -16792,19 +16835,21 @@ class AToolApp:
                 parse_duration = time.perf_counter() - parse_start_time
                 self._debug_log(f"Data parse complete: elapsed={parse_duration:.3f}s")
 
+                # Reuse parsed paths and resolved values across the complete
+                # mapping job. Detailed diagnostics are built only on selection.
+                evaluator = ConditionEvaluator(self._loaded_fields)
+
                 mapped_values_by_index: dict[int, list[object]] = {}
                 for index, path_expr in enumerate(field_paths):
-                    mapped_values_by_index[index] = self._extract_values_by_path(data_payload, path_expr)
+                    mapped_values_by_index[index] = evaluator._extract_values_by_path(data_payload, path_expr)
                     if index and index % 250 == 0:
                         self._debug_log(f"Field mapping progress: {index}/{len(field_paths)}")
 
                 triggered_docs_by_index: dict[int, bool] = {}
                 condition_warnings_by_index: dict[int, list[str]] = {}
-                condition_breakdowns_by_index: dict[int, list[str]] = {}
-                condition_match_details_by_index: dict[int, list[dict[str, object]]] = {}
                 for index, condition in enumerate(doc_conditions):
                     condition_warnings: list[str] = []
-                    is_triggered = self._evaluate_document_condition(
+                    is_triggered = evaluator._evaluate_document_condition(
                         condition,
                         data_payload,
                         warnings=condition_warnings,
@@ -16812,20 +16857,6 @@ class AToolApp:
                     triggered_docs_by_index[index] = is_triggered
                     if condition_warnings:
                         condition_warnings_by_index[index] = condition_warnings
-                    if is_triggered:
-                        condition_breakdowns_by_index[index] = ["PASS Document condition matched."]
-                    else:
-                        condition_breakdowns_by_index[index] = self._build_document_condition_breakdown(
-                            condition,
-                            data_payload,
-                            is_triggered=is_triggered,
-                            entries=condition_library_entries,
-                        )
-                    condition_match_details_by_index[index] = self._build_document_condition_match_details(
-                        condition,
-                        data_payload,
-                        entries=condition_library_entries,
-                    )
                     if index and index % 250 == 0:
                         self._debug_log(f"Document condition progress: {index}/{len(doc_conditions)}")
 
@@ -16838,8 +16869,6 @@ class AToolApp:
                         mapped_values_by_index,
                         triggered_docs_by_index,
                         condition_warnings_by_index,
-                        condition_breakdowns_by_index,
-                        condition_match_details_by_index,
                         selected_field,
                         duration,
                     ),
@@ -16861,8 +16890,6 @@ class AToolApp:
         mapped_values_by_index: dict[int, list[object]],
         triggered_docs_by_index: dict[int, bool],
         condition_warnings_by_index: dict[int, list[str]],
-        condition_breakdowns_by_index: dict[int, list[str]],
-        condition_match_details_by_index: dict[int, list[dict[str, object]]],
         selected_field: dict[str, object] | None,
         duration_seconds: float,
     ) -> None:
@@ -16891,16 +16918,8 @@ class AToolApp:
                     warning_docs += 1
                 else:
                     document.pop("condition_warnings", None)
-                breakdown = condition_breakdowns_by_index.get(index, [])
-                if breakdown:
-                    document["condition_breakdown"] = breakdown
-                else:
-                    document.pop("condition_breakdown", None)
-                match_details = condition_match_details_by_index.get(index, [])
-                if match_details:
-                    document["condition_match_details"] = match_details
-                else:
-                    document.pop("condition_match_details", None)
+                document.pop("condition_breakdown", None)
+                document.pop("condition_match_details", None)
                 if is_triggered:
                     triggered_docs.add(str(document["name"]))
         self._triggered_document_names = triggered_docs
@@ -16957,20 +16976,12 @@ class AToolApp:
             document["condition_warnings"] = warnings
         else:
             document.pop("condition_warnings", None)
+        document.pop("condition_breakdown", None)
+        document.pop("condition_match_details", None)
         if is_triggered:
-            document["condition_breakdown"] = ["PASS Document condition matched."]
             self._triggered_document_names.add(document_name)
         else:
-            document["condition_breakdown"] = self._build_document_condition_breakdown(
-                condition,
-                self.current_data_payload,
-                is_triggered=is_triggered,
-            )
             self._triggered_document_names.discard(document_name)
-        document["condition_match_details"] = self._build_document_condition_match_details(
-            condition,
-            self.current_data_payload,
-        )
         self.document_count_text.set(
             f"Documents: {len(self._loaded_documents)} ({len(self._triggered_document_names)} matched)"
         )
