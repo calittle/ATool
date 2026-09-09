@@ -1,0 +1,29 @@
+{
+  "family": "Example document family",
+  "description": "Example profile. Copy this file to a new local profile and replace every placeholder value.",
+  "comms": {
+    "package": "EXAMPLE_PACKAGE",
+    "effective_date": "2026-01-01",
+    "reference_version": "1.0",
+    "resource_cache": "/path/to/comms-resource-cache"
+  },
+  "scenarios": "../samples/example",
+  "baselines": [
+    {
+      "document": "EXAMPLE_DOCUMENT",
+      "label": "Example baseline",
+      "scenario": "Regular",
+      "input": "example-baseline.xml",
+      "variants": [
+        {
+          "scenario": "Final",
+          "input": "example-final.xml"
+        }
+      ]
+    }
+  ],
+  "occs": {
+    "session": "example-session",
+    "timeout_ms": 360000
+  }
+}

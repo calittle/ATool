@@ -44,42 +44,40 @@ occs list-contents -o /path/to/comms-cache/contents
 Place sample bill XML or JSON files in one top-level folder per business scenario. The folder name becomes the scenario name in the TD. You can put more than one input file in each scenario folder.
 
 ```text
-samples/rt/
-├── Regular (Cyclic)/
-│   ├── CO-G1-CO1_20260427190000.xml
-│   └── CO-G1-CO2_20260427190000.xml
-├── Final Bill/
-│   └── CO-G1-CO164_20260213170000.xml
-└── Feed-in Tariff/
-    └── CO-G1-CO176_202605151802.xml
+samples/example/
+├── Regular/
+│   ├── example-baseline.xml
+│   └── example-secondary.xml
+└── Final/
+    └── example-final.xml
 ```
 
 Choose one input as the **baseline**. It should be a normal, representative bill that renders the documents you want the TD to describe. The documents returned for this one bill set the scope and order of the TD. Other samples are used to describe differences from that baseline.
 
 ### 3. Create or update the profile
 
-Copy an existing profile such as `profiles/residential-tariff.json`, then update the package, date, cache location, sample root, and the explicit baseline plan.
+Copy `profiles/example-profile.json` to a new local profile, then update the package, date, cache location, sample root, and the explicit baseline plan. Local profiles and samples are ignored by Git.
 
 ```json
 {
-  "family": "Residential Tariff (RT)",
+  "family": "Example document family",
   "comms": {
-    "package": "CLP_bills",
-    "effective_date": "2026-08-12",
-    "reference_version": "V 18.0",
+    "package": "EXAMPLE_PACKAGE",
+    "effective_date": "2026-01-01",
+    "reference_version": "1.0",
     "resource_cache": "/path/to/comms-cache"
   },
-  "scenarios": "samples/rt",
+  "scenarios": "samples/example",
   "baselines": [
     {
-      "document": "CO-G1-CO1",
-      "label": "Domestic customers",
-      "scenario": "Regular (Cyclic)",
-      "input": "CO-G1-CO1_20260427190000.xml",
+      "document": "EXAMPLE_DOCUMENT",
+      "label": "Example baseline",
+      "scenario": "Regular",
+      "input": "example-baseline.xml",
       "variants": [
         {
-          "scenario": "Final Bill",
-          "input": "CO-G1-CO164_20260213170000.xml"
+          "scenario": "Final",
+          "input": "example-final.xml"
         }
       ]
     }
@@ -99,8 +97,8 @@ From this folder, run:
 
 ```bash
 python3 td_generator.py generate \
-  --profile profiles/residential-tariff.json \
-  --out generated/residential-tariff.md
+  --profile profiles/my-profile.json \
+  --out generated/my-profile.md
 ```
 
 For a first run, the generator will:
@@ -112,14 +110,14 @@ For a first run, the generator will:
 5. Read the cached Comms resources to explain document, layout, content, field, and style relationships.
 6. Write the Markdown TD and its supporting evidence files.
 
-The default output is Markdown only, which is best while reviewing changes. Open `generated/residential-tariff.md` in any Markdown viewer.
+The default output is Markdown only, which is best while reviewing changes. Open `generated/my-profile.md` in any Markdown viewer.
 
 When the content is approved, create the delivery formats:
 
 ```bash
 python3 td_generator.py generate \
-  --profile profiles/residential-tariff.json \
-  --out generated/residential-tariff.md \
+  --profile profiles/my-profile.json \
+  --out generated/my-profile.md \
   --formats md,docx,pdf
 ```
 
@@ -129,9 +127,9 @@ If the Markdown TD has already been generated and reviewed, you can create or re
 
 ```bash
 python3 render_td.py \
-  --markdown generated/residential-tariff.md \
-  --docx generated/residential-tariff.docx \
-  --pdf generated/residential-tariff.pdf
+  --markdown generated/my-profile.md \
+  --docx generated/my-profile.docx \
+  --pdf generated/my-profile.pdf
 ```
 
 Omit the `--pdf` line when you only need a DOCX. PDF creation requires LibreOffice (`soffice`).
@@ -159,8 +157,8 @@ Use this checklist after configuration changes.
 python3 td_generator.py generate \
   --source cached --render-evidence cached \
   --xml-conversion never --rebuild-resource-index \
-  --profile profiles/residential-tariff.json \
-  --out generated/residential-tariff.md
+  --profile profiles/my-profile.json \
+  --out generated/my-profile.md
 ```
 
 Use `--render-evidence metadata` instead of `cached` when you want Comms to render every sample again and recalculate scenario differences. This is the normal choice after a real configuration change:
@@ -169,8 +167,8 @@ Use `--render-evidence metadata` instead of `cached` when you want Comms to rend
 python3 td_generator.py generate \
   --source cached --render-evidence metadata \
   --rebuild-resource-index \
-  --profile profiles/residential-tariff.json \
-  --out generated/residential-tariff.md
+  --profile profiles/my-profile.json \
+  --out generated/my-profile.md
 ```
 
 ### Added or changed a sample scenario
