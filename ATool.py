@@ -33,6 +33,9 @@ class AToolApp:
     CONTACT_EMAIL = "andy.little@oracle.com"
     DEFAULT_WIDTH = 1000
     DEFAULT_HEIGHT = 640
+    ARRANGE_WINDOW_MARGIN = 8
+    ARRANGE_WINDOW_GAP = 8
+    ARRANGE_WINDOW_COLUMN_RATIOS = (0.37, 0.33, 0.30)
     MACOS_PANEL_BACKGROUND = "#f0f0f0"
     MACOS_CONTENT_BACKGROUND = "#ffffff"
     MACOS_TEXT_FOREGROUND = "#1f1f1f"
@@ -519,6 +522,8 @@ class AToolApp:
             label="Show Data Browser",
             command=self._show_data_browser_window,
         )
+        window_menu.add_separator()
+        window_menu.add_command(label="Arrange", command=self._arrange_main_windows)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
@@ -529,6 +534,69 @@ class AToolApp:
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
         menu_bar.add_cascade(label="Window", menu=window_menu)
         return menu_bar
+
+    def _arrange_main_windows(self) -> None:
+        """Tile Documents, Layouts, Fields, and Clauses across the desktop."""
+        # Make the four primary windows available before calculating their bounds.
+        # The individual show methods also keep their persisted visibility in sync.
+        self._show_main_window()
+        self._show_layouts_window()
+        self._show_fields_window()
+        self._show_condition_library_window()
+        self.root.update_idletasks()
+
+        # Tk's virtual-root bounds cover the usable desktop on platforms that
+        # expose a virtual desktop, while retaining the normal screen bounds as
+        # a portable fallback.
+        desktop_x = self.root.winfo_vrootx()
+        desktop_y = self.root.winfo_vrooty()
+        desktop_width = self.root.winfo_vrootwidth() or self.root.winfo_screenwidth()
+        desktop_height = self.root.winfo_vrootheight() or self.root.winfo_screenheight()
+        margin = self.ARRANGE_WINDOW_MARGIN
+        gap = self.ARRANGE_WINDOW_GAP
+        available_width = max(desktop_width - (2 * margin) - (2 * gap), 1)
+        available_height = max(desktop_height - (2 * margin) - gap, 1)
+
+        document_width = round(available_width * self.ARRANGE_WINDOW_COLUMN_RATIOS[0])
+        layouts_width = round(available_width * self.ARRANGE_WINDOW_COLUMN_RATIOS[1])
+        clauses_width = available_width - document_width - layouts_width
+        top_height = available_height // 2
+        bottom_height = available_height - top_height
+        left_x = desktop_x + margin
+        center_x = left_x + document_width + gap
+        right_x = center_x + layouts_width + gap
+        top_y = desktop_y + margin
+        bottom_y = top_y + top_height + gap
+
+        # A proportional arrangement should still fit on smaller displays.  The
+        # manager windows normally retain larger minima for manual use, so lower
+        # those minima only as far as this arrangement requires.
+        arranged_windows = (
+            (self.layouts_window, layouts_width, top_height),
+            (self.fields_window, layouts_width, bottom_height),
+            (self.condition_library_window, clauses_width, available_height),
+        )
+        for window, width, height in arranged_windows:
+            assert window is not None
+            minimum_width, minimum_height = window.minsize()
+            window.minsize(
+                max(1, min(minimum_width, width)),
+                max(1, min(minimum_height, height)),
+            )
+
+        self.root.geometry(f"{document_width}x{available_height}+{left_x}+{top_y}")
+        assert self.layouts_window is not None
+        self.layouts_window.geometry(f"{layouts_width}x{top_height}+{center_x}+{top_y}")
+        assert self.fields_window is not None
+        self.fields_window.geometry(f"{layouts_width}x{bottom_height}+{center_x}+{bottom_y}")
+        assert self.condition_library_window is not None
+        self.condition_library_window.geometry(f"{clauses_width}x{available_height}+{right_x}+{top_y}")
+
+        self._persist_window_geometry()
+        self._persist_layouts_window_geometry()
+        self._persist_fields_window_geometry()
+        self._persist_condition_library_window_geometry()
+        self._focus_main_window()
 
     def _show_about_dialog(self) -> None:
         build_info = self._get_app_build_info()
@@ -876,32 +944,38 @@ class AToolApp:
         layouts_scroll.grid(row=0, column=1, sticky="ns")
         self.layouts_tree.configure(yscrollcommand=layouts_scroll.set)
 
-        self.layout_properties_panel = ttk.Frame(self.layouts_vertical_pane, relief=tk.GROOVE, borderwidth=1, padding=10)
-        self.layout_properties_panel.columnconfigure(0, weight=1)
+        (
+            self.layout_properties_panel,
+            layout_properties_content,
+            self.layout_properties_scroll_canvas,
+        ) = self._create_scrollable_properties_panel(self.layouts_vertical_pane)
+        self.layout_properties_content = layout_properties_content
+        layout_properties_content.columnconfigure(0, weight=1)
         self.layout_properties_panel.bind("<Configure>", self._on_layout_properties_configure)
+        layout_properties_content.bind("<Configure>", self._on_layout_properties_configure, add="+")
         self._layout_wrapped_labels: list[ttk.Label] = []
 
         row = 0
-        title = ttk.Label(self.layout_properties_panel, text="Properties", font=("TkDefaultFont", 11, "bold"))
+        title = ttk.Label(layout_properties_content, text="Properties", font=("TkDefaultFont", 11, "bold"))
         title.grid(row=row, column=0, sticky="w", pady=(0, 8))
         row += 1
 
-        ttk.Label(self.layout_properties_panel, text="Item Kind:").grid(row=row, column=0, sticky="w")
+        ttk.Label(layout_properties_content, text="Item Kind:").grid(row=row, column=0, sticky="w")
         row += 1
-        kind_value = ttk.Label(self.layout_properties_panel, textvariable=self.layout_item_kind_text, justify=tk.LEFT)
+        kind_value = ttk.Label(layout_properties_content, textvariable=self.layout_item_kind_text, justify=tk.LEFT)
         kind_value.grid(row=row, column=0, sticky="w", pady=(0, 8))
         self._layout_wrapped_labels.append(kind_value)
         row += 1
 
-        self.layout_name_title = ttk.Label(self.layout_properties_panel, text="Name:")
+        self.layout_name_title = ttk.Label(layout_properties_content, text="Name:")
         self.layout_name_title.grid(row=row, column=0, sticky="w")
         row += 1
-        self.layout_name_entry = ttk.Entry(self.layout_properties_panel, textvariable=self.layout_name_edit_var)
+        self.layout_name_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_name_edit_var)
         self.layout_name_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         self.layout_name_edit_var.trace_add("write", self._on_layout_name_changed)
         row += 1
 
-        condition_row = ttk.Frame(self.layout_properties_panel)
+        condition_row = ttk.Frame(layout_properties_content)
         condition_row.grid(row=row, column=0, sticky="ew")
         condition_row.columnconfigure(0, weight=1)
         self.layout_condition_title = ttk.Label(condition_row, text="Condition:")
@@ -914,32 +988,32 @@ class AToolApp:
         )
         self.layout_condition_tool_button.grid(row=0, column=1, sticky="e")
         row += 1
-        self.layout_condition_entry = ttk.Entry(self.layout_properties_panel, textvariable=self.layout_condition_edit_var)
+        self.layout_condition_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_condition_edit_var)
         self.layout_condition_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         self.layout_condition_edit_var.trace_add("write", self._on_layout_condition_changed)
         row += 1
 
-        self.layout_iteration_title = ttk.Label(self.layout_properties_panel, text="Iteration:")
+        self.layout_iteration_title = ttk.Label(layout_properties_content, text="Iteration:")
         self.layout_iteration_title.grid(row=row, column=0, sticky="w")
         row += 1
-        self.layout_iteration_entry = ttk.Entry(self.layout_properties_panel, textvariable=self.layout_iteration_edit_var)
+        self.layout_iteration_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_iteration_edit_var)
         self.layout_iteration_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         self.layout_iteration_edit_var.trace_add("write", self._on_layout_iteration_changed)
         row += 1
 
-        self.layout_path_title = ttk.Label(self.layout_properties_panel, text="Path:")
+        self.layout_path_title = ttk.Label(layout_properties_content, text="Path:")
         self.layout_path_title.grid(row=row, column=0, sticky="w")
         row += 1
-        self.layout_path_entry = ttk.Entry(self.layout_properties_panel, textvariable=self.layout_path_edit_var)
+        self.layout_path_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_path_edit_var)
         self.layout_path_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         self.layout_path_edit_var.trace_add("write", self._on_layout_path_changed)
         row += 1
 
-        self.layout_type_title = ttk.Label(self.layout_properties_panel, text="Type:")
+        self.layout_type_title = ttk.Label(layout_properties_content, text="Type:")
         self.layout_type_title.grid(row=row, column=0, sticky="w")
         row += 1
         self.layout_type_entry = ttk.Combobox(
-            self.layout_properties_panel,
+            layout_properties_content,
             textvariable=self.layout_type_edit_var,
             values=("Iterator", "Spliterator"),
             state="readonly",
@@ -948,18 +1022,18 @@ class AToolApp:
         self.layout_type_edit_var.trace_add("write", self._on_layout_type_changed)
         row += 1
 
-        self.layout_mandatory_title = ttk.Label(self.layout_properties_panel, text="Mandatory:")
+        self.layout_mandatory_title = ttk.Label(layout_properties_content, text="Mandatory:")
         self.layout_mandatory_title.grid(row=row, column=0, sticky="w")
         row += 1
-        self.layout_mandatory_check = ttk.Checkbutton(self.layout_properties_panel, variable=self.layout_mandatory_var)
+        self.layout_mandatory_check = ttk.Checkbutton(layout_properties_content, variable=self.layout_mandatory_var)
         self.layout_mandatory_check.grid(row=row, column=0, sticky="w", pady=(0, 8))
         self.layout_mandatory_var.trace_add("write", self._on_layout_mandatory_changed)
         row += 1
 
-        ttk.Label(self.layout_properties_panel, text="Summary:").grid(row=row, column=0, sticky="w")
+        ttk.Label(layout_properties_content, text="Summary:").grid(row=row, column=0, sticky="w")
         row += 1
         summary_label = ttk.Label(
-            self.layout_properties_panel,
+            layout_properties_content,
             textvariable=self.layout_summary_text,
             wraplength=260,
             justify=tk.LEFT,
@@ -968,10 +1042,10 @@ class AToolApp:
         self._layout_wrapped_labels.append(summary_label)
         row += 1
 
-        ttk.Label(self.layout_properties_panel, text="Mapped:").grid(row=row, column=0, sticky="w")
+        ttk.Label(layout_properties_content, text="Mapped:").grid(row=row, column=0, sticky="w")
         row += 1
         mapped_label = ttk.Label(
-            self.layout_properties_panel,
+            layout_properties_content,
             textvariable=self.layout_mapped_text,
             wraplength=260,
             justify=tk.LEFT,
@@ -1075,43 +1149,89 @@ class AToolApp:
         tree.tag_configure("unmapped_field", foreground="red")
         return panel, tree
 
-    def _create_field_details_panel(self, parent: ttk.Frame) -> ttk.Frame:
-        panel = ttk.Frame(
-            parent,
-            relief=tk.GROOVE,
-            borderwidth=1,
-            padding=10,
-        )
+    def _create_scrollable_properties_panel(self, parent: tk.Misc) -> tuple[ttk.Frame, ttk.Frame, tk.Canvas]:
+        """Create a form panel with a vertical scrollbar and mouse-wheel support."""
+        panel = ttk.Frame(parent, relief=tk.GROOVE, borderwidth=1)
         panel.columnconfigure(0, weight=1)
+        panel.rowconfigure(0, weight=1)
+        canvas = tk.Canvas(
+            panel,
+            background=self.MACOS_CONTENT_BACKGROUND,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(panel, orient=tk.VERTICAL, command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        content = ttk.Frame(canvas, padding=10)
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def update_scroll_region(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def fit_content_to_canvas(event: tk.Event) -> None:
+            canvas.itemconfigure(content_window, width=event.width)
+
+        def scroll(event: tk.Event) -> str:
+            if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+                canvas.yview_scroll(-1, "units")
+            else:
+                canvas.yview_scroll(1, "units")
+            return "break"
+
+        content.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", fit_content_to_canvas)
+        for widget in (canvas, content):
+            widget.bind("<MouseWheel>", scroll, add="+")
+            widget.bind("<Button-4>", scroll, add="+")
+            widget.bind("<Button-5>", scroll, add="+")
+
+        def bind_wheel_to_descendants(widget: tk.Misc) -> None:
+            for child in widget.winfo_children():
+                child.bind("<MouseWheel>", scroll, add="+")
+                child.bind("<Button-4>", scroll, add="+")
+                child.bind("<Button-5>", scroll, add="+")
+                bind_wheel_to_descendants(child)
+
+        self.root.after_idle(lambda: bind_wheel_to_descendants(content))
+        return panel, content, canvas
+
+    def _create_field_details_panel(self, parent: ttk.Frame) -> ttk.Frame:
+        panel, content, self.field_details_scroll_canvas = self._create_scrollable_properties_panel(parent)
+        self.field_details_content = content
+        content.columnconfigure(0, weight=1)
         panel.bind("<Configure>", self._on_field_details_configure)
+        content.bind("<Configure>", self._on_field_details_configure, add="+")
         self._field_details_wrapped_labels: list[ttk.Label] = []
 
-        heading = ttk.Label(panel, text="Field Details", font=("TkDefaultFont", 12, "bold"))
+        heading = ttk.Label(content, text="Properties", font=("TkDefaultFont", 12, "bold"))
         heading.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        name_title = ttk.Label(panel, text="Name:")
+        name_title = ttk.Label(content, text="Name:")
         name_title.grid(row=1, column=0, sticky="w")
-        name_value = ttk.Entry(panel, textvariable=self.edit_field_name_var)
+        name_value = ttk.Entry(content, textvariable=self.edit_field_name_var)
         name_value.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         self.edit_field_name_var.trace_add("write", self._on_field_name_changed)
 
-        mandatory_title = ttk.Label(panel, text="Mandatory:")
+        mandatory_title = ttk.Label(content, text="Mandatory:")
         mandatory_title.grid(row=3, column=0, sticky="w")
-        mandatory_value = ttk.Checkbutton(panel, variable=self.edit_field_mandatory_var)
+        mandatory_value = ttk.Checkbutton(content, variable=self.edit_field_mandatory_var)
         mandatory_value.grid(row=4, column=0, sticky="w", pady=(0, 8))
         self.edit_field_mandatory_var.trace_add("write", self._on_field_mandatory_changed)
 
-        path_title = ttk.Label(panel, text="Path:")
+        path_title = ttk.Label(content, text="Path:")
         path_title.grid(row=5, column=0, sticky="w")
-        path_value = ttk.Entry(panel, textvariable=self.edit_field_path_var)
+        path_value = ttk.Entry(content, textvariable=self.edit_field_path_var)
         path_value.grid(row=6, column=0, sticky="ew", pady=(0, 8))
         path_value.bind("<FocusOut>", self._on_field_path_commit)
         path_value.bind("<Return>", self._on_field_path_commit)
 
-        true_path_title = ttk.Label(panel, text="True Path:")
+        true_path_title = ttk.Label(content, text="True Path:")
         true_path_title.grid(row=7, column=0, sticky="w")
         true_path_value = ttk.Label(
-            panel,
+            content,
             textvariable=self.field_true_path_text,
             wraplength=280,
             justify=tk.LEFT,
@@ -1119,10 +1239,10 @@ class AToolApp:
         true_path_value.grid(row=8, column=0, sticky="w", pady=(0, 8))
         self._field_details_wrapped_labels.append(true_path_value)
 
-        mapped_title = ttk.Label(panel, text="Mapped Value:")
+        mapped_title = ttk.Label(content, text="Mapped Value:")
         mapped_title.grid(row=9, column=0, sticky="w")
         mapped_value = tk.Text(
-            panel,
+            content,
             height=3,
             wrap="word",
             undo=False,
@@ -1137,10 +1257,10 @@ class AToolApp:
         self.field_mapped_value_text.trace_add("write", self._sync_field_mapped_value_widget)
         self._sync_field_mapped_value_widget()
 
-        updated_title = ttk.Label(panel, text="Updated:")
+        updated_title = ttk.Label(content, text="Updated:")
         updated_title.grid(row=11, column=0, sticky="w")
         updated_value = ttk.Label(
-            panel,
+            content,
             textvariable=self.field_updated_text,
             wraplength=280,
             justify=tk.LEFT,
@@ -1148,16 +1268,16 @@ class AToolApp:
         updated_value.grid(row=12, column=0, sticky="w", pady=(0, 8))
         self._field_details_wrapped_labels.append(updated_value)
 
-        descr_title = ttk.Label(panel, text="Descr:")
+        descr_title = ttk.Label(content, text="Descr:")
         descr_title.grid(row=13, column=0, sticky="w")
-        descr_value = ttk.Entry(panel, textvariable=self.field_descr_text)
+        descr_value = ttk.Entry(content, textvariable=self.field_descr_text)
         descr_value.grid(row=14, column=0, sticky="ew", pady=(0, 8))
         self.field_descr_text.trace_add("write", self._on_field_descr_changed)
 
-        hierarchy_title = ttk.Label(panel, text="Hierarchy:")
+        hierarchy_title = ttk.Label(content, text="Hierarchy:")
         hierarchy_title.grid(row=15, column=0, sticky="w")
         hierarchy_value = ttk.Label(
-            panel,
+            content,
             textvariable=self.field_hierarchy_text,
             wraplength=280,
             justify=tk.LEFT,
@@ -1299,9 +1419,9 @@ class AToolApp:
         self._update_layout_properties_wraplength()
 
     def _update_field_details_wraplength(self) -> None:
-        if not hasattr(self, "field_details_panel"):
+        if not hasattr(self, "field_details_content"):
             return
-        panel_width = self.field_details_panel.winfo_width()
+        panel_width = self.field_details_content.winfo_width()
         if panel_width <= 1:
             return
         wrap_length = max(panel_width - 28, 120)
@@ -1400,9 +1520,9 @@ class AToolApp:
         self.document_triggered_value.grid()
 
     def _update_layout_properties_wraplength(self) -> None:
-        if not hasattr(self, "layout_properties_panel"):
+        if not hasattr(self, "layout_properties_content"):
             return
-        panel_width = self.layout_properties_panel.winfo_width()
+        panel_width = self.layout_properties_content.winfo_width()
         if panel_width <= 1:
             return
         wrap_length = max(panel_width - 28, 120)
@@ -6573,6 +6693,11 @@ class AToolApp:
     def _on_layout_tree_open_close(self, _event: tk.Event) -> None:
         self.root.after_idle(self._update_layout_context_buttons)
 
+    def _reset_layout_properties_scroll(self) -> None:
+        canvas = getattr(self, "layout_properties_scroll_canvas", None)
+        if canvas is not None and canvas.winfo_exists():
+            canvas.yview_moveto(0)
+
     def _set_layout_details(self, details: dict[str, object]) -> None:
         self._updating_layout_form = True
         source_ref = details.get("source_ref")
@@ -6613,6 +6738,7 @@ class AToolApp:
         self.layout_summary_text.set(" | ".join(summary) if summary else "(no additional properties)")
         self.layout_mapped_text.set(self._build_layout_mapped_display(details))
         self._updating_layout_form = False
+        self.root.after_idle(self._reset_layout_properties_scroll)
 
     def _clear_layout_details(self) -> None:
         self._updating_layout_form = True
@@ -6627,6 +6753,7 @@ class AToolApp:
         self.layout_summary_text.set("-")
         self.layout_mapped_text.set("-")
         self._updating_layout_form = False
+        self.root.after_idle(self._reset_layout_properties_scroll)
 
     def _apply_layout_mapping_tag(self, node_id: str, details: dict[str, object]) -> None:
         if self.current_data_payload is None:
