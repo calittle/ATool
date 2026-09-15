@@ -71,6 +71,7 @@ class AToolApp:
             "work_dir": "",
             "request_timeout_seconds": DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS,
             "session_alias": "",
+            "pre_prod_session_alias": "",
             "config_source_session_alias": "np",
             "config_target_session_alias": "pp",
             "config_id_filter": "",
@@ -5415,6 +5416,7 @@ class AToolApp:
         work_dir_var = tk.StringVar(value=self._get_occs_work_dir())
         request_timeout_seconds_var = tk.StringVar(value=str(self._get_occs_request_timeout_seconds()))
         session_alias_var = tk.StringVar(value=self._get_occs_session_alias())
+        pre_prod_session_alias_var = tk.StringVar(value=self._get_occs_pre_prod_session_alias())
         config_source_session_alias_var = tk.StringVar(value=self._get_occs_config_source_session_alias())
         config_target_session_alias_var = tk.StringVar(value=self._get_occs_config_target_session_alias())
         config_id_filter_var = tk.StringVar(value=self._get_occs_config_id_filter())
@@ -5490,33 +5492,41 @@ class AToolApp:
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="Session Alias:").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Non-Prod Session Alias (default):").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         session_alias_entry = ttk.Entry(occs_group, textvariable=session_alias_var, width=54)
         session_alias_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config Source Session:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Pre-Prod Session Alias:").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        pre_prod_session_alias_entry = ttk.Entry(
+            occs_group,
+            textvariable=pre_prod_session_alias_var,
+            width=54,
+        )
+        pre_prod_session_alias_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+
+        ttk.Label(occs_group, text="Migrate Source [alias]:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_source_session_alias_entry = ttk.Entry(
             occs_group,
             textvariable=config_source_session_alias_var,
             width=54,
         )
-        config_source_session_alias_entry.grid(row=4, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_source_session_alias_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config Target Session:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Migrate Target [alias]:").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_target_session_alias_entry = ttk.Entry(
             occs_group,
             textvariable=config_target_session_alias_var,
             width=54,
         )
-        config_target_session_alias_entry.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_target_session_alias_entry.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config ID Filter:").grid(row=6, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Config ID Filter:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
-        config_id_filter_entry.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        config_id_filter_entry.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Shared Package Folder:").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         shared_workspace_entry = ttk.Entry(occs_group, textvariable=shared_workspace_var, width=54)
-        shared_workspace_entry.grid(row=7, column=1, sticky="ew", pady=(8, 0))
+        shared_workspace_entry.grid(row=8, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_shared_workspace() -> None:
             current_path = shared_workspace_var.get().strip()
@@ -5531,15 +5541,15 @@ class AToolApp:
                 shared_workspace_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_shared_workspace).grid(
-            row=7,
+            row=8,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="Models Directory:").grid(row=8, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        ttk.Entry(occs_group, textvariable=models_dir_var, width=54).grid(row=8, column=1, sticky="ew", pady=(8, 0))
+        ttk.Label(occs_group, text="Models Directory:").grid(row=9, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(occs_group, textvariable=models_dir_var, width=54).grid(row=9, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_models_dir() -> None:
             current_path = models_dir_var.get().strip()
@@ -5553,15 +5563,15 @@ class AToolApp:
                 models_dir_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_models_dir).grid(
-            row=8,
+            row=9,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="Comms Cache Directory:").grid(row=9, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
-        ttk.Entry(occs_group, textvariable=comms_cache_dir_var, width=54).grid(row=9, column=1, sticky="ew", pady=(8, 0))
+        ttk.Label(occs_group, text="Comms Cache Directory:").grid(row=10, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(occs_group, textvariable=comms_cache_dir_var, width=54).grid(row=10, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_comms_cache_dir() -> None:
             current_path = comms_cache_dir_var.get().strip()
@@ -5575,34 +5585,34 @@ class AToolApp:
                 comms_cache_dir_var.set(selected_dir)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_comms_cache_dir).grid(
-            row=9,
+            row=10,
             column=2,
             sticky="e",
             padx=(6, 0),
             pady=(8, 0),
         )
 
-        ttk.Label(occs_group, text="User Name:").grid(row=10, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="User Name:").grid(row=11, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         user_name_entry = ttk.Entry(occs_group, textvariable=occs_user_name_var, width=54)
-        user_name_entry.grid(row=10, column=1, columnspan=2, sticky="ew", pady=(8, 0))
+        user_name_entry.grid(row=11, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
         retain_lock_check = ttk.Checkbutton(
             occs_group,
             text="Retain lock on package after update",
             variable=retain_lock_after_shared_update_var,
         )
-        retain_lock_check.grid(row=11, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        retain_lock_check.grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         static_xsd_check = ttk.Checkbutton(
             occs_group,
             text="Use local XSD for XML conversion (bypass OCCS conversion API)",
             variable=use_static_xsd_conversion_var,
         )
-        static_xsd_check.grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        static_xsd_check.grid(row=13, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Static XSD: ").grid(row=13, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Static XSD: ").grid(row=14, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         static_xsd_entry = ttk.Entry(occs_group, textvariable=static_xsd_path_var, width=54)
-        static_xsd_entry.grid(row=13, column=1, sticky="ew", pady=(8, 0))
+        static_xsd_entry.grid(row=14, column=1, sticky="ew", pady=(8, 0))
 
         def _browse_static_xsd() -> None:
             current_path = static_xsd_path_var.get().strip()
@@ -5621,7 +5631,7 @@ class AToolApp:
                 static_xsd_path_var.set(selected_path)
 
         ttk.Button(occs_group, text="Browse...", command=_browse_static_xsd).grid(
-            row=13,
+            row=14,
             column=2,
             sticky="e",
             padx=(6, 0),
@@ -5732,6 +5742,7 @@ class AToolApp:
             self._set_occs_work_dir(work_dir_var.get())
             self._set_occs_request_timeout_seconds(request_timeout_seconds)
             self._set_occs_session_alias(session_alias_var.get())
+            self._set_occs_pre_prod_session_alias(pre_prod_session_alias_var.get())
             self._set_occs_config_source_session_alias(config_source_session_alias_var.get())
             self._set_occs_config_target_session_alias(config_target_session_alias_var.get())
             self._set_occs_config_id_filter(config_id_filter)
@@ -5794,6 +5805,10 @@ class AToolApp:
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
         section["session_alias"] = str(session_alias or "").strip()
+
+    def _set_occs_pre_prod_session_alias(self, session_alias: str) -> None:
+        section = self._occs_settings_section()
+        section["pre_prod_session_alias"] = str(session_alias or "").strip()
 
     def _set_occs_config_source_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
@@ -5891,6 +5906,12 @@ class AToolApp:
         if not isinstance(section, dict):
             return ""
         return str(section.get("session_alias", "")).strip()
+
+    def _get_occs_pre_prod_session_alias(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        return str(section.get("pre_prod_session_alias", "")).strip()
 
     def _get_occs_config_source_session_alias(self) -> str:
         section = self.user_settings.get("occs")
@@ -6460,6 +6481,7 @@ class AToolApp:
                 "cli_path",
                 "work_dir",
                 "session_alias",
+                "pre_prod_session_alias",
                 "config_source_session_alias",
                 "config_target_session_alias",
                 "config_id_filter",
@@ -10329,8 +10351,15 @@ class AToolApp:
                 pady=(8, 0),
             )
 
+        use_pre_prod_session_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            container,
+            text="Use Pre-Prod Session Alias for this preview",
+            variable=use_pre_prod_session_var,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
         render_group = ttk.LabelFrame(container, text="Render Types", padding=10)
-        render_group.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        render_group.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
 
         initial_render_types = self._get_last_occs_preview_render_types()
         has_saved_timeout = self._has_last_occs_preview_timeout_seconds()
@@ -10383,9 +10412,9 @@ class AToolApp:
         for variable in render_vars.values():
             variable.trace_add("write", _refresh_timeout_default)
 
-        ttk.Label(container, text="Timeout (seconds):").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
+        ttk.Label(container, text="Timeout (seconds):").grid(row=4, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
         timeout_entry = ttk.Entry(container, textvariable=timeout_var, width=12)
-        timeout_entry.grid(row=3, column=1, sticky="w", pady=(10, 0))
+        timeout_entry.grid(row=4, column=1, sticky="w", pady=(10, 0))
         timeout_var.trace_add("write", _on_timeout_changed)
 
         open_after_var = tk.BooleanVar(value=True)
@@ -10393,10 +10422,10 @@ class AToolApp:
             container,
             text="Open after generation",
             variable=open_after_var,
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
 
         def _submit() -> None:
@@ -10420,6 +10449,15 @@ class AToolApp:
             timeout_seconds = self._safe_int(timeout_var.get().strip())
             if timeout_seconds is None or timeout_seconds <= 0:
                 messagebox.showerror("Preview Package", "Timeout must be a positive number of seconds.", parent=dialog)
+                return
+
+            pre_prod_session_alias = self._get_occs_pre_prod_session_alias()
+            if use_pre_prod_session_var.get() and not pre_prod_session_alias:
+                messagebox.showerror(
+                    "Preview Package",
+                    "Set a Pre-Prod Session Alias in User Settings before using it for a preview.",
+                    parent=dialog,
+                )
                 return
 
             self._set_last_occs_preview_options(render_types, timeout_seconds)
@@ -10449,6 +10487,8 @@ class AToolApp:
                 "--render-type",
                 *render_types,
             ]
+            if use_pre_prod_session_var.get():
+                args[1:1] = ["--session", pre_prod_session_alias]
             dialog.destroy()
             self._run_occs_command_async(
                 args,
