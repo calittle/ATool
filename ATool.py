@@ -122,7 +122,9 @@ class AToolApp:
         self.data_browser_search_var = tk.StringVar(value="")
         self.data_browser_search_mode_var = tk.StringVar(value="Auto")
         self.data_browser_status_var = tk.StringVar(value="Map a data file to inspect it.")
+        self.data_browser_selected_path_var = tk.StringVar(value="")
         self._data_browser_node_values: dict[str, object] = {}
+        self._data_browser_node_paths: dict[str, str] = {}
         self._data_browser_search_values: dict[str, object] = {}
         self._data_browser_pending_children: dict[str, tuple[str, object]] = {}
         self._local_occs_cleanup_window: tk.Toplevel | None = None
@@ -1223,8 +1225,17 @@ class AToolApp:
 
         path_title = ttk.Label(content, text="Path:")
         path_title.grid(row=5, column=0, sticky="w")
+        self.open_field_path_in_data_browser_button = ttk.Button(
+            content,
+            text=">",
+            width=3,
+            command=self._open_selected_field_path_in_data_browser,
+            state=tk.DISABLED,
+        )
+        self.open_field_path_in_data_browser_button.grid(row=5, column=1, sticky="e")
+        self._attach_tooltip(self.open_field_path_in_data_browser_button, "Open path in Data Browser")
         path_value = ttk.Entry(content, textvariable=self.edit_field_path_var)
-        path_value.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+        path_value.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         path_value.bind("<FocusOut>", self._on_field_path_commit)
         path_value.bind("<Return>", self._on_field_path_commit)
 
@@ -1814,6 +1825,13 @@ class AToolApp:
         details_y_scroll = ttk.Scrollbar(details_frame, orient=tk.VERTICAL, command=self.data_browser_details.yview)
         details_y_scroll.grid(row=1, column=1, sticky="ns")
         self.data_browser_details.configure(yscrollcommand=details_y_scroll.set)
+        ttk.Label(details_frame, text="Select Path:").grid(row=2, column=0, sticky="w", pady=(8, 4))
+        self.data_browser_selected_path_entry = ttk.Entry(
+            details_frame,
+            textvariable=self.data_browser_selected_path_var,
+            state="readonly",
+        )
+        self.data_browser_selected_path_entry.grid(row=3, column=0, columnspan=2, sticky="ew")
         panes.add(tree_frame, weight=3)
         panes.add(details_frame, weight=2)
         ttk.Label(container, textvariable=self.data_browser_status_var, anchor=tk.W).grid(
@@ -1850,6 +1868,37 @@ class AToolApp:
         self._refresh_data_browser()
         self._focus_data_browser_search()
 
+    def _open_selected_field_path_in_data_browser(self) -> None:
+        field = self._field_node_details.get(self._active_field_node_id or "")
+        field_path = str(field.get("path", "")).strip() if field else ""
+        if not field_path:
+            return
+
+        search_path = self._field_path_for_data_browser(field_path)
+        self._show_data_browser_window()
+        self.data_browser_search_mode_var.set("JSONPath")
+        self.data_browser_search_var.set(search_path)
+        self._search_data_browser()
+
+    def _field_path_for_data_browser(self, field_path: str) -> str:
+        """Return the JSONPath to search from a field's authored Path value."""
+        candidate = self._normalize_path_expression(field_path)
+        concat_args = self._unwrap_named_call(candidate[2:], "concat") if candidate.startswith("$.") else None
+        if concat_args is None:
+            concat_args = self._unwrap_named_call(candidate, "concat")
+        if concat_args is not None:
+            paths: list[str] = []
+            for arg in self._split_top_level(concat_args):
+                arg = arg.strip()
+                if len(arg) >= 2 and arg[0] in {"'", '"'} and arg[-1] == arg[0]:
+                    arg = arg[1:-1]
+                normalized = self._normalize_true_path(arg)
+                if normalized.startswith("$"):
+                    paths.append(normalized)
+            if paths:
+                return max(paths, key=len)
+        return self._normalize_true_path(candidate)
+
     def _refresh_data_browser(self) -> None:
         if self.data_browser_window is None or not self.data_browser_window.winfo_exists():
             return
@@ -1857,9 +1906,11 @@ class AToolApp:
             return
         self.data_browser_tree.delete(*self.data_browser_tree.get_children())
         self._data_browser_node_values = {}
+        self._data_browser_node_paths = {}
         self._data_browser_search_values = {}
         self._data_browser_pending_children = {}
         self._set_readonly_text_widget_value(self.data_browser_details, "")
+        self.data_browser_selected_path_var.set("")
         payload = self.current_data_payload
         if payload is None:
             self.data_browser_status_var.set("Map a data file to inspect it.")
@@ -1882,6 +1933,7 @@ class AToolApp:
         value_preview = self._data_browser_value_preview(value)
         node_id = self.data_browser_tree.insert(parent, "end", text=display_key, values=(value_preview,), open=False)
         self._data_browser_node_values[node_id] = value
+        self._data_browser_node_paths[node_id] = path
         if isinstance(value, (dict, list)) and value:
             self._data_browser_pending_children[node_id] = (path, value)
             # A placeholder gives ttk a disclosure arrow without eagerly
@@ -1929,6 +1981,7 @@ class AToolApp:
         value = self._data_browser_node_values.get(selected[0])
         if value is None and selected[0] not in self._data_browser_node_values:
             value = self._data_browser_search_values.get(selected[0])
+        self.data_browser_selected_path_var.set(self._data_browser_node_paths.get(selected[0], ""))
         self._set_readonly_text_widget_value(
             self.data_browser_details,
             json.dumps(value, indent=2, ensure_ascii=False),
@@ -1946,21 +1999,25 @@ class AToolApp:
         use_jsonpath = mode == "JSONPath" or (mode == "Auto" and query.startswith("$"))
         self.data_browser_tree.delete(*self.data_browser_tree.get_children())
         self._data_browser_node_values = {}
+        self._data_browser_node_paths = {}
         self._data_browser_search_values = {}
         self._data_browser_pending_children = {}
         self._set_readonly_text_widget_value(self.data_browser_details, "")
+        self.data_browser_selected_path_var.set("")
         if use_jsonpath:
-            values = self._extract_values_by_path(self.current_data_payload, query)
-            for index, value in enumerate(values, start=1):
+            results = self._extract_values_and_paths_by_path(self.current_data_payload, query)
+            for index, (path, value) in enumerate(results, start=1):
                 node_id = self.data_browser_tree.insert("", "end", text=f"Result {index}", values=(self._data_browser_value_preview(value),))
                 self._data_browser_node_values[node_id] = value
-            self.data_browser_status_var.set(f"JSONPath returned {len(values)} result(s).")
+                self._data_browser_node_paths[node_id] = path
+            self.data_browser_status_var.set(f"JSONPath returned {len(results)} result(s).")
             return
 
         matches = self._find_data_browser_text_matches(self.current_data_payload, query)
         for path, value in matches:
             node_id = self.data_browser_tree.insert("", "end", text=path, values=(self._data_browser_value_preview(value),))
             self._data_browser_node_values[node_id] = value
+            self._data_browser_node_paths[node_id] = path
         self.data_browser_status_var.set(f"Full-text search returned {len(matches)} result(s).")
 
     def _find_data_browser_text_matches(self, payload: object, query: str) -> list[tuple[str, object]]:
@@ -5070,13 +5127,16 @@ class AToolApp:
         self.field_mapping_filter_button.grid()
 
     def _update_field_context_buttons(self) -> None:
-        if not hasattr(self, "remove_field_button"):
-            return
         selected_field = self._field_node_details.get(self._active_field_node_id or "")
-        if selected_field is None:
-            self.remove_field_button.grid_remove()
-            return
-        self.remove_field_button.grid()
+        if hasattr(self, "remove_field_button"):
+            if selected_field is None:
+                self.remove_field_button.grid_remove()
+            else:
+                self.remove_field_button.grid()
+        if hasattr(self, "open_field_path_in_data_browser_button"):
+            field_path = str(selected_field.get("path", "")).strip() if selected_field else ""
+            state = tk.NORMAL if field_path else tk.DISABLED
+            self.open_field_path_in_data_browser_button.configure(state=state)
 
     def _update_document_context_buttons(self) -> None:
         selected_doc = self._get_selected_document_ref()
@@ -19267,6 +19327,112 @@ class AToolApp:
             next_nodes: list[object] = []
             for node in nodes:
                 next_nodes.extend(self._resolve_path_segment(node, segment))
+            nodes = next_nodes
+            if not nodes:
+                break
+        return nodes
+
+    def _extract_values_and_paths_by_path(self, payload: object, path: str) -> list[tuple[str, object]]:
+        """Resolve a JSONPath and retain the concrete data path for each result."""
+        normalized_path = path.strip()
+        if not normalized_path:
+            return []
+
+        nodes: list[tuple[str, object]] = [("$", payload)]
+        if normalized_path.startswith("$.."):
+            expression = normalized_path[3:].strip(".")
+            first_segment, tail = self._split_first_path_segment(expression)
+            base_name, brackets = self._split_path_segment(first_segment.strip())
+            if not base_name:
+                return []
+            nodes = self._deep_find_values_with_paths(payload, "$", base_name)
+            nodes = self._apply_path_segment_brackets(nodes, brackets)
+            segments = self._path_to_segments("$." + tail)[1:] if tail else []
+        else:
+            segments = self._path_to_segments(normalized_path)[1:]
+
+        for segment in segments:
+            nodes = self._resolve_path_segment_with_paths(nodes, segment)
+            if not nodes:
+                break
+        return nodes
+
+    def _deep_find_values_with_paths(self, node: object, path: str, key: str) -> list[tuple[str, object]]:
+        matches: list[tuple[str, object]] = []
+        if isinstance(node, dict):
+            if key in node:
+                matches.append((self._data_browser_child_path(path, key), node[key]))
+            for child_key, child in node.items():
+                matches.extend(self._deep_find_values_with_paths(child, self._data_browser_child_path(path, child_key), key))
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                matches.extend(self._deep_find_values_with_paths(child, f"{path}[{index}]", key))
+        return matches
+
+    def _resolve_path_segment_with_paths(
+        self, nodes: list[tuple[str, object]], segment: str
+    ) -> list[tuple[str, object]]:
+        base_name, brackets = self._split_path_segment(segment)
+        resolved: list[tuple[str, object]] = []
+        if base_name == "length()":
+            for path, value in nodes:
+                if isinstance(value, (str, list)):
+                    resolved.append((f"{path}.length()", len(value)))
+        elif base_name and base_name != "*":
+            for path, value in nodes:
+                if isinstance(value, dict) and base_name in value:
+                    resolved.append((self._data_browser_child_path(path, base_name), value[base_name]))
+        elif base_name == "*":
+            for path, value in nodes:
+                if isinstance(value, dict):
+                    resolved.extend((self._data_browser_child_path(path, key), child) for key, child in value.items())
+                elif isinstance(value, list):
+                    resolved.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
+        else:
+            resolved = nodes
+        return self._apply_path_segment_brackets(resolved, brackets)
+
+    def _apply_path_segment_brackets(
+        self, nodes: list[tuple[str, object]], brackets: list[str]
+    ) -> list[tuple[str, object]]:
+        for bracket in brackets:
+            content = bracket[1:-1].strip()
+            next_nodes: list[tuple[str, object]] = []
+            if content == "*":
+                for path, value in nodes:
+                    if isinstance(value, dict):
+                        next_nodes.extend((self._data_browser_child_path(path, key), child) for key, child in value.items())
+                    elif isinstance(value, list):
+                        next_nodes.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
+            elif (content.startswith("'") and content.endswith("'")) or (
+                content.startswith('"') and content.endswith('"')
+            ):
+                key_name = content[1:-1]
+                for path, value in nodes:
+                    if isinstance(value, dict) and key_name in value:
+                        next_nodes.append((self._data_browser_child_path(path, key_name), value[key_name]))
+            elif content.startswith("?(") and content.endswith(")"):
+                filter_expression = content[2:-1].strip()
+                for path, value in nodes:
+                    candidates = (
+                        [(f"{path}[{index}]", child) for index, child in enumerate(value)]
+                        if isinstance(value, list)
+                        else [(path, value)] if isinstance(value, dict) else []
+                    )
+                    next_nodes.extend(
+                        (candidate_path, candidate)
+                        for candidate_path, candidate in candidates
+                        if self._evaluate_condition_expression(filter_expression, candidate)
+                    )
+            else:
+                try:
+                    index_value = int(content)
+                except ValueError:
+                    return []
+                for path, value in nodes:
+                    if isinstance(value, list) and -len(value) <= index_value < len(value):
+                        actual_index = index_value if index_value >= 0 else len(value) + index_value
+                        next_nodes.append((f"{path}[{actual_index}]", value[index_value]))
             nodes = next_nodes
             if not nodes:
                 break
