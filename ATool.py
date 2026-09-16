@@ -375,6 +375,10 @@ class AToolApp:
             accelerator=open_session_accelerator,
             command=self.open_last_session,
         )
+        file_menu.add_command(
+            label="Show Local Storage",
+            command=self.show_local_storage,
+        )
         file_menu.add_separator()
         file_menu.add_command(label="About ATool", command=self._show_about_dialog)
         file_menu.add_separator()
@@ -9661,6 +9665,29 @@ class AToolApp:
 
         if file_path:
             self._load_assembly_template(file_path)
+
+    def show_local_storage(self) -> None:
+        """Open ATool's local OCCS bundle storage in the system file browser."""
+        local_storage_dir = Path.home() / ".atool" / "occs-bundles"
+        try:
+            local_storage_dir.mkdir(parents=True, exist_ok=True)
+            system = platform.system()
+            if system == "Darwin":
+                command = ["open", str(local_storage_dir)]
+            elif system == "Windows":
+                startfile = getattr(os, "startfile", None)
+                if not callable(startfile):
+                    raise OSError("System file browser is unavailable.")
+                startfile(str(local_storage_dir))
+                return
+            else:
+                command = ["xdg-open", str(local_storage_dir)]
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as error:
+            messagebox.showerror(
+                "Show Local Storage",
+                f"Could not open local storage:\n\n{local_storage_dir}\n\n{error}",
+            )
 
     def open_occs_package(self) -> None:
         if self._occs_operation_in_progress:
