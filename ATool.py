@@ -9763,10 +9763,7 @@ class AToolApp:
             if choice and not self.save_assembly_template():
                 return False
 
-        if self.current_occs_shared_package_dir is None or self.current_occs_shared_mode != "edit":
-            return True
-
-        if not self._current_local_copy_matches_shared():
+        if self.current_occs_shared_mode == "edit" and not self._current_local_copy_matches_shared():
             choice = messagebox.askyesnocancel(
                 "Close Package",
                 "This shared package edit has not been updated to the shared package folder.\n\n"
@@ -9780,8 +9777,6 @@ class AToolApp:
         return self._prompt_release_owned_shared_lock_on_close()
 
     def _prompt_release_owned_shared_lock_on_close(self) -> bool:
-        if self._get_retain_lock_after_shared_update_setting():
-            return True
         context = self._current_occs_shared_context(show_errors=False)
         if context is None:
             return True
@@ -10929,6 +10924,11 @@ class AToolApp:
         if self.current_occs_shared_package_dir == context["package_dir"]:
             self.current_occs_shared_mode = "testing"
         self._show_temporary_status("Package version lock released", duration_ms=5000)
+        if self.current_payload is not None and messagebox.askyesno(
+            "Release Shared Package Lock",
+            "The shared package lock has been released.\n\nClose this package now?",
+        ):
+            self.close_current_package()
 
     def manual_unlock_shared_occs_package(self) -> None:
         workspace_dir = self._ensure_occs_shared_workspace_dir()
