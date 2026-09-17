@@ -209,7 +209,7 @@ On startup, ATool now:
 
 The app menu is attached to the main window, Field Manager, and Clause Manager so `File`, `Package`, `Data`, `Settings`, and `Window` remain available as focus moves between those windows.
 
-`File -> About ATool` now shows the app build number and support contact (`andy.little@oracle.com`). Packaged builds use the git commit recorded in `BUILD_INFO.txt` as the build number source, dirty worktree builds add `-dirty`, and local development runs fall back to the current short git hash.
+`File -> About ATool` now identifies a build by its exact release tag when available, otherwise by its git commit ID, and shows the support contact (`andy.little@oracle.com`). Dirty worktree builds add `-dirty`.
 
 ## Release Package Notes
 

@@ -239,6 +239,7 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     build_id = f"{commit_sha}-dirty" if is_dirty_worktree and commit_sha != "local" else commit_sha
     artifact_path = dist_dir / f"ATool-{timestamp}-{build_id}.zip"
     full_commit_sha = git_value(repo_root, "rev-parse", "HEAD", default="local")
+    release_tag = git_value(repo_root, "describe", "--tags", "--exact-match", "HEAD")
     built_at = datetime.now().isoformat(timespec="seconds")
 
     with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -263,6 +264,7 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
                     f"artifact={artifact_path.name}",
                     f"source={source}",
                     f"commit={full_commit_sha}",
+                    f"release_tag={release_tag}",
                     f"dirty={str(is_dirty_worktree).lower()}",
                     f"built_at={built_at}",
                 ]

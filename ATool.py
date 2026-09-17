@@ -608,13 +608,14 @@ class AToolApp:
     def _show_about_dialog(self) -> None:
         build_info = self._get_app_build_info()
         build_label = build_info.get("build_label", "local")
+        build_label_name = build_info.get("build_label_name", "Commit")
         source_label = build_info.get("source", "local")
         built_at = build_info.get("built_at", "")
         artifact = build_info.get("artifact", "")
 
         lines = [
             self.APP_NAME,
-            f"Build: {build_label}",
+            f"{build_label_name}: {build_label}",
         ]
         if source_label:
             lines.append(f"Source: {source_label}")
@@ -637,15 +638,19 @@ class AToolApp:
             build_info = {
                 "source": "local worktree",
                 "commit": cls._local_git_value("rev-parse", "--short", "HEAD", default="local"),
+                "release_tag": cls._local_git_value("describe", "--tags", "--exact-match", "HEAD"),
             }
             if cls._local_git_value("status", "--short", default=""):
                 build_info["dirty"] = "true"
 
         commit = build_info.get("commit", "").strip()
         short_commit = commit[:7] if commit and commit != "local" else commit or "local"
-        if build_info.get("dirty") == "true" and short_commit != "local":
-            short_commit = f"{short_commit}-dirty"
-        build_info["build_label"] = short_commit or "local"
+        release_tag = build_info.get("release_tag", "").strip()
+        build_label = release_tag or short_commit or "local"
+        if build_info.get("dirty") == "true" and build_label != "local":
+            build_label = f"{build_label}-dirty"
+        build_info["build_label"] = build_label
+        build_info["build_label_name"] = "Release" if release_tag else "Commit"
         return build_info
 
     @staticmethod
@@ -6602,7 +6607,11 @@ class AToolApp:
         self._layout_condition_cache.clear()
 
     def _extract_layout_values_by_path(self, payload: object, path: str) -> list[object]:
-        normalized_path = path.strip()
+        # Layout paths often retain their Comms presentation wrapper (for
+        # example ``$.concat($.items[*].code, \"\")``).  Mapping state needs the
+        # underlying JSONPath, just as field mapping does; the wrapper itself
+        # is not a JSONPath segment understood by the local evaluator.
+        normalized_path = self._normalize_true_path(path)
         if not normalized_path:
             return []
         cache_key = (id(payload), normalized_path)
@@ -6612,6 +6621,36 @@ class AToolApp:
         values = self._extract_values_by_path(payload, normalized_path)
         self._layout_path_value_cache[cache_key] = values
         return values
+
+    def _layout_field_path_for_iteration(self, field_path: str, iteration_path: str) -> str:
+        """Return an iteration-relative field path when the authored path includes its iterator.
+
+        Comms stores iteration fields as full-document JSONPaths even though it
+        evaluates them with the current iteration item as their context.  A
+        path such as ``$.orders[*].amount`` therefore needs to become
+        ``$.amount`` for an item selected by ``$.orders[*]``.
+        """
+        normalized_field_path = self._normalize_true_path(field_path)
+        normalized_iteration_path = self._normalize_true_path(iteration_path)
+        if not normalized_field_path or not normalized_iteration_path:
+            return normalized_field_path
+        if normalized_field_path == normalized_iteration_path:
+            return "$"
+        if normalized_field_path.startswith(normalized_iteration_path):
+            remainder = normalized_field_path[len(normalized_iteration_path) :]
+            if remainder.startswith(".") or remainder.startswith("["):
+                return "$" + remainder
+        return normalized_field_path
+
+    def _extract_layout_iteration_field_values(
+        self,
+        item: object,
+        field_path: str,
+        iteration_path: str,
+    ) -> list[object]:
+        """Resolve a layout field using the current iteration item's scope."""
+        relative_path = self._layout_field_path_for_iteration(field_path, iteration_path)
+        return self._extract_layout_values_by_path(item, relative_path)
 
     def _insert_layout_node(self, parent_node: str, layout: dict[str, object]) -> None:
         node_text = self._build_layout_tree_label("layout", layout)
@@ -6894,7 +6933,7 @@ class AToolApp:
                 return "(no iterator rows)"
             row_lines: list[str] = []
             for row_index, item in enumerate(iteration_items, start=1):
-                row_values = self._extract_layout_values_by_path(item, path)
+                row_values = self._extract_layout_iteration_field_values(item, path, iteration_path)
                 if row_values:
                     row_preview = self._format_mapped_nodeset_preview(row_values)
                 else:
@@ -6964,7 +7003,10 @@ class AToolApp:
             iteration_items = self._extract_iteration_items(iteration_ref, self.current_data_payload)
             if not iteration_items:
                 return False
-            return all(self._extract_layout_values_by_path(item, path) for item in iteration_items)
+            return all(
+                self._extract_layout_iteration_field_values(item, path, iteration_path)
+                for item in iteration_items
+            )
         return False
 
     def _extract_iteration_items(self, iteration_ref: dict[str, object], payload: object) -> list[object]:
