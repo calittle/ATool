@@ -15850,22 +15850,13 @@ class AToolApp:
         return sorted(packages, key=AToolApp._occs_package_sort_key)
 
     @staticmethod
-    def _occs_package_sort_key(package: dict[str, str]) -> tuple[int, int, str, str, str]:
-        config_id = AToolApp._safe_int(package.get("configId"))
-        if config_id is None:
-            return (
-                1,
-                0,
-                package.get("shortName", "").lower(),
-                package.get("name", "").lower(),
-                package.get("packageUuid", "").lower(),
-            )
+    def _occs_package_sort_key(package: dict[str, str]) -> tuple[str, str, str, str]:
+        """Keep the package picker in the same order users scan its first column."""
         return (
-            0,
-            -config_id,
-            package.get("shortName", "").lower(),
-            package.get("name", "").lower(),
-            package.get("packageUuid", "").lower(),
+            package.get("shortName", "").casefold(),
+            package.get("name", "").casefold(),
+            package.get("configId", "").casefold(),
+            package.get("packageUuid", "").casefold(),
         )
 
     @staticmethod
