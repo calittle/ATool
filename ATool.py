@@ -3785,6 +3785,7 @@ class AToolApp:
         if self.current_payload is None:
             return True
         self._sanitize_package_text_object(self.current_payload)
+        self._normalize_field_mandatory_defaults(self.current_payload)
         issues = self._payload_condition_validation_issues(self.current_payload)
         if not issues:
             return True
@@ -3797,6 +3798,26 @@ class AToolApp:
             + suffix,
         )
         return False
+
+    @classmethod
+    def _normalize_field_mandatory_defaults(cls, value: object) -> None:
+        """Make persisted Field definitions explicit about their optional status.
+
+        OCCS defaults iteration fields to mandatory when the key is omitted,
+        unlike regular fields.  Field collections can appear at any nesting
+        depth in a layout, so normalize them recursively immediately before
+        every save.
+        """
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key.lower() == "fields" and isinstance(item, list):
+                    for field in item:
+                        if isinstance(field, dict):
+                            field.setdefault("Mandatory", False)
+                cls._normalize_field_mandatory_defaults(item)
+        elif isinstance(value, list):
+            for item in value:
+                cls._normalize_field_mandatory_defaults(item)
 
     def _delete_condition_library_entry(self) -> None:
         if self._active_condition_library_index is None:
