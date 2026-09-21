@@ -1013,8 +1013,20 @@ class AToolApp:
         self.layout_iteration_edit_var.trace_add("write", self._on_layout_iteration_changed)
         row += 1
 
-        self.layout_path_title = ttk.Label(layout_properties_content, text="Path:")
-        self.layout_path_title.grid(row=row, column=0, sticky="w")
+        self.layout_path_row = ttk.Frame(layout_properties_content)
+        self.layout_path_row.grid(row=row, column=0, sticky="ew")
+        self.layout_path_row.columnconfigure(0, weight=1)
+        self.layout_path_title = ttk.Label(self.layout_path_row, text="Path:")
+        self.layout_path_title.grid(row=0, column=0, sticky="w")
+        self.open_layout_path_in_data_browser_button = ttk.Button(
+            self.layout_path_row,
+            text=">",
+            width=3,
+            command=self._open_selected_layout_path_in_data_browser,
+            state=tk.DISABLED,
+        )
+        self.open_layout_path_in_data_browser_button.grid(row=0, column=1, sticky="e")
+        self._attach_tooltip(self.open_layout_path_in_data_browser_button, "Open path in Data Browser")
         row += 1
         self.layout_path_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_path_edit_var)
         self.layout_path_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
@@ -1071,7 +1083,7 @@ class AToolApp:
             "name": (self.layout_name_title, self.layout_name_entry),
             "condition": (self.layout_condition_title, self.layout_condition_entry),
             "iteration": (self.layout_iteration_title, self.layout_iteration_entry),
-            "path": (self.layout_path_title, self.layout_path_entry),
+            "path": (self.layout_path_row, self.layout_path_entry),
             "type": (self.layout_type_title, self.layout_type_entry),
             "mandatory": (self.layout_mandatory_title, self.layout_mandatory_check),
         }
@@ -1888,6 +1900,20 @@ class AToolApp:
         self._show_data_browser_window()
         self.data_browser_search_mode_var.set("JSONPath")
         self.data_browser_search_var.set(search_path)
+        self._search_data_browser()
+
+    def _open_selected_layout_path_in_data_browser(self) -> None:
+        details = self._layout_node_details.get(self._active_layout_node_id or "")
+        source_ref = details.get("source_ref") if details else None
+        node_kind = str(details.get("node_kind", "")) if details else ""
+        layout_path = str(source_ref.get("Path", "")).strip() if isinstance(source_ref, dict) else ""
+        is_valid, _reason = self._validate_field_path(layout_path)
+        if node_kind not in {"iteration", "field"} or not is_valid:
+            return
+
+        self._show_data_browser_window()
+        self.data_browser_search_mode_var.set("JSONPath")
+        self.data_browser_search_var.set(self._field_path_for_data_browser(layout_path))
         self._search_data_browser()
 
     def _field_path_for_data_browser(self, field_path: str) -> str:
@@ -5372,6 +5398,12 @@ class AToolApp:
         if hasattr(self, "layout_condition_tool_button"):
             condition_state = tk.NORMAL if node_kind in {"layout", "content", "field", "condition"} else tk.DISABLED
             self.layout_condition_tool_button.config(state=condition_state)
+        if hasattr(self, "open_layout_path_in_data_browser_button"):
+            source_ref = details.get("source_ref") if self._active_layout_node_id else None
+            layout_path = str(source_ref.get("Path", "")).strip() if isinstance(source_ref, dict) else ""
+            is_valid_path, _reason = self._validate_field_path(layout_path)
+            path_state = tk.NORMAL if node_kind in {"iteration", "field"} and is_valid_path else tk.DISABLED
+            self.open_layout_path_in_data_browser_button.config(state=path_state)
 
     def _open_user_settings_dialog(self) -> None:
         dialog = self._create_toplevel(self.root)
