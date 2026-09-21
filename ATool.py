@@ -19650,9 +19650,36 @@ class AToolApp:
             return segment, []
         first_bracket = segment.find("[")
         base = segment[:first_bracket]
-        bracket_part = segment[first_bracket:]
-        brackets = re.findall(r"\[[^\]]*\]", bracket_part)
-        return base, brackets
+        return base, AToolApp._extract_path_brackets(segment[first_bracket:])
+
+    @staticmethod
+    def _extract_path_brackets(text: str) -> list[str]:
+        """Split bracket selectors without breaking nested filter expressions."""
+        brackets: list[str] = []
+        start = -1
+        depth = 0
+        quote = ""
+        escaped = False
+        for index, char in enumerate(text):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char in {"'", '"'}:
+                quote = char
+            elif char == "[":
+                if depth == 0:
+                    start = index
+                depth += 1
+            elif char == "]" and depth:
+                depth -= 1
+                if depth == 0:
+                    brackets.append(text[start : index + 1])
+        return brackets
 
     @staticmethod
     def _split_first_path_segment(path_expression: str) -> tuple[str, str]:
