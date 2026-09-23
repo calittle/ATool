@@ -7010,6 +7010,7 @@ class AToolApp:
                 "config_target_session_alias",
                 "config_id_filter",
                 "last_config_id",
+                "active_config_label",
                 "shared_workspace_dir",
                 "models_dir",
                 "comms_cache_dir",
