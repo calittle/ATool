@@ -2162,7 +2162,7 @@ class AToolApp:
         self.content_source_version_var = tk.StringVar(value="1.0")
         self.content_new_version_var = tk.StringVar(value="1.0")
         self.content_effective_date_var = tk.StringVar(value=datetime.now().date().isoformat())
-        self.content_editor_status_var = tk.StringVar(value="Choose Config > Set… before saving content.")
+        self.content_editor_status_var = tk.StringVar(value=self._content_editor_ready_text())
 
         container = ttk.Frame(self.content_window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
@@ -2219,6 +2219,12 @@ class AToolApp:
         self.content_source_version_label.configure(state=tk.NORMAL if is_version else tk.DISABLED)
         self.content_source_version_entry.configure(state=tk.NORMAL if is_version else tk.DISABLED)
         self.content_save_button.configure(text="Save New Version" if is_version else "Create Content")
+
+    def _content_editor_ready_text(self) -> str:
+        config_status = self._active_occs_config_status_text()
+        if self._get_last_occs_config_id():
+            return f"Ready to save content using {config_status.removeprefix('Config: ')}."
+        return "Choose Config > Set… before saving content."
 
     def _open_content_html_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -6201,6 +6207,8 @@ class AToolApp:
         section["active_config_label"] = self._format_occs_config_label(config) or config_id
         self._save_user_settings()
         self.config_status_text.set(self._active_occs_config_status_text())
+        if self.content_window is not None and self.content_window.winfo_exists():
+            self.content_editor_status_var.set(self._content_editor_ready_text())
         self._show_temporary_status(f"Active Config set to {section['active_config_label']}", duration_ms=5000)
 
     def _require_active_occs_config_id(self, parent: tk.Misc | None = None) -> str:
