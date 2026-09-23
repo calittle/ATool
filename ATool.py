@@ -2261,6 +2261,7 @@ class AToolApp:
         self.content_new_version_button.grid(row=0, column=0, sticky="w")
         self.content_save_button = ttk.Button(action_row, text="Save", command=self._save_content_from_manager)
         self.content_save_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self._attach_content_save_tooltip()
         ttk.Label(action_row, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=2, sticky="ew", padx=(12, 0))
         action_row.columnconfigure(2, weight=1)
 
@@ -2294,6 +2295,7 @@ class AToolApp:
             self.content_new_version_button,
             self.content_save_button,
         )
+        self._update_content_save_availability()
 
     def _refresh_content_editor_mode(self) -> None:
         pass
@@ -2329,10 +2331,24 @@ class AToolApp:
         self.content_editor_status_var.set(self._content_editor_ready_text())
 
     def _content_editor_ready_text(self) -> str:
-        config_status = self._active_occs_config_status_text()
-        if self._active_occs_config_display_name():
-            return f"Ready to save content using {config_status.removeprefix('Config: ')}."
-        return "Choose Config > Set… before saving content."
+        return ""
+
+    def _attach_content_save_tooltip(self) -> None:
+        self.content_save_button.bind(
+            "<Enter>",
+            lambda event: self._show_tooltip(event, self._active_occs_config_status_text()),
+            add="+",
+        )
+        self.content_save_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
+
+    def _update_content_save_availability(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        if self.content_save_button.instate(("disabled",)) and self.content_html_text.cget("state") == tk.DISABLED:
+            return
+        self.content_save_button.configure(
+            state=tk.NORMAL if self._get_last_occs_config_id() else tk.DISABLED,
+        )
 
     def _load_content_browser(self, scope: str = "config") -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
@@ -2468,6 +2484,8 @@ class AToolApp:
         self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         for control in self.content_metadata_controls:
             control.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        if enabled:
+            self._update_content_save_availability()
 
     def _on_content_version_loaded(self, result: dict[str, object]) -> None:
         version = result.get("version") if isinstance(result.get("version"), dict) else {}
@@ -6532,7 +6550,7 @@ class AToolApp:
 
     def _active_occs_config_status_text(self) -> str:
         label = self._active_occs_config_display_name()
-        return f"Config: {label}" if label else "Config: (not set)"
+        return f"Config : {label}" if label else "Config : (not set)"
 
     def _set_active_occs_config(self, config: dict[str, str]) -> None:
         config_id = str(config.get("id", "")).strip() or str(config.get("shortName", "")).strip()
@@ -6545,6 +6563,7 @@ class AToolApp:
         self._refresh_app_menus()
         if self.content_window is not None and self.content_window.winfo_exists():
             self.content_editor_status_var.set(self._content_editor_ready_text())
+            self._update_content_save_availability()
         self._show_temporary_status(f"Active Config set to {self._active_occs_config_display_name()}", duration_ms=5000)
 
     def _refresh_app_menus(self) -> None:
