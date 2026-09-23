@@ -2262,7 +2262,8 @@ class AToolApp:
         html_scrollbar.grid(row=0, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
 
-        ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file).grid(row=1, column=0, sticky="e", pady=(6, 0))
+        self.content_open_html_button = ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file)
+        self.content_open_html_button.grid(row=1, column=0, sticky="e", pady=(6, 0))
         styles_frame = ttk.LabelFrame(container, text="Styles", padding=6)
         styles_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(8, 0))
         styles_frame.columnconfigure(0, weight=1)
@@ -2300,6 +2301,7 @@ class AToolApp:
         self.content_effective_date_var.set(datetime.now().date().isoformat())
         self.content_description_var.set("")
         self.content_version_description_var.set("")
+        self._set_content_html_controls_enabled(True)
         self.content_html_text.delete("1.0", tk.END)
         for item_id in self.content_styles_tree.get_children():
             self.content_styles_tree.delete(item_id)
@@ -2420,6 +2422,7 @@ class AToolApp:
 
     def _on_content_inspect_failed(self, error: Exception, short_name: str) -> None:
         self.content_metadata_var.set(f"Could not load {short_name} metadata.")
+        self._set_content_html_controls_enabled(True)
         if self.content_window is not None and self.content_window.winfo_exists():
             messagebox.showerror("Content Manager", str(error), parent=self.content_window)
 
@@ -2434,12 +2437,20 @@ class AToolApp:
         )
 
     def _show_content_html_loading(self) -> None:
+        self._set_content_html_controls_enabled(False)
+        self.content_html_text.configure(state=tk.NORMAL)
         self.content_html_text.delete("1.0", tk.END)
         self.content_html_text.insert("1.0", "Loading…")
+        self.content_html_text.configure(state=tk.DISABLED)
+
+    def _set_content_html_controls_enabled(self, enabled: bool) -> None:
+        self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
     def _on_content_version_loaded(self, result: dict[str, object]) -> None:
         version = result.get("version") if isinstance(result.get("version"), dict) else {}
         html = str(result.get("html", ""))
+        self._set_content_html_controls_enabled(True)
         self.content_html_text.delete("1.0", tk.END)
         self.content_html_text.insert("1.0", html)
         self.content_source_version_var.set(str(version.get("shortName", "")))
@@ -2460,6 +2471,7 @@ class AToolApp:
         self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
 
     def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
+        self._set_content_html_controls_enabled(True)
         self.content_editor_status_var.set(f"Could not load {short_name} version {version}.")
         if self.content_window is not None and self.content_window.winfo_exists():
             messagebox.showerror("Content Manager", str(error), parent=self.content_window)
