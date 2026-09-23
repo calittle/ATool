@@ -2377,6 +2377,7 @@ class AToolApp:
         if not short_name:
             return
         self.content_load_button.configure(state=tk.DISABLED)
+        self._show_content_html_loading()
         self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
         self._run_occs_json_command_async(
             ["content", "inspect", short_name, "--include-html", "--timeout", str(self._get_occs_request_timeout_ms())],
@@ -2423,6 +2424,7 @@ class AToolApp:
             messagebox.showerror("Content Manager", str(error), parent=self.content_window)
 
     def _load_selected_content_version(self, short_name: str, version: str) -> None:
+        self._show_content_html_loading()
         self.content_editor_status_var.set(f"Loading {short_name} version {version}…")
         self._run_occs_json_command_async(
             ["content", "read", short_name, version, "--timeout", str(self._get_occs_request_timeout_ms())],
@@ -2430,6 +2432,10 @@ class AToolApp:
             self._on_content_version_loaded,
             on_failure=lambda error: self._on_content_version_load_failed(error, short_name, version),
         )
+
+    def _show_content_html_loading(self) -> None:
+        self.content_html_text.delete("1.0", tk.END)
+        self.content_html_text.insert("1.0", "Loading…")
 
     def _on_content_version_loaded(self, result: dict[str, object]) -> None:
         version = result.get("version") if isinstance(result.get("version"), dict) else {}
