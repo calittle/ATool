@@ -43,6 +43,7 @@ class AToolApp:
     SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
     SHARED_PACKAGE_HISTORY_LIMIT = 5
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
+    OCCS_PARALLEL_READ_LIMIT = 4
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_RESOURCE_CACHE_TYPES = (
         ("Package", "get-package", "list-packages", "packages"),
@@ -171,6 +172,7 @@ class AToolApp:
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
         self._occs_process_lock = threading.Lock()
+        self._occs_parallel_read_semaphore = threading.BoundedSemaphore(self.OCCS_PARALLEL_READ_LIMIT)
         self._occs_download_all_in_progress = False
         self._occs_download_all_cancel_requested = False
         self._occs_download_all_process: subprocess.Popen[str] | None = None
@@ -2571,6 +2573,7 @@ class AToolApp:
             f"Loading {short_name} styles...",
             lambda result: self._on_content_styles_loaded(result, short_name, version),
             on_failure=lambda _error: self._on_content_styles_load_failed(short_name, version),
+            allow_parallel_read=True,
         )
 
     def _show_content_styles_loading(self) -> None:
@@ -13790,7 +13793,12 @@ class AToolApp:
         status_message: str,
         on_success: object,
         on_failure: object | None = None,
+        *,
+        allow_parallel_read: bool = False,
     ) -> None:
+        if allow_parallel_read:
+            self._run_occs_json_command_parallel_async(args, on_success, on_failure)
+            return
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
@@ -13814,6 +13822,35 @@ class AToolApp:
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
+
+    def _run_occs_json_command_parallel_async(
+        self,
+        args: list[str],
+        on_success: object,
+        on_failure: object | None,
+    ) -> None:
+        """Run a bounded read without taking the single write/cancel slot."""
+        self._debug_log(f"Parallel OCCS read queued: {' '.join(args)}")
+
+        def _worker() -> None:
+            try:
+                with self._occs_parallel_read_semaphore:
+                    result = self._run_occs_json_command(args, track_active_process=False)
+                if callable(on_success):
+                    self.root.after(0, lambda result=result: on_success(result))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+
+                def _report_failure(error: Exception = error, stack: str = stack) -> None:
+                    self._debug_log(f"Parallel OCCS read failed:\n{stack}")
+                    if callable(on_failure):
+                        on_failure(error)
+                    else:
+                        messagebox.showerror("OCCS Error", str(error))
+
+                self.root.after(0, _report_failure)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
@@ -13872,14 +13909,14 @@ class AToolApp:
         except (OSError, ProcessLookupError):
             return
 
-    def _run_occs_json_command(self, args: list[str]) -> dict[str, object]:
+    def _run_occs_json_command(self, args: list[str], *, track_active_process: bool = True) -> dict[str, object]:
         command_args = [str(arg) for arg in args]
         if "--json" not in command_args:
             command_args.append("--json")
         login_attempted = False
 
         while True:
-            completed = self._run_occs_cli(command_args)
+            completed = self._run_occs_cli(command_args, track_active_process=track_active_process, honor_cancellation=track_active_process)
             stdout = (completed.stdout or "").strip()
             stderr = (completed.stderr or "").strip()
             parsed = self._parse_occs_json_stdout(stdout)
@@ -13887,7 +13924,7 @@ class AToolApp:
             if completed.returncode != 0:
                 message = self._occs_error_message(parsed, stderr, completed.returncode)
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(command_args, message)
+                    self._run_occs_login_for_retry(command_args, message, track_active_process=track_active_process)
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
