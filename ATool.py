@@ -2188,9 +2188,14 @@ class AToolApp:
         ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
         list_row = ttk.Frame(browser)
         list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config"))
-        list_from_config_button.grid(row=0, column=0, sticky="w")
-        self._attach_tooltip(list_from_config_button, "List Contents associated with active Config ID")
+        self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config"))
+        self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
+        self.content_list_from_config_button.bind(
+            "<Enter>",
+            lambda event: self._show_tooltip(event, f"List Contents associated with {self._active_occs_config_status_text()}"),
+            add="+",
+        )
+        self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
         list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
         list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self._attach_tooltip(list_all_button, "List all Contents")
