@@ -2197,13 +2197,15 @@ class AToolApp:
         self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
         self.content_list_from_config_button.bind(
             "<Enter>",
-            lambda event: self._show_tooltip(event, f"List Contents associated with {self._active_occs_config_status_text()}"),
+            lambda event: self._show_tooltip(event, f"List Contents associated with {self._active_occs_config_status_text()}. Hold Shift to list all."),
             add="+",
         )
         self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
+        self.content_list_from_config_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "config"), add="+")
         list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
         list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self._attach_tooltip(list_all_button, "List all Contents")
+        self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
+        list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
         filter_row = ttk.Frame(browser)
         filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         filter_row.columnconfigure(0, weight=1)
@@ -2417,7 +2419,11 @@ class AToolApp:
             self.content_html_text.edit_modified(False)
             self._update_content_save_availability()
 
-    def _load_content_browser(self, scope: str = "config") -> None:
+    def _load_all_content_browser(self, _event: tk.Event, scope: str) -> str:
+        self._load_content_browser(scope, bypass_filter=True)
+        return "break"
+
+    def _load_content_browser(self, scope: str = "config", *, bypass_filter: bool = False) -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
             return
         config_id = self._get_last_occs_config_id()
@@ -2427,6 +2433,10 @@ class AToolApp:
         filter_text = self.content_browser_filter_var.get().strip()
         if filter_text == "Filter by name or description":
             filter_text = ""
+        if not filter_text and not bypass_filter:
+            self.content_browser_status_var.set("Enter a filter, or Shift-click List to list all Contents.")
+            self.content_filter_entry.focus_set()
+            return
         args = ["content", "list", "--timeout", str(self._get_occs_request_timeout_ms())]
         if scope == "config":
             args.extend(["--config-id", config_id])
