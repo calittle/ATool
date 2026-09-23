@@ -2164,10 +2164,36 @@ class AToolApp:
         self.content_effective_date_var = tk.StringVar(value=datetime.now().date().isoformat())
         self.content_editor_status_var = tk.StringVar(value=self._content_editor_ready_text())
 
-        container = ttk.Frame(self.content_window, padding=12)
-        container.pack(fill=tk.BOTH, expand=True)
+        workspace = ttk.Panedwindow(self.content_window, orient=tk.HORIZONTAL)
+        workspace.pack(fill=tk.BOTH, expand=True)
+        browser = ttk.Frame(workspace, padding=12, width=280)
+        browser.columnconfigure(0, weight=1)
+        browser.rowconfigure(3, weight=1)
+        container = ttk.Frame(workspace, padding=12)
+        workspace.add(browser, weight=1)
+        workspace.add(container, weight=4)
         container.columnconfigure(1, weight=1)
-        container.rowconfigure(5, weight=1)
+        container.rowconfigure(6, weight=1)
+
+        self.content_browser_filter_var = tk.StringVar()
+        self.content_browser_status_var = tk.StringVar(value="Set an active Config to browse content.")
+        self._content_browser_records: dict[str, dict[str, object]] = {}
+        ttk.Label(browser, text="Content", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        filter_row = ttk.Frame(browser)
+        filter_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        filter_row.columnconfigure(0, weight=1)
+        filter_entry = ttk.Entry(filter_row, textvariable=self.content_browser_filter_var)
+        filter_entry.grid(row=0, column=0, sticky="ew")
+        filter_entry.bind("<Return>", lambda _event: self._load_content_browser())
+        ttk.Button(filter_row, text="Refresh", command=self._load_content_browser).grid(row=0, column=1, padx=(6, 0))
+        ttk.Label(browser, text="Filter by short name, name, or description.", foreground="#666666").grid(row=2, column=0, sticky="w", pady=(4, 6))
+        self.content_browser_tree = ttk.Treeview(browser, columns=("name",), show="tree", selectmode="browse")
+        self.content_browser_tree.grid(row=3, column=0, sticky="nsew")
+        content_scrollbar = ttk.Scrollbar(browser, orient=tk.VERTICAL, command=self.content_browser_tree.yview)
+        content_scrollbar.grid(row=3, column=1, sticky="ns")
+        self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
+        self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
+        ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=4, column=0, sticky="ew", pady=(8, 0))
 
         mode_row = ttk.Frame(container)
         mode_row.grid(row=0, column=0, columnspan=2, sticky="ew")
@@ -2182,8 +2208,9 @@ class AToolApp:
         self.content_name_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
         self.content_source_version_label = ttk.Label(container, text="Copy from version:")
         self.content_source_version_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
-        self.content_source_version_entry = ttk.Entry(container, textvariable=self.content_source_version_var, width=20)
+        self.content_source_version_entry = ttk.Combobox(container, textvariable=self.content_source_version_var, width=20)
         self.content_source_version_entry.grid(row=3, column=1, sticky="w", pady=(8, 0))
+        self.content_source_version_entry.bind("<<ComboboxSelected>>", self._on_content_version_selected)
 
         version_row = ttk.Frame(container)
         version_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -2193,8 +2220,14 @@ class AToolApp:
         ttk.Entry(version_row, textvariable=self.content_effective_date_var, width=14).grid(row=0, column=3, sticky="w")
         ttk.Label(version_row, text="YYYY-MM-DD").grid(row=0, column=4, sticky="w", padx=(6, 0))
 
+        metadata = ttk.LabelFrame(container, text="Selected Content", padding=6)
+        metadata.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        metadata.columnconfigure(1, weight=1)
+        self.content_metadata_var = tk.StringVar(value="Choose a content item in the browser to load its versions.")
+        ttk.Label(metadata, textvariable=self.content_metadata_var, justify=tk.LEFT, wraplength=600).grid(row=0, column=0, sticky="ew")
+
         editor_frame = ttk.LabelFrame(container, text="HTML", padding=6)
-        editor_frame.grid(row=5, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        editor_frame.grid(row=6, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
         editor_frame.columnconfigure(0, weight=1)
         editor_frame.rowconfigure(0, weight=1)
         self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18)
@@ -2204,13 +2237,14 @@ class AToolApp:
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
 
         footer = ttk.Frame(container)
-        footer.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        footer.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=0, sticky="ew")
         ttk.Button(footer, text="Open HTML…", command=self._open_content_html_file).grid(row=0, column=1, padx=(8, 0))
         self.content_save_button = ttk.Button(footer, text="Create Content", command=self._save_content_from_manager)
         self.content_save_button.grid(row=0, column=2, padx=(8, 0))
         self._refresh_content_editor_mode()
+        self._load_content_browser()
 
     def _refresh_content_editor_mode(self) -> None:
         is_version = self.content_mode_var.get() == "version"
@@ -2225,6 +2259,122 @@ class AToolApp:
         if self._get_last_occs_config_id():
             return f"Ready to save content using {config_status.removeprefix('Config: ')}."
         return "Choose Config > Set… before saving content."
+
+    def _load_content_browser(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        config_id = self._get_last_occs_config_id()
+        if not config_id:
+            self.content_browser_status_var.set("Set an active Config to browse content.")
+            return
+        filter_text = self.content_browser_filter_var.get().strip()
+        args = ["content", "list", "--config-id", config_id, "--timeout", str(self._get_occs_request_timeout_ms())]
+        if filter_text:
+            args.extend(["--filter", filter_text])
+        self.content_browser_status_var.set("Loading content…")
+        self._run_occs_json_command_async(
+            args,
+            "Loading content browser...",
+            self._on_content_browser_loaded,
+            on_failure=self._on_content_browser_load_failed,
+        )
+
+    def _on_content_browser_loaded(self, result: dict[str, object]) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        contents = result.get("contents")
+        values = [item for item in contents if isinstance(item, dict)] if isinstance(contents, list) else []
+        for item_id in self.content_browser_tree.get_children():
+            self.content_browser_tree.delete(item_id)
+        self._content_browser_records.clear()
+        for item in values:
+            short_name = str(item.get("shortName", "")).strip()
+            if not short_name:
+                continue
+            display_name = str(item.get("name", "")).strip()
+            label = short_name if not display_name or display_name == short_name else f"{short_name}\n{display_name}"
+            item_id = self.content_browser_tree.insert("", tk.END, text=label)
+            self._content_browser_records[item_id] = item
+        self.content_browser_status_var.set(f"{len(self._content_browser_records)} content item{'s' if len(self._content_browser_records) != 1 else ''}.")
+
+    def _on_content_browser_load_failed(self, error: Exception) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        self.content_browser_status_var.set("Could not load content.")
+        messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _on_content_browser_selected(self, _event: tk.Event | None = None) -> None:
+        selected = self.content_browser_tree.selection()
+        item = self._content_browser_records.get(selected[0]) if selected else None
+        short_name = str(item.get("shortName", "")).strip() if item else ""
+        if not short_name:
+            return
+        self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
+        self._run_occs_json_command_async(
+            ["content", "inspect", short_name, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} versions...",
+            self._on_content_inspected,
+            on_failure=lambda error: self._on_content_inspect_failed(error, short_name),
+        )
+
+    def _on_content_inspected(self, result: dict[str, object]) -> None:
+        content = result.get("content") if isinstance(result.get("content"), dict) else {}
+        versions = result.get("versions") if isinstance(result.get("versions"), list) else []
+        short_name = str(content.get("shortName", "")).strip()
+        name = str(content.get("name", "")).strip()
+        description = str(content.get("description", "")).strip()
+        self.content_short_name_var.set(short_name)
+        self.content_name_var.set(name)
+        self.content_mode_var.set("version")
+        self._refresh_content_editor_mode()
+        version_names = [str(item.get("shortName", "")).strip() for item in versions if isinstance(item, dict) and str(item.get("shortName", "")).strip()]
+        self.content_source_version_entry.configure(values=version_names)
+        if version_names:
+            self.content_source_version_var.set(version_names[0])
+            self.content_new_version_var.set("")
+        summary = f"{name or short_name}\nShort name: {short_name}"
+        if description:
+            summary += f"\n{description}"
+        summary += f"\nVersions: {', '.join(version_names) or '(none)'}"
+        self.content_metadata_var.set(summary)
+        if version_names:
+            self._load_selected_content_version(short_name, version_names[0])
+
+    def _on_content_version_selected(self, _event: tk.Event | None = None) -> None:
+        short_name = self.content_short_name_var.get().strip()
+        version = self.content_source_version_var.get().strip()
+        if short_name and version:
+            self._load_selected_content_version(short_name, version)
+
+    def _on_content_inspect_failed(self, error: Exception, short_name: str) -> None:
+        self.content_metadata_var.set(f"Could not load {short_name} metadata.")
+        if self.content_window is not None and self.content_window.winfo_exists():
+            messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _load_selected_content_version(self, short_name: str, version: str) -> None:
+        self.content_editor_status_var.set(f"Loading {short_name} version {version}…")
+        self._run_occs_json_command_async(
+            ["content", "read", short_name, version, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} version {version}...",
+            self._on_content_version_loaded,
+            on_failure=lambda error: self._on_content_version_load_failed(error, short_name, version),
+        )
+
+    def _on_content_version_loaded(self, result: dict[str, object]) -> None:
+        version = result.get("version") if isinstance(result.get("version"), dict) else {}
+        html = str(result.get("html", ""))
+        self.content_html_text.delete("1.0", tk.END)
+        self.content_html_text.insert("1.0", html)
+        self.content_source_version_var.set(str(version.get("shortName", "")))
+        effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
+        current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
+        self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
+        self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}; enter a new version to save your edit.")
+
+    def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
+        self.content_editor_status_var.set(f"Could not load {short_name} version {version}.")
+        if self.content_window is not None and self.content_window.winfo_exists():
+            messagebox.showerror("Content Manager", str(error), parent=self.content_window)
 
     def _open_content_html_file(self) -> None:
         path = filedialog.askopenfilename(
