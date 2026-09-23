@@ -6277,7 +6277,9 @@ class AToolApp:
 
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
-        section["session_alias"] = str(session_alias or "").strip()
+        alias = str(session_alias or "").strip()
+        section["session_alias"] = alias
+        self._update_app_state({"last_occs_session_alias": alias})
 
     def _set_occs_pre_prod_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
@@ -10433,6 +10435,9 @@ class AToolApp:
             return
 
         state = self._read_app_state()
+        saved_session_alias = str(state.get("last_occs_session_alias", "")).strip()
+        if saved_session_alias:
+            self._set_occs_session_alias(saved_session_alias)
         bundle_dir_text = str(state.get("last_occs_bundle", "")).strip()
         if not bundle_dir_text:
             messagebox.showinfo("Open Session", "No previous package session was found.")
