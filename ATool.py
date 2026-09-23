@@ -235,7 +235,12 @@ class AToolApp:
         self.fields_filter_var = tk.StringVar(value="")
         self.field_view_mode = "name"
         self._loaded_documents: list[dict[str, object]] = []
+        # Canonical copies of each document as it was last loaded or saved.
+        # These let the document list distinguish document-local edits from
+        # unrelated package changes that also set the window dirty marker.
+        self._saved_document_snapshots: dict[int, str] = {}
         self._loaded_fields: list[dict[str, object]] = []
+        self._saved_field_snapshots: dict[int, str] = {}
         self.package_documents_window: tk.Toplevel | None = None
         self.package_documents_tree: ttk.Treeview | None = None
         self.package_documents_summary_var = tk.StringVar(value="")
@@ -7282,6 +7287,7 @@ class AToolApp:
             if isinstance(details, dict):
                 details["updated"] = now_text
                 self.document_updated_text.set(now_text)
+                self._refresh_document_tree_label(document_ref)
 
     def _get_selected_document_ref(self) -> dict[str, object] | None:
         if not self._active_document_node_id:
@@ -9206,8 +9212,8 @@ class AToolApp:
             ) else []
             self._set_document_match_details(details)
 
-        if name is not None and self._active_document_node_id:
-            self.documents_tree.item(self._active_document_node_id, text=str(document.get("name", "")))
+        if self._active_document_node_id:
+            self._refresh_document_tree_label(document)
 
         self._updating_document_form = True
         self.document_updated_text.set(now_text)
@@ -9919,7 +9925,9 @@ class AToolApp:
         self.current_data_payload = None
         self.current_data_file_path = None
         self._loaded_documents = []
+        self._saved_document_snapshots = {}
         self._loaded_fields = []
+        self._saved_field_snapshots = {}
         self._condition_library_entries = []
         self._active_condition_library_index = None
         self._active_document_node_id = None
@@ -16896,6 +16904,10 @@ class AToolApp:
                 source_write_error = error
 
         self._set_dirty(False)
+        self._capture_saved_document_snapshots()
+        self._capture_saved_field_snapshots()
+        self._refresh_all_document_tree_labels()
+        self._refresh_all_field_tree_labels()
         if self.current_package_name and self.current_source_file_path:
             document_names = [str(document["name"]) for document in self._loaded_documents]
             self._write_metadata(
@@ -17088,7 +17100,9 @@ class AToolApp:
         fields = self._extract_fields(payload)
         fields = self._hydrate_fields_with_cached_paths(package_name, fields)
         self._loaded_documents = documents
+        self._capture_saved_document_snapshots()
         self._loaded_fields = fields
+        self._capture_saved_field_snapshots()
 
         self._render_documents_tree()
         self._render_fields_tree()
@@ -17515,7 +17529,7 @@ class AToolApp:
         for document in documents:
             doc_name = str(document["name"])
             tags = self._document_mapping_tags(document)
-            node_id = self.documents_tree.insert("", "end", text=doc_name)
+            node_id = self.documents_tree.insert("", "end", text=self._document_tree_label(document))
             if tags:
                 self.documents_tree.item(node_id, tags=tags)
             self._document_node_details[node_id] = {
@@ -17545,6 +17559,47 @@ class AToolApp:
         if bool(document.get("triggered")):
             return ("triggered_doc",)
         return ("untriggered_doc",)
+
+    def _capture_saved_document_snapshots(self) -> None:
+        """Remember the saved state of each currently loaded document."""
+        self._saved_document_snapshots = {
+            id(source): self._source_snapshot(source)
+            for document in self._loaded_documents
+            for source in [document.get("source")]
+            if isinstance(source, dict)
+        }
+
+    @staticmethod
+    def _source_snapshot(source: dict[str, object]) -> str:
+        """Return a stable representation of a saved source record."""
+        return json.dumps(
+            source,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    def _document_has_unsaved_changes(self, document: dict[str, object]) -> bool:
+        source = document.get("source")
+        if not isinstance(source, dict):
+            return False
+        saved_snapshot = self._saved_document_snapshots.get(id(source))
+        return saved_snapshot is None or saved_snapshot != self._source_snapshot(source)
+
+    def _document_tree_label(self, document: dict[str, object]) -> str:
+        marker = " *" if self._document_has_unsaved_changes(document) else ""
+        return f"{str(document.get('name', ''))}{marker}"
+
+    def _refresh_document_tree_label(self, document: dict[str, object]) -> None:
+        """Update every visible node representing a changed document."""
+        for node_id, details in self._document_node_details.items():
+            if details.get("document_ref") is document:
+                self.documents_tree.item(node_id, text=self._document_tree_label(document))
+
+    def _refresh_all_document_tree_labels(self) -> None:
+        for document in self._loaded_documents:
+            self._refresh_document_tree_label(document)
 
     def _set_empty_documents_tree(self, message: str) -> None:
         self.documents_tree.delete(*self.documents_tree.get_children())
@@ -17576,9 +17631,9 @@ class AToolApp:
         parent_name: str = "",
         doc_lookup: dict[str, dict[str, object]] | None = None,
     ) -> None:
-        node_id = self.documents_tree.insert(parent_node, "end", text=doc_name)
-        child_docs = children.get(doc_name, [])
         document = doc_lookup.get(doc_name, {}) if doc_lookup else {}
+        node_id = self.documents_tree.insert(parent_node, "end", text=self._document_tree_label(document))
+        child_docs = children.get(doc_name, [])
         tags = self._document_mapping_tags(document)
         if tags:
             self.documents_tree.item(node_id, tags=tags)
@@ -18038,6 +18093,33 @@ class AToolApp:
             return value.strip().lower() in {"true", "1", "yes"}
         return bool(value)
 
+    def _capture_saved_field_snapshots(self) -> None:
+        """Remember the saved state of each currently loaded field."""
+        self._saved_field_snapshots = {
+            id(source): self._source_snapshot(source)
+            for field in self._loaded_fields
+            for source in [field.get("source")]
+            if isinstance(source, dict)
+        }
+
+    def _field_has_unsaved_changes(self, field: dict[str, object]) -> bool:
+        source = field.get("source")
+        if not isinstance(source, dict):
+            return False
+        saved_snapshot = self._saved_field_snapshots.get(id(source))
+        return saved_snapshot is None or saved_snapshot != self._source_snapshot(source)
+
+    def _field_tree_label(self, field: dict[str, object]) -> str:
+        mapped_values = field.get("mapped_values")
+        occurrences = f" x{len(mapped_values)}" if isinstance(mapped_values, list) and len(mapped_values) > 1 else ""
+        dirty_marker = " *" if self._field_has_unsaved_changes(field) else ""
+        mandatory = " [mandatory]" if bool(field["mandatory"]) else ""
+        return f'{field["name"]}{occurrences}{dirty_marker}{mandatory}'
+
+    def _refresh_all_field_tree_labels(self) -> None:
+        for node_id, field in self._field_node_details.items():
+            self.fields_tree.item(node_id, text=self._field_tree_label(field))
+
     def _populate_fields_tree(self, fields: list[dict[str, object]]) -> None:
         self.fields_tree.delete(*self.fields_tree.get_children())
         self._field_node_details = {}
@@ -18090,14 +18172,10 @@ class AToolApp:
             tag = "mapped_field" if isinstance(mapped_values, list) and len(mapped_values) > 0 else "unmapped_field"
         else:
             tag = "mandatory_true" if mandatory else "mandatory_false"
-        mapped_value_marker = ""
-        if isinstance(mapped_values, list) and len(mapped_values) > 1:
-            mapped_value_marker = "*" * len(mapped_values)
-        suffix = " [mandatory]" if mandatory else ""
         field_node_id = self.fields_tree.insert(
             parent,
             "end",
-            text=f'{field["name"]}{mapped_value_marker}{suffix}',
+            text=self._field_tree_label(field),
             tags=(tag,),
         )
         self._field_node_details[field_node_id] = field
