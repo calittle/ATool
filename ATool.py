@@ -2449,7 +2449,7 @@ class AToolApp:
         for item_id in self.content_browser_tree.get_children():
             self.content_browser_tree.delete(item_id)
         self._content_browser_records.clear()
-        self.content_browser_tree.insert("", tk.END, text="Loading…")
+        self.content_browser_tree.insert("", tk.END, values=("Loading…", ""))
         self.content_load_button.configure(state=tk.DISABLED)
         self.content_browser_status_var.set("")
         self._run_occs_json_command_async(
