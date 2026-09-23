@@ -2311,7 +2311,7 @@ class AToolApp:
             return
         self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
         self._run_occs_json_command_async(
-            ["content", "inspect", short_name, "--timeout", str(self._get_occs_request_timeout_ms())],
+            ["content", "inspect", short_name, "--include-html", "--timeout", str(self._get_occs_request_timeout_ms())],
             f"Loading {short_name} versions...",
             self._on_content_inspected,
             on_failure=lambda error: self._on_content_inspect_failed(error, short_name),
@@ -2338,7 +2338,10 @@ class AToolApp:
         summary += f"\nVersions: {', '.join(version_names) or '(none)'}"
         self.content_metadata_var.set(summary)
         if version_names:
-            self._load_selected_content_version(short_name, version_names[0])
+            self._on_content_version_loaded({
+                "version": result.get("selectedVersion") if isinstance(result.get("selectedVersion"), dict) else {"shortName": version_names[0]},
+                "html": result.get("html", ""),
+            })
 
     def _on_content_version_selected(self, _event: tk.Event | None = None) -> None:
         short_name = self.content_short_name_var.get().strip()
