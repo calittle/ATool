@@ -202,7 +202,6 @@ class AToolApp:
         self.operation_status_text = tk.StringVar(value="")
         self.data_status_text = tk.StringVar(value="Data: (none)")
         self.mapping_status_text = tk.StringVar(value="")
-        self.config_status_text = tk.StringVar(value=self._active_occs_config_status_text())
         self.document_count_text = tk.StringVar(value="Documents: 0")
         self.field_count_text = tk.StringVar(value="Fields: 0")
         self.condition_compose_status_var = tk.StringVar(value="")
@@ -776,9 +775,6 @@ class AToolApp:
 
         mapping_label = ttk.Label(status_bar, textvariable=self.mapping_status_text, anchor=tk.CENTER)
         mapping_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
-
-        config_label = ttk.Label(status_bar, textvariable=self.config_status_text, anchor=tk.E)
-        config_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
 
     def _create_documents_panel(self, parent: ttk.Frame) -> tuple[ttk.Frame, ttk.Treeview]:
         panel = ttk.Frame(parent, padding=(0, 0, 12, 0))
@@ -6370,7 +6366,6 @@ class AToolApp:
         section["last_config_id"] = config_id
         section["active_config_label"] = str(config.get("shortName", "")).strip() or str(config.get("name", "")).strip()
         self._save_user_settings()
-        self.config_status_text.set(self._active_occs_config_status_text())
         self._refresh_app_menus()
         if self.content_window is not None and self.content_window.winfo_exists():
             self.content_editor_status_var.set(self._content_editor_ready_text())
