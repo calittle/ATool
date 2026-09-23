@@ -2176,9 +2176,8 @@ class AToolApp:
         container = ttk.Frame(workspace, padding=12)
         workspace.add(browser, weight=1)
         workspace.add(container, weight=4)
-        container.columnconfigure(0, weight=3)
-        container.columnconfigure(1, weight=1)
-        container.rowconfigure(1, weight=1)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
 
         self.content_browser_filter_var = tk.StringVar(value="Filter by name or description")
         self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
@@ -2215,7 +2214,16 @@ class AToolApp:
         self.content_load_button = ttk.Button(browser_actions, text="Load", command=self._load_selected_content, state=tk.DISABLED)
         self.content_load_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        form = ttk.Frame(container)
+        self.content_editor_splitter = ttk.Panedwindow(container, orient=tk.HORIZONTAL)
+        self.content_editor_splitter.grid(row=0, column=0, sticky="nsew")
+        editor_pane = ttk.Frame(self.content_editor_splitter)
+        editor_pane.columnconfigure(0, weight=1)
+        editor_pane.rowconfigure(1, weight=1)
+        styles_frame = ttk.LabelFrame(self.content_editor_splitter, text="Styles", padding=6)
+        self.content_editor_splitter.add(editor_pane, weight=3)
+        self.content_editor_splitter.add(styles_frame, weight=1)
+
+        form = ttk.Frame(editor_pane)
         form.grid(row=0, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
         form.columnconfigure(3, weight=2)
@@ -2256,7 +2264,7 @@ class AToolApp:
         ttk.Label(action_row, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=2, sticky="ew", padx=(12, 0))
         action_row.columnconfigure(2, weight=1)
 
-        editor_frame = ttk.LabelFrame(container, text="HTML", padding=6)
+        editor_frame = ttk.LabelFrame(editor_pane, text="HTML", padding=6)
         editor_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         editor_frame.columnconfigure(0, weight=1)
         editor_frame.rowconfigure(0, weight=1)
@@ -2268,8 +2276,6 @@ class AToolApp:
 
         self.content_open_html_button = ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file)
         self.content_open_html_button.grid(row=1, column=0, sticky="e", pady=(6, 0))
-        styles_frame = ttk.LabelFrame(container, text="Styles", padding=6)
-        styles_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(8, 0))
         styles_frame.columnconfigure(0, weight=1)
         styles_frame.rowconfigure(0, weight=1)
         self.content_styles_tree = ttk.Treeview(styles_frame, columns=("style", "classes"), show="headings", height=8)
