@@ -171,6 +171,9 @@ class AToolApp:
         self._occs_operation_in_progress = False
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._occs_preview_process: subprocess.Popen[str] | None = None
         self._occs_process_lock = threading.Lock()
         self._occs_parallel_read_semaphore = threading.BoundedSemaphore(self.OCCS_PARALLEL_READ_LIMIT)
         self._occs_download_all_in_progress = False
@@ -478,10 +481,10 @@ class AToolApp:
         )
         self._send_email_menu_entries.append((package_menu, package_menu.index(tk.END)))
         package_menu.add_command(
-            label="Cancel OCCS Operation",
+            label="Cancel Preview",
             accelerator=cancel_occs_accelerator,
-            command=self.cancel_occs_operation,
-            state=tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED,
+            command=self.cancel_occs_preview,
+            state=tk.NORMAL if self._occs_preview_in_progress else tk.DISABLED,
         )
         self._package_menu_entries.append((package_menu, package_menu.index(tk.END), "cancel"))
         package_menu.add_separator()
@@ -5866,7 +5869,7 @@ class AToolApp:
             if entry_name == "preview":
                 state = tk.NORMAL if self._can_preview_occs_package() else tk.DISABLED
             elif entry_name == "cancel":
-                state = tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED
+                state = tk.NORMAL if self._occs_preview_in_progress else tk.DISABLED
             else:
                 continue
             try:
@@ -10509,7 +10512,7 @@ class AToolApp:
         return "break"
 
     def _cancel_occs_event(self, event: tk.Event) -> str:
-        self.cancel_occs_operation()
+        self.cancel_occs_preview()
         return "break"
 
     def _quit_event(self, event: tk.Event) -> str:
@@ -11396,7 +11399,7 @@ class AToolApp:
             if use_pre_prod_session_var.get():
                 args[1:1] = ["--session", pre_prod_session_alias]
             dialog.destroy()
-            self._run_occs_command_async(
+            self._run_occs_preview_command_async(
                 args,
                 f"Previewing package {package_name}...",
                 lambda result, selected_render_types=render_types, should_open=open_after_var.get(): self._on_occs_preview_complete(
@@ -13685,6 +13688,48 @@ class AToolApp:
                 return f"Shared package folder was updated, but baseline metadata could not be refreshed: {error}"
         return ""
 
+    def _run_occs_preview_command_async(
+        self,
+        args: list[str],
+        status_message: str,
+        on_success: object,
+        on_failure: object | None = None,
+    ) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+            return
+        self._occs_operation_in_progress = True
+        self._occs_preview_in_progress = True
+        self._occs_preview_cancel_requested = False
+        self._update_package_menu_states()
+        self._start_occs_status_timer(status_message)
+
+        def _worker() -> None:
+            try:
+                result = self._run_occs_command(
+                    args,
+                    track_active_process=False,
+                    honor_cancellation=False,
+                    process_slot="_occs_preview_process",
+                    cancellation_requested=lambda: self._occs_preview_cancel_requested,
+                )
+                self.root.after(0, lambda result=result: self._on_occs_preview_command_success(result, on_success))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+                self.root.after(0, lambda error=error, stack=stack: self._on_occs_preview_command_failure(error, stack, on_failure))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_occs_preview_command_success(self, result: dict[str, object], on_success: object) -> None:
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._on_occs_command_success(result, on_success)
+
+    def _on_occs_preview_command_failure(self, error: Exception, stack: str, on_failure: object | None) -> None:
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._on_occs_command_failure(error, stack, on_failure)
+
     def _run_occs_command_async(
         self,
         args: list[str],
@@ -13883,13 +13928,15 @@ class AToolApp:
         messagebox.showerror("OCCS Error", str(error))
 
     def cancel_occs_operation(self) -> None:
-        if not self._occs_operation_in_progress:
-            messagebox.showinfo("OCCS", "No OCCS operation is currently running.")
-            return
+        self.cancel_occs_preview()
 
-        self._occs_cancel_requested = True
-        self._set_occs_status_timer_message("Canceling OCCS operation...")
-        self._terminate_active_occs_process()
+    def cancel_occs_preview(self) -> None:
+        if not self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "No Preview is currently running.")
+            return
+        self._occs_preview_cancel_requested = True
+        self._set_occs_status_timer_message("Canceling Preview...")
+        self._terminate_tracked_occs_process("_occs_preview_process")
 
     def _terminate_active_occs_process(self) -> None:
         self._terminate_tracked_occs_process("_occs_process")
@@ -13940,18 +13987,39 @@ class AToolApp:
                 raise RuntimeError(message)
             return parsed
 
-    def _run_occs_command(self, args: list[str]) -> dict[str, object]:
+    def _run_occs_command(
+        self,
+        args: list[str],
+        *,
+        track_active_process: bool = True,
+        honor_cancellation: bool = True,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
+    ) -> dict[str, object]:
         command_args = [str(arg) for arg in args]
         login_attempted = False
 
         while True:
-            completed = self._run_occs_cli(command_args)
+            completed = self._run_occs_cli(
+                command_args,
+                track_active_process=track_active_process,
+                honor_cancellation=honor_cancellation,
+                process_slot=process_slot,
+                cancellation_requested=cancellation_requested,
+            )
             stdout = (completed.stdout or "").strip()
             stderr = (completed.stderr or "").strip()
             if completed.returncode != 0:
                 message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(command_args, message)
+                    self._run_occs_login_for_retry(
+                        command_args,
+                        message,
+                        track_active_process=track_active_process,
+                        update_status=track_active_process,
+                        process_slot=process_slot,
+                        cancellation_requested=cancellation_requested,
+                    )
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
