@@ -76,6 +76,7 @@ class AToolApp:
             "config_target_session_alias": "pp",
             "config_id_filter": "",
             "last_config_id": "",
+            "active_config_label": "",
             "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
             "models_dir": "",
@@ -119,6 +120,7 @@ class AToolApp:
         self._fields_window_geometry_job: str | None = None
         self.layouts_window: tk.Toplevel | None = None
         self._layouts_window_geometry_job: str | None = None
+        self.content_window: tk.Toplevel | None = None
         self.data_browser_window: tk.Toplevel | None = None
         self.data_browser_search_var = tk.StringVar(value="")
         self.data_browser_search_mode_var = tk.StringVar(value="Auto")
@@ -200,6 +202,7 @@ class AToolApp:
         self.operation_status_text = tk.StringVar(value="")
         self.data_status_text = tk.StringVar(value="Data: (none)")
         self.mapping_status_text = tk.StringVar(value="")
+        self.config_status_text = tk.StringVar(value=self._active_occs_config_status_text())
         self.document_count_text = tk.StringVar(value="Documents: 0")
         self.field_count_text = tk.StringVar(value="Fields: 0")
         self.condition_compose_status_var = tk.StringVar(value="")
@@ -422,6 +425,8 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
+        config_menu.add_command(label="Set...", command=self.set_active_occs_config)
+        config_menu.add_separator()
         config_menu.add_command(label="Create...", command=self.create_occs_config)
         config_menu.add_command(label="List", command=self.list_occs_configs)
         config_menu.add_separator()
@@ -525,6 +530,10 @@ class AToolApp:
         window_menu.add_command(
             label="Show Layouts",
             command=self._show_layouts_window,
+        )
+        window_menu.add_command(
+            label="Show Content Manager",
+            command=self._show_content_window,
         )
         window_menu.add_command(
             label="Show Package Documents",
@@ -761,6 +770,9 @@ class AToolApp:
 
         mapping_label = ttk.Label(status_bar, textvariable=self.mapping_status_text, anchor=tk.CENTER)
         mapping_label.grid(row=0, column=3, sticky="e", padx=(12, 0))
+
+        config_label = ttk.Label(status_bar, textvariable=self.config_status_text, anchor=tk.E)
+        config_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
 
     def _create_documents_panel(self, parent: ttk.Frame) -> tuple[ttk.Frame, ttk.Treeview]:
         panel = ttk.Frame(parent, padding=(0, 0, 12, 0))
@@ -2128,6 +2140,166 @@ class AToolApp:
         self.layouts_window.lift()
         self.layouts_window.focus_force()
         self._set_manager_window_visible("layouts", True)
+
+    def _show_content_window(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            self._create_content_window()
+        assert self.content_window is not None
+        self.content_window.deiconify()
+        self.content_window.lift()
+        self.content_window.focus_force()
+
+    def _create_content_window(self) -> None:
+        self.content_window = self._create_toplevel(self.root)
+        self.content_window.title("ATool - Content Manager")
+        self.content_window.minsize(700, 520)
+        self._attach_app_menu(self.content_window)
+        self.content_window.protocol("WM_DELETE_WINDOW", self.content_window.withdraw)
+
+        self.content_mode_var = tk.StringVar(value="create")
+        self.content_short_name_var = tk.StringVar()
+        self.content_name_var = tk.StringVar()
+        self.content_source_version_var = tk.StringVar(value="1.0")
+        self.content_new_version_var = tk.StringVar(value="1.0")
+        self.content_effective_date_var = tk.StringVar(value=datetime.now().date().isoformat())
+        self.content_editor_status_var = tk.StringVar(value="Choose Config > Set… before saving content.")
+
+        container = ttk.Frame(self.content_window, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+        container.rowconfigure(5, weight=1)
+
+        mode_row = ttk.Frame(container)
+        mode_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Radiobutton(mode_row, text="New Content", variable=self.content_mode_var, value="create", command=self._refresh_content_editor_mode).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(mode_row, text="New Version", variable=self.content_mode_var, value="version", command=self._refresh_content_editor_mode).grid(row=0, column=1, sticky="w", padx=(14, 0))
+
+        ttk.Label(container, text="Content short name:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(10, 0))
+        ttk.Entry(container, textvariable=self.content_short_name_var, width=52).grid(row=1, column=1, sticky="ew", pady=(10, 0))
+        self.content_name_label = ttk.Label(container, text="Display name:")
+        self.content_name_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.content_name_entry = ttk.Entry(container, textvariable=self.content_name_var, width=52)
+        self.content_name_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+        self.content_source_version_label = ttk.Label(container, text="Copy from version:")
+        self.content_source_version_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.content_source_version_entry = ttk.Entry(container, textvariable=self.content_source_version_var, width=20)
+        self.content_source_version_entry.grid(row=3, column=1, sticky="w", pady=(8, 0))
+
+        version_row = ttk.Frame(container)
+        version_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(version_row, text="New version:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(version_row, textvariable=self.content_new_version_var, width=14).grid(row=0, column=1, sticky="w")
+        ttk.Label(version_row, text="Effective date:").grid(row=0, column=2, sticky="w", padx=(18, 8))
+        ttk.Entry(version_row, textvariable=self.content_effective_date_var, width=14).grid(row=0, column=3, sticky="w")
+        ttk.Label(version_row, text="YYYY-MM-DD").grid(row=0, column=4, sticky="w", padx=(6, 0))
+
+        editor_frame = ttk.LabelFrame(container, text="HTML", padding=6)
+        editor_frame.grid(row=5, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(0, weight=1)
+        self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18)
+        self.content_html_text.grid(row=0, column=0, sticky="nsew")
+        html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
+        html_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
+
+        footer = ttk.Frame(container)
+        footer.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=0, sticky="ew")
+        ttk.Button(footer, text="Open HTML…", command=self._open_content_html_file).grid(row=0, column=1, padx=(8, 0))
+        self.content_save_button = ttk.Button(footer, text="Create Content", command=self._save_content_from_manager)
+        self.content_save_button.grid(row=0, column=2, padx=(8, 0))
+        self._refresh_content_editor_mode()
+
+    def _refresh_content_editor_mode(self) -> None:
+        is_version = self.content_mode_var.get() == "version"
+        self.content_name_label.configure(state=tk.DISABLED if is_version else tk.NORMAL)
+        self.content_name_entry.configure(state=tk.DISABLED if is_version else tk.NORMAL)
+        self.content_source_version_label.configure(state=tk.NORMAL if is_version else tk.DISABLED)
+        self.content_source_version_entry.configure(state=tk.NORMAL if is_version else tk.DISABLED)
+        self.content_save_button.configure(text="Save New Version" if is_version else "Create Content")
+
+    def _open_content_html_file(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self.content_window,
+            title="Open Content HTML",
+            filetypes=[("HTML", "*.html *.htm"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            html = Path(path).read_text(encoding="utf-8")
+        except OSError as error:
+            messagebox.showerror("Open Content HTML", str(error), parent=self.content_window)
+            return
+        self.content_html_text.delete("1.0", tk.END)
+        self.content_html_text.insert("1.0", html)
+        self.content_editor_status_var.set(f"Loaded {os.path.basename(path)}")
+
+    def _save_content_from_manager(self) -> None:
+        assert self.content_window is not None
+        config_id = self._require_active_occs_config_id(self.content_window)
+        if not config_id:
+            return
+        short_name = self.content_short_name_var.get().strip()
+        version = self.content_new_version_var.get().strip()
+        effective_date = self.content_effective_date_var.get().strip()
+        html = self.content_html_text.get("1.0", "end-1c")
+        if not short_name or not version or not effective_date or not html.strip():
+            messagebox.showerror("Content Manager", "Content short name, version, effective date, and HTML are required.", parent=self.content_window)
+            return
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", effective_date):
+            messagebox.showerror("Content Manager", "Effective date must be YYYY-MM-DD.", parent=self.content_window)
+            return
+        mode = self.content_mode_var.get()
+        source_version = self.content_source_version_var.get().strip()
+        if mode == "version" and not source_version:
+            messagebox.showerror("Content Manager", "A source version is required when creating a new version.", parent=self.content_window)
+            return
+        action = "create content" if mode == "create" else f"create version {version} from {source_version}"
+        if not messagebox.askyesno("Confirm Content Save", f"Use {self._active_occs_config_status_text()} to {action} for {short_name}?", parent=self.content_window):
+            return
+        temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
+        try:
+            temporary_html.write(html)
+            temporary_html.close()
+        except OSError as error:
+            temporary_html.close()
+            Path(temporary_html.name).unlink(missing_ok=True)
+            messagebox.showerror("Content Manager", f"Could not prepare HTML upload: {error}", parent=self.content_window)
+            return
+        if mode == "create":
+            args = ["content", "create", short_name, "--config-id", config_id, "--html", temporary_html.name, "--version", version]
+            display_name = self.content_name_var.get().strip()
+            if display_name:
+                args.extend(["--name", display_name])
+        else:
+            args = ["content", "version", short_name, version, "--config-id", config_id, "--from-version", source_version, "--html", temporary_html.name]
+        args.extend(["--effective-date", effective_date, "--timeout", str(self._get_occs_request_timeout_ms())])
+        self.content_editor_status_var.set("Saving to OCCS…")
+
+        def _cleanup() -> None:
+            Path(temporary_html.name).unlink(missing_ok=True)
+
+        self._run_occs_json_command_async(
+            args,
+            "Saving content to OCCS...",
+            lambda result: self._on_content_save_complete(result, short_name, version, _cleanup),
+            on_failure=lambda error: self._on_content_save_failed(error, _cleanup),
+        )
+
+    def _on_content_save_complete(self, result: dict[str, object], short_name: str, version: str, cleanup: object) -> None:
+        if callable(cleanup):
+            cleanup()
+        self.content_editor_status_var.set(f"Saved {short_name} version {version}.")
+        messagebox.showinfo("Content Manager", f"Saved {short_name} version {version} to OCCS.", parent=self.content_window)
+
+    def _on_content_save_failed(self, error: Exception, cleanup: object) -> None:
+        if callable(cleanup):
+            cleanup()
+        self.content_editor_status_var.set("Save failed.")
+        messagebox.showerror("Content Manager", str(error), parent=self.content_window)
 
     def _hide_layouts_window(self) -> None:
         if self.layouts_window is None or not self.layouts_window.winfo_exists():
@@ -6011,6 +6183,36 @@ class AToolApp:
         section = self._occs_settings_section()
         section["last_config_id"] = str(config_id or "").strip()
         self._save_user_settings()
+
+    def _active_occs_config_status_text(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return "Config: (not set)"
+        label = str(section.get("active_config_label", "")).strip()
+        config_id = str(section.get("last_config_id", "")).strip()
+        return f"Config: {label or config_id}" if (label or config_id) else "Config: (not set)"
+
+    def _set_active_occs_config(self, config: dict[str, str]) -> None:
+        config_id = str(config.get("id", "")).strip() or str(config.get("shortName", "")).strip()
+        if not config_id:
+            raise ValueError("The selected Config ID has no usable identifier.")
+        section = self._occs_settings_section()
+        section["last_config_id"] = config_id
+        section["active_config_label"] = self._format_occs_config_label(config) or config_id
+        self._save_user_settings()
+        self.config_status_text.set(self._active_occs_config_status_text())
+        self._show_temporary_status(f"Active Config set to {section['active_config_label']}", duration_ms=5000)
+
+    def _require_active_occs_config_id(self, parent: tk.Misc | None = None) -> str:
+        config_id = self._get_last_occs_config_id()
+        if config_id:
+            return config_id
+        messagebox.showinfo(
+            "Content Manager",
+            "Choose Config > Set… before creating or versioning content.",
+            parent=parent or self.root,
+        )
+        return ""
 
     def _occs_settings_section(self) -> dict[str, object]:
         section = self.user_settings.setdefault("occs", {})
@@ -12314,6 +12516,50 @@ class AToolApp:
             on_failure=lambda error: messagebox.showerror("List Configs", str(error)),
         )
 
+    def set_active_occs_config(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Set Config", "An OCCS operation is already in progress.")
+            return
+        self._run_occs_json_command_async(
+            ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
+            "Listing open Config IDs...",
+            lambda result: self._open_active_occs_config_dialog(self._normalize_occs_configs(result)),
+            on_failure=lambda error: messagebox.showerror("Set Config", str(error)),
+        )
+
+    def _open_active_occs_config_dialog(self, configs: list[dict[str, str]]) -> None:
+        if not configs:
+            messagebox.showinfo("Set Config", "No open Config IDs were returned by OCCS.")
+            return
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Set Active Config")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+        labels = [self._format_occs_config_label(config) for config in configs]
+        by_label = {label: config for label, config in zip(labels, configs) if label}
+        selected = self._initial_occs_config_selection(labels, configs)
+        config_var = tk.StringVar(value=selected if selected in by_label else labels[0])
+        ttk.Label(container, text="Active Config:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        combo = ttk.Combobox(container, textvariable=config_var, values=labels, state="readonly", width=58)
+        combo.grid(row=0, column=1, sticky="ew")
+        buttons = ttk.Frame(container)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _apply() -> None:
+            config = by_label.get(config_var.get().strip())
+            if config is None:
+                return
+            self._set_active_occs_config(config)
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Set Config", command=_apply).grid(row=0, column=1)
+        combo.focus_set()
+
     def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
         dialog = self._create_toplevel(self.root)
         dialog.title("Open Config IDs")
@@ -13338,6 +13584,8 @@ class AToolApp:
 
         command_name = command_args[0]
         if command_name == "package":
+            return [command_name, "--session", session_alias, *command_args[1:]]
+        if command_name == "content":
             return [command_name, "--session", session_alias, *command_args[1:]]
         if command_name in {"preview", "convertxml", "list-configs", "create-config"}:
             return [command_name, "--session", session_alias, *command_args[1:]]
