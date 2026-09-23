@@ -2509,9 +2509,10 @@ class AToolApp:
             return
         self.content_load_button.configure(state=tk.DISABLED)
         self._show_content_html_loading()
+        self._show_content_styles_loading()
         self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
         self._run_occs_json_command_async(
-            ["content", "inspect", short_name, "--include-html", "--timeout", str(self._get_occs_request_timeout_ms())],
+            ["content", "inspect", short_name, "--timeout", str(self._get_occs_request_timeout_ms())],
             f"Loading {short_name} versions...",
             self._on_content_inspected,
             on_failure=lambda error: self._on_content_inspect_failed(error, short_name),
@@ -2537,17 +2538,15 @@ class AToolApp:
         summary += f"\nVersions: {', '.join(version_names) or '(none)'}"
         self.content_metadata_var.set(summary)
         if version_names:
-            self._on_content_version_loaded({
-                "version": result.get("selectedVersion") if isinstance(result.get("selectedVersion"), dict) else {"shortName": version_names[0]},
-                "html": result.get("html", ""),
-                "styles": result.get("styles", []),
-            })
+            self._load_selected_content_version(short_name, version_names[0])
+            self._load_content_styles(short_name, version_names[0])
 
     def _on_content_version_selected(self, _event: tk.Event | None = None) -> None:
         short_name = self.content_short_name_var.get().strip()
         version = self.content_source_version_var.get().strip()
         if short_name and version:
             self._load_selected_content_version(short_name, version)
+            self._load_content_styles(short_name, version)
 
     def _on_content_inspect_failed(self, error: Exception, short_name: str) -> None:
         self.content_metadata_var.set(f"Could not load {short_name} metadata.")
@@ -2564,6 +2563,45 @@ class AToolApp:
             self._on_content_version_loaded,
             on_failure=lambda error: self._on_content_version_load_failed(error, short_name, version),
         )
+
+    def _load_content_styles(self, short_name: str, version: str) -> None:
+        self._show_content_styles_loading()
+        self._run_occs_json_command_async(
+            ["content", "styles", short_name, version, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} styles...",
+            lambda result: self._on_content_styles_loaded(result, short_name, version),
+            on_failure=lambda _error: self._on_content_styles_load_failed(short_name, version),
+        )
+
+    def _show_content_styles_loading(self) -> None:
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self.content_styles_tree.insert("", tk.END, values=("Loading…", ""))
+
+    def _on_content_styles_loaded(self, result: dict[str, object], short_name: str, version: str) -> None:
+        if short_name != self.content_short_name_var.get().strip() or version != self.content_source_version_var.get().strip():
+            return
+        styles = result.get("styles") if isinstance(result.get("styles"), list) else []
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        for style in styles:
+            if not isinstance(style, dict):
+                continue
+            style_name = (
+                str(style.get("shortName", "")).strip()
+                or str(style.get("name", "")).strip()
+                or str(style.get("styleUuid", "")).strip()
+                or "(style)"
+            )
+            classes = ", ".join(str(item) for item in style.get("classNames", []) if item)
+            self.content_styles_tree.insert("", tk.END, values=(style_name, classes))
+
+    def _on_content_styles_load_failed(self, short_name: str, version: str) -> None:
+        if short_name != self.content_short_name_var.get().strip() or version != self.content_source_version_var.get().strip():
+            return
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self.content_styles_tree.insert("", tk.END, values=("Unavailable", ""))
 
     def _show_content_html_loading(self) -> None:
         self._set_content_html_controls_enabled(False)
@@ -2590,20 +2628,6 @@ class AToolApp:
         effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
         self.content_effective_date_var.set(effective_date)
         self.content_version_description_var.set(str(version.get("description", "")))
-        styles = result.get("styles") if isinstance(result.get("styles"), list) else []
-        for item_id in self.content_styles_tree.get_children():
-            self.content_styles_tree.delete(item_id)
-        for style in styles:
-            if not isinstance(style, dict):
-                continue
-            style_name = (
-                str(style.get("shortName", "")).strip()
-                or str(style.get("name", "")).strip()
-                or str(style.get("styleUuid", "")).strip()
-                or "(style)"
-            )
-            classes = ", ".join(str(item) for item in style.get("classNames", []) if item)
-            self.content_styles_tree.insert("", tk.END, values=(style_name, classes))
         current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
         self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
         self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
