@@ -18,7 +18,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
 
 from atool_core.condition_evaluator import ConditionEvaluator
@@ -2164,6 +2164,8 @@ class AToolApp:
         self.content_source_version_var = tk.StringVar(value="1.0")
         self.content_new_version_var = tk.StringVar(value="1.0")
         self.content_effective_date_var = tk.StringVar(value=datetime.now().date().isoformat())
+        self.content_description_var = tk.StringVar()
+        self.content_version_description_var = tk.StringVar()
         self.content_editor_status_var = tk.StringVar(value=self._content_editor_ready_text())
 
         workspace = ttk.Panedwindow(self.content_window, orient=tk.HORIZONTAL)
@@ -2174,6 +2176,7 @@ class AToolApp:
         container = ttk.Frame(workspace, padding=12)
         workspace.add(browser, weight=1)
         workspace.add(container, weight=4)
+        container.columnconfigure(0, weight=3)
         container.columnconfigure(1, weight=1)
         container.rowconfigure(6, weight=1)
 
@@ -2204,40 +2207,47 @@ class AToolApp:
         self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
         self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
         ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(browser, text="New Content", command=self._new_content_in_manager).grid(row=6, column=0, sticky="w", pady=(8, 0))
 
-        mode_row = ttk.Frame(container)
-        mode_row.grid(row=0, column=0, columnspan=2, sticky="ew")
-        ttk.Radiobutton(mode_row, text="New Content", variable=self.content_mode_var, value="create", command=self._refresh_content_editor_mode).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(mode_row, text="New Version", variable=self.content_mode_var, value="version", command=self._refresh_content_editor_mode).grid(row=0, column=1, sticky="w", padx=(14, 0))
-
-        ttk.Label(container, text="Content short name:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(10, 0))
-        ttk.Entry(container, textvariable=self.content_short_name_var, width=52).grid(row=1, column=1, sticky="ew", pady=(10, 0))
-        self.content_name_label = ttk.Label(container, text="Display name:")
-        self.content_name_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        ttk.Label(container, text="Name:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.content_short_name_entry = ttk.Entry(container, textvariable=self.content_short_name_var, width=52)
+        self.content_short_name_entry.grid(row=0, column=1, sticky="ew")
+        self.content_short_name_entry.bind("<FocusOut>", self._copy_content_name_to_long_name)
+        self.content_name_label = ttk.Label(container, text="Long Name:")
+        self.content_name_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
         self.content_name_entry = ttk.Entry(container, textvariable=self.content_name_var, width=52)
-        self.content_name_entry.grid(row=2, column=1, sticky="ew", pady=(8, 0))
-        self.content_source_version_label = ttk.Label(container, text="Copy from version:")
-        self.content_source_version_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.content_name_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+        self.content_source_version_label = ttk.Label(container, text="Version:")
+        self.content_source_version_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
         self.content_source_version_entry = ttk.Combobox(container, textvariable=self.content_source_version_var, width=20)
-        self.content_source_version_entry.grid(row=3, column=1, sticky="w", pady=(8, 0))
+        self.content_source_version_entry.grid(row=2, column=1, sticky="w", pady=(8, 0))
         self.content_source_version_entry.bind("<<ComboboxSelected>>", self._on_content_version_selected)
 
         version_row = ttk.Frame(container)
-        version_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(version_row, text="New version:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(version_row, textvariable=self.content_new_version_var, width=14).grid(row=0, column=1, sticky="w")
-        ttk.Label(version_row, text="Effective date:").grid(row=0, column=2, sticky="w", padx=(18, 8))
-        ttk.Entry(version_row, textvariable=self.content_effective_date_var, width=14).grid(row=0, column=3, sticky="w")
-        ttk.Label(version_row, text="YYYY-MM-DD").grid(row=0, column=4, sticky="w", padx=(6, 0))
+        version_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(version_row, text="Effective Date:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(version_row, textvariable=self.content_effective_date_var, width=14).grid(row=0, column=1, sticky="w")
+        ttk.Label(version_row, text="YYYY-MM-DD").grid(row=0, column=2, sticky="w", padx=(6, 18))
+        ttk.Label(version_row, text="Version Description:").grid(row=0, column=3, sticky="w", padx=(0, 8))
+        ttk.Entry(version_row, textvariable=self.content_version_description_var, width=30).grid(row=0, column=4, sticky="ew")
+        version_row.columnconfigure(4, weight=1)
 
-        metadata = ttk.LabelFrame(container, text="Selected Content", padding=6)
-        metadata.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        metadata.columnconfigure(1, weight=1)
-        self.content_metadata_var = tk.StringVar(value="Choose a content item in the browser to load its versions.")
-        ttk.Label(metadata, textvariable=self.content_metadata_var, justify=tk.LEFT, wraplength=600).grid(row=0, column=0, sticky="ew")
+        description_row = ttk.Frame(container)
+        description_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        description_row.columnconfigure(1, weight=1)
+        ttk.Label(description_row, text="Description:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(description_row, textvariable=self.content_description_var).grid(row=0, column=1, sticky="ew")
+
+        action_row = ttk.Frame(container)
+        action_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(action_row, text="New Version", command=self._new_content_version).grid(row=0, column=0, sticky="w")
+        self.content_save_button = ttk.Button(action_row, text="Save", command=self._save_content_from_manager)
+        self.content_save_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(action_row, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=2, sticky="ew", padx=(12, 0))
+        action_row.columnconfigure(2, weight=1)
 
         editor_frame = ttk.LabelFrame(container, text="HTML", padding=6)
-        editor_frame.grid(row=6, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        editor_frame.grid(row=6, column=0, sticky="nsew", pady=(8, 0))
         editor_frame.columnconfigure(0, weight=1)
         editor_frame.rowconfigure(0, weight=1)
         self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18)
@@ -2246,22 +2256,38 @@ class AToolApp:
         html_scrollbar.grid(row=0, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
 
-        footer = ttk.Frame(container)
-        footer.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=0, sticky="ew")
-        ttk.Button(footer, text="Open HTML…", command=self._open_content_html_file).grid(row=0, column=1, padx=(8, 0))
-        self.content_save_button = ttk.Button(footer, text="Create Content", command=self._save_content_from_manager)
-        self.content_save_button.grid(row=0, column=2, padx=(8, 0))
-        self._refresh_content_editor_mode()
+        ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file).grid(row=1, column=0, sticky="e", pady=(6, 0))
+        styles_frame = ttk.LabelFrame(container, text="Styles", padding=6)
+        styles_frame.grid(row=6, column=1, sticky="nsew", pady=(8, 0), padx=(8, 0))
+        styles_frame.columnconfigure(0, weight=1)
+        styles_frame.rowconfigure(0, weight=1)
+        self.content_styles_tree = ttk.Treeview(styles_frame, columns=("style", "classes"), show="headings", height=8)
+        self.content_styles_tree.heading("style", text="Style")
+        self.content_styles_tree.heading("classes", text="Classes")
+        self.content_styles_tree.column("style", width=120, anchor=tk.W)
+        self.content_styles_tree.column("classes", width=140, anchor=tk.W)
+        self.content_styles_tree.grid(row=0, column=0, sticky="nsew")
 
     def _refresh_content_editor_mode(self) -> None:
-        is_version = self.content_mode_var.get() == "version"
-        self.content_name_label.configure(state=tk.DISABLED if is_version else tk.NORMAL)
-        self.content_name_entry.configure(state=tk.DISABLED if is_version else tk.NORMAL)
-        self.content_source_version_label.configure(state=tk.NORMAL if is_version else tk.DISABLED)
-        self.content_source_version_entry.configure(state=tk.NORMAL if is_version else tk.DISABLED)
-        self.content_save_button.configure(text="Save New Version" if is_version else "Create Content")
+        pass
+
+    def _copy_content_name_to_long_name(self, _event: tk.Event | None = None) -> None:
+        if self.content_mode_var.get() == "create" and not self.content_name_var.get().strip():
+            self.content_name_var.set(self.content_short_name_var.get().strip())
+
+    def _new_content_in_manager(self) -> None:
+        self.content_mode_var.set("create")
+        self.content_short_name_var.set("")
+        self.content_name_var.set("")
+        self.content_source_version_var.set("1.0")
+        self.content_source_version_entry.configure(values=[])
+        self.content_effective_date_var.set(datetime.now().date().isoformat())
+        self.content_description_var.set("")
+        self.content_version_description_var.set("")
+        self.content_html_text.delete("1.0", tk.END)
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self.content_editor_status_var.set(self._content_editor_ready_text())
 
     def _content_editor_ready_text(self) -> str:
         config_status = self._active_occs_config_status_text()
@@ -2341,13 +2367,12 @@ class AToolApp:
         description = str(content.get("description", "")).strip()
         self.content_short_name_var.set(short_name)
         self.content_name_var.set(name)
+        self.content_description_var.set(description)
         self.content_mode_var.set("version")
-        self._refresh_content_editor_mode()
         version_names = [str(item.get("shortName", "")).strip() for item in versions if isinstance(item, dict) and str(item.get("shortName", "")).strip()]
         self.content_source_version_entry.configure(values=version_names)
         if version_names:
             self.content_source_version_var.set(version_names[0])
-            self.content_new_version_var.set("")
         summary = f"{name or short_name}\nShort name: {short_name}"
         if description:
             summary += f"\n{description}"
@@ -2357,6 +2382,7 @@ class AToolApp:
             self._on_content_version_loaded({
                 "version": result.get("selectedVersion") if isinstance(result.get("selectedVersion"), dict) else {"shortName": version_names[0]},
                 "html": result.get("html", ""),
+                "styles": result.get("styles", []),
             })
 
     def _on_content_version_selected(self, _event: tk.Event | None = None) -> None:
@@ -2386,9 +2412,20 @@ class AToolApp:
         self.content_html_text.insert("1.0", html)
         self.content_source_version_var.set(str(version.get("shortName", "")))
         effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
+        self.content_effective_date_var.set(effective_date)
+        self.content_version_description_var.set(str(version.get("description", "")))
+        styles = result.get("styles") if isinstance(result.get("styles"), list) else []
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        for style in styles:
+            if not isinstance(style, dict):
+                continue
+            style_name = str(style.get("styleUuid", "")).strip() or "(style)"
+            classes = ", ".join(str(item) for item in style.get("classNames", []) if item)
+            self.content_styles_tree.insert("", tk.END, values=(style_name, classes))
         current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
         self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
-        self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}; enter a new version to save your edit.")
+        self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
 
     def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
         self.content_editor_status_var.set(f"Could not load {short_name} version {version}.")
@@ -2418,7 +2455,7 @@ class AToolApp:
         if not config_id:
             return
         short_name = self.content_short_name_var.get().strip()
-        version = self.content_new_version_var.get().strip()
+        version = self.content_source_version_var.get().strip()
         effective_date = self.content_effective_date_var.get().strip()
         html = self.content_html_text.get("1.0", "end-1c")
         if not short_name or not version or not effective_date or not html.strip():
@@ -2428,11 +2465,7 @@ class AToolApp:
             messagebox.showerror("Content Manager", "Effective date must be YYYY-MM-DD.", parent=self.content_window)
             return
         mode = self.content_mode_var.get()
-        source_version = self.content_source_version_var.get().strip()
-        if mode == "version" and not source_version:
-            messagebox.showerror("Content Manager", "A source version is required when creating a new version.", parent=self.content_window)
-            return
-        action = "create content" if mode == "create" else f"create version {version} from {source_version}"
+        action = "create content" if mode == "create" else f"save {short_name} version {version}"
         if not messagebox.askyesno("Confirm Content Save", f"Use {self._active_occs_config_status_text()} to {action} for {short_name}?", parent=self.content_window):
             return
         temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
@@ -2449,9 +2482,16 @@ class AToolApp:
             display_name = self.content_name_var.get().strip()
             if display_name:
                 args.extend(["--name", display_name])
+            if self.content_description_var.get().strip():
+                args.extend(["--desc", self.content_description_var.get().strip()])
         else:
-            args = ["content", "version", short_name, version, "--config-id", config_id, "--from-version", source_version, "--html", temporary_html.name]
-        args.extend(["--effective-date", effective_date, "--timeout", str(self._get_occs_request_timeout_ms())])
+            args = ["content", "save", short_name, version, "--config-id", config_id, "--html", temporary_html.name,
+                    "--short-name", short_name, "--name", self.content_name_var.get().strip(),
+                    "--desc", self.content_description_var.get().strip(), "--new-version", version,
+                    "--version-desc", self.content_version_description_var.get().strip()]
+        if mode == "create":
+            args.extend(["--effective-date", effective_date])
+        args.extend(["--timeout", str(self._get_occs_request_timeout_ms())])
         self.content_editor_status_var.set("Saving to OCCS…")
 
         def _cleanup() -> None:
@@ -2463,6 +2503,60 @@ class AToolApp:
             lambda result: self._on_content_save_complete(result, short_name, version, _cleanup),
             on_failure=lambda error: self._on_content_save_failed(error, _cleanup),
         )
+
+    def _new_content_version(self) -> None:
+        assert self.content_window is not None
+        if self.content_mode_var.get() == "create":
+            messagebox.showerror("Content Manager", "Load or save a content item before creating a new version.", parent=self.content_window)
+            return
+        source_version = self.content_source_version_var.get().strip()
+        short_name = self.content_short_name_var.get().strip()
+        if not short_name or not source_version:
+            messagebox.showerror("Content Manager", "Select a content version first.", parent=self.content_window)
+            return
+        new_version = simpledialog.askstring("New Version", "Version name:", parent=self.content_window)
+        if not new_version:
+            return
+        effective_date = simpledialog.askstring("New Version", "Effective date (YYYY-MM-DD):", initialvalue=datetime.now().date().isoformat(), parent=self.content_window)
+        if not effective_date:
+            return
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", effective_date):
+            messagebox.showerror("New Version", "Effective date must be YYYY-MM-DD.", parent=self.content_window)
+            return
+        config_id = self._require_active_occs_config_id(self.content_window)
+        if not config_id:
+            return
+        if not messagebox.askyesno(
+            "Create Content Version",
+            f"Create version {new_version.strip()} from {source_version} for {short_name} using {self._active_occs_config_status_text()}?",
+            parent=self.content_window,
+        ):
+            return
+        html = self.content_html_text.get("1.0", "end-1c")
+        temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
+        try:
+            temporary_html.write(html)
+            temporary_html.close()
+        except OSError as error:
+            temporary_html.close()
+            Path(temporary_html.name).unlink(missing_ok=True)
+            messagebox.showerror("New Version", f"Could not prepare HTML upload: {error}", parent=self.content_window)
+            return
+        args = ["content", "version", short_name, new_version.strip(), "--config-id", config_id, "--from-version", source_version,
+                "--html", temporary_html.name, "--effective-date", effective_date]
+        self.content_editor_status_var.set(f"Creating version {new_version.strip()}…")
+        self._run_occs_json_command_async(
+            args,
+            f"Creating {short_name} version {new_version.strip()}...",
+            lambda result: self._on_new_content_version_complete(result, short_name, new_version.strip(), temporary_html.name),
+            on_failure=lambda error: self._on_content_save_failed(error, lambda: Path(temporary_html.name).unlink(missing_ok=True)),
+        )
+
+    def _on_new_content_version_complete(self, result: dict[str, object], short_name: str, version: str, html_path: str) -> None:
+        Path(html_path).unlink(missing_ok=True)
+        self.content_source_version_var.set(version)
+        self.content_editor_status_var.set(f"Created version {version}.")
+        self._load_selected_content_version(short_name, version)
 
     def _on_content_save_complete(self, result: dict[str, object], short_name: str, version: str, cleanup: object) -> None:
         if callable(cleanup):
