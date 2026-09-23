@@ -2323,7 +2323,7 @@ class AToolApp:
         compose_text_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(6, 8))
         compose_text_frame.columnconfigure(0, weight=1)
         compose_text_frame.rowconfigure(0, weight=1)
-        compose_entry = tk.Text(compose_text_frame, height=8, wrap="word", undo=True)
+        compose_entry = tk.Text(compose_text_frame, height=10, wrap="word", undo=True)
         compose_entry.grid(row=0, column=0, sticky="nsew")
         compose_scroll = ttk.Scrollbar(compose_text_frame, orient=tk.VERTICAL, command=compose_entry.yview)
         compose_scroll.grid(row=0, column=1, sticky="ns")
@@ -4319,6 +4319,14 @@ class AToolApp:
     def _set_compose_text(self, text: str) -> None:
         if self.compose_entry_widget is None or not self.compose_entry_widget.winfo_exists():
             return
+        # The composer is a structured editor, so show valid expressions in a
+        # shape that exposes their AND/OR grouping.  The value remains plain
+        # text and is parsed again when it is applied.
+        try:
+            text = self._format_compose_expression(text)
+        except ValueError:
+            # Keep incomplete text untouched while the user is typing it.
+            pass
         self.compose_entry_widget.delete("1.0", tk.END)
         if text:
             self.compose_entry_widget.insert("1.0", text)
@@ -4533,6 +4541,71 @@ class AToolApp:
 
     def _render_composed_condition(self, compose_text: str) -> str:
         return self._render_composed_condition_with_entries(compose_text, self._condition_library_entries)
+
+    def _format_compose_expression(self, compose_text: str) -> str:
+        """Format a compose expression without resolving or changing its clauses."""
+        text = str(compose_text or "").strip()
+        if not text:
+            return ""
+        tokens = self._tokenize_clause_expression(text)
+        position = 0
+
+        def parse_or() -> tuple[str, object]:
+            nonlocal position
+            parts: list[tuple[str, object]] = [parse_and()]
+            while position < len(tokens) and tokens[position][0] == "OR":
+                position += 1
+                parts.append(parse_and())
+            return parts[0] if len(parts) == 1 else ("OR", parts)
+
+        def parse_and() -> tuple[str, object]:
+            nonlocal position
+            parts: list[tuple[str, object]] = [parse_term()]
+            while position < len(tokens) and tokens[position][0] == "AND":
+                position += 1
+                parts.append(parse_term())
+            return parts[0] if len(parts) == 1 else ("AND", parts)
+
+        def parse_term() -> tuple[str, object]:
+            nonlocal position
+            if position >= len(tokens):
+                raise ValueError("Unexpected end of expression.")
+            token_type, token_value = tokens[position]
+            if token_type == "LPAREN":
+                position += 1
+                inner = parse_or()
+                if position >= len(tokens) or tokens[position][0] != "RPAREN":
+                    raise ValueError("Missing closing parenthesis in composed expression.")
+                position += 1
+                return inner
+            if token_type not in {"NAME", "RAW"}:
+                raise ValueError(f"Unexpected token '{token_value}'.")
+            position += 1
+            return ("ATOM", token_value if token_type == "NAME" else f"RAW{{{token_value}}}")
+
+        def render(node: tuple[str, object], indent: int = 0, nested: bool = False) -> str:
+            kind, value = node
+            prefix = " " * indent
+            if kind == "ATOM":
+                return f"{prefix}{value}"
+            assert isinstance(value, list)
+            if kind == "AND":
+                return " +\n".join(render(child, indent, nested=True) for child in value)
+            if kind == "OR":
+                lines = [f"{prefix}("] if nested else []
+                child_indent = indent + 4 if nested else indent
+                for index, child in enumerate(value):
+                    suffix = " OR" if index < len(value) - 1 else ""
+                    lines.append(f"{render(child, child_indent, nested=True)}{suffix}")
+                if nested:
+                    lines.append(f"{prefix})")
+                return "\n".join(lines)
+            raise ValueError("Unexpected compose parser node type.")
+
+        parsed_tree = parse_or()
+        if position != len(tokens):
+            raise ValueError("Unexpected trailing tokens in composed expression.")
+        return render(parsed_tree)
 
     def _render_composed_condition_with_entries(
         self,
