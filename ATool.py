@@ -2180,6 +2180,7 @@ class AToolApp:
         container.rowconfigure(0, weight=1)
 
         self.content_browser_filter_var = tk.StringVar(value="Filter by name or description")
+        self.content_browser_type_var = tk.StringVar(value="All types")
         self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
         self.content_metadata_var = tk.StringVar()
         self._content_browser_scope = "config"
@@ -2201,7 +2202,20 @@ class AToolApp:
         self.content_filter_entry.bind("<FocusIn>", self._clear_content_filter_placeholder)
         self.content_filter_entry.bind("<FocusOut>", self._restore_content_filter_placeholder)
         self.content_filter_entry.bind("<Return>", lambda _event: self._load_content_browser(self._content_browser_scope))
-        self.content_browser_tree = ttk.Treeview(browser, columns=("name",), show="tree", selectmode="browse")
+        self.content_type_filter = ttk.Combobox(
+            filter_row,
+            textvariable=self.content_browser_type_var,
+            values=("All types", "Text", "Image", "Link", "Chart"),
+            state="readonly",
+            width=11,
+        )
+        self.content_type_filter.grid(row=0, column=1, sticky="e", padx=(6, 0))
+        self.content_type_filter.bind("<<ComboboxSelected>>", lambda _event: self._load_content_browser(self._content_browser_scope))
+        self.content_browser_tree = ttk.Treeview(browser, columns=("shortName", "contentType"), show="headings", selectmode="browse")
+        self.content_browser_tree.heading("shortName", text="Short Name", command=lambda: self._sort_content_browser("shortName"))
+        self.content_browser_tree.heading("contentType", text="Type", command=lambda: self._sort_content_browser("contentType"))
+        self.content_browser_tree.column("shortName", anchor=tk.W, width=190)
+        self.content_browser_tree.column("contentType", anchor=tk.W, width=70, stretch=False)
         self.content_browser_tree.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
         content_scrollbar = ttk.Scrollbar(browser, orient=tk.VERTICAL, command=self.content_browser_tree.yview)
         content_scrollbar.grid(row=3, column=1, sticky="ns", pady=(6, 0))
@@ -2213,6 +2227,8 @@ class AToolApp:
         ttk.Button(browser_actions, text="New Content", command=self._new_content_in_manager).grid(row=0, column=0, sticky="w")
         self.content_load_button = ttk.Button(browser_actions, text="Load", command=self._load_selected_content, state=tk.DISABLED)
         self.content_load_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self._content_browser_sort_column = "shortName"
+        self._content_browser_sort_reverse = False
 
         self.content_editor_splitter = ttk.Panedwindow(container, orient=tk.HORIZONTAL)
         self.content_editor_splitter.grid(row=0, column=0, sticky="nsew")
@@ -2365,6 +2381,9 @@ class AToolApp:
             args.extend(["--config-id", config_id])
         if filter_text:
             args.extend(["--filter", filter_text])
+        content_type = self.content_browser_type_var.get().strip()
+        if content_type and content_type != "All types":
+            args.extend(["--type", content_type])
         self._content_browser_scope = scope
         for item_id in self.content_browser_tree.get_children():
             self.content_browser_tree.delete(item_id)
@@ -2387,13 +2406,11 @@ class AToolApp:
         for item_id in self.content_browser_tree.get_children():
             self.content_browser_tree.delete(item_id)
         self._content_browser_records.clear()
-        for item in values:
+        for item in self._sorted_content_browser_items(values):
             short_name = str(item.get("shortName", "")).strip()
             if not short_name:
                 continue
-            display_name = str(item.get("name", "")).strip()
-            label = short_name if not display_name or display_name == short_name else f"{short_name}\n{display_name}"
-            item_id = self.content_browser_tree.insert("", tk.END, text=label)
+            item_id = self.content_browser_tree.insert("", tk.END, values=(short_name, str(item.get("contentType", "")).strip()))
             self._content_browser_records[item_id] = item
         count = len(self._content_browser_records)
         if result.get("truncated"):
@@ -2406,6 +2423,32 @@ class AToolApp:
             return
         self.content_browser_status_var.set("Could not load content.")
         messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _sorted_content_browser_items(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
+        column = self._content_browser_sort_column
+        return sorted(
+            items,
+            key=lambda item: str(item.get(column, "")).casefold(),
+            reverse=self._content_browser_sort_reverse,
+        )
+
+    def _sort_content_browser(self, column: str) -> None:
+        if column == self._content_browser_sort_column:
+            self._content_browser_sort_reverse = not self._content_browser_sort_reverse
+        else:
+            self._content_browser_sort_column = column
+            self._content_browser_sort_reverse = False
+        items = list(self._content_browser_records.values())
+        for item_id in self.content_browser_tree.get_children():
+            self.content_browser_tree.delete(item_id)
+        self._content_browser_records.clear()
+        for item in self._sorted_content_browser_items(items):
+            item_id = self.content_browser_tree.insert(
+                "", tk.END,
+                values=(str(item.get("shortName", "")).strip(), str(item.get("contentType", "")).strip()),
+            )
+            self._content_browser_records[item_id] = item
+        self.content_load_button.configure(state=tk.DISABLED)
 
     def _on_content_browser_selected(self, _event: tk.Event | None = None) -> None:
         selected = self.content_browser_tree.selection()
