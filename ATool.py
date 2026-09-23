@@ -2178,27 +2178,30 @@ class AToolApp:
         workspace.add(container, weight=4)
         container.columnconfigure(0, weight=3)
         container.columnconfigure(1, weight=1)
-        container.rowconfigure(6, weight=1)
+        container.rowconfigure(1, weight=1)
 
-        self.content_browser_filter_var = tk.StringVar()
+        self.content_browser_filter_var = tk.StringVar(value="filter")
         self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
+        self.content_metadata_var = tk.StringVar()
         self._content_browser_scope = "config"
         self._content_browser_records: dict[str, dict[str, object]] = {}
         ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
-        filter_row = ttk.Frame(browser)
-        filter_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        filter_row.columnconfigure(0, weight=1)
-        filter_entry = ttk.Entry(filter_row, textvariable=self.content_browser_filter_var)
-        filter_entry.grid(row=0, column=0, sticky="ew")
-        filter_entry.bind("<Return>", lambda _event: self._load_content_browser(self._content_browser_scope))
         list_row = ttk.Frame(browser)
-        list_row.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config"))
         list_from_config_button.grid(row=0, column=0, sticky="w")
         self._attach_tooltip(list_from_config_button, "List Contents associated with active Config ID")
         list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
         list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self._attach_tooltip(list_all_button, "List all Contents")
+        filter_row = ttk.Frame(browser)
+        filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        filter_row.columnconfigure(0, weight=1)
+        self.content_filter_entry = ttk.Entry(filter_row, textvariable=self.content_browser_filter_var, foreground="#777777")
+        self.content_filter_entry.grid(row=0, column=0, sticky="ew")
+        self.content_filter_entry.bind("<FocusIn>", self._clear_content_filter_placeholder)
+        self.content_filter_entry.bind("<FocusOut>", self._restore_content_filter_placeholder)
+        self.content_filter_entry.bind("<Return>", lambda _event: self._load_content_browser(self._content_browser_scope))
         ttk.Label(browser, text="Filter by short name, name, or description.", foreground="#666666").grid(row=3, column=0, sticky="w", pady=(4, 6))
         self.content_browser_tree = ttk.Treeview(browser, columns=("name",), show="tree", selectmode="browse")
         self.content_browser_tree.grid(row=4, column=0, sticky="nsew")
@@ -2207,39 +2210,43 @@ class AToolApp:
         self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
         self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
         ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=5, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(browser, text="New Content", command=self._new_content_in_manager).grid(row=6, column=0, sticky="w", pady=(8, 0))
+        browser_actions = ttk.Frame(browser)
+        browser_actions.grid(row=6, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(browser_actions, text="New Content", command=self._new_content_in_manager).grid(row=0, column=0, sticky="w")
+        self.content_load_button = ttk.Button(browser_actions, text="Load", command=self._load_selected_content, state=tk.DISABLED)
+        self.content_load_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        ttk.Label(container, text="Name:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.content_short_name_entry = ttk.Entry(container, textvariable=self.content_short_name_var, width=52)
+        form = ttk.Frame(container)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(3, weight=2)
+        ttk.Label(form, text="Name:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.content_short_name_entry = ttk.Entry(form, textvariable=self.content_short_name_var, width=52)
         self.content_short_name_entry.grid(row=0, column=1, sticky="ew")
         self.content_short_name_entry.bind("<FocusOut>", self._copy_content_name_to_long_name)
-        self.content_name_label = ttk.Label(container, text="Long Name:")
-        self.content_name_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
-        self.content_name_entry = ttk.Entry(container, textvariable=self.content_name_var, width=52)
-        self.content_name_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
-        self.content_source_version_label = ttk.Label(container, text="Version:")
-        self.content_source_version_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
-        self.content_source_version_entry = ttk.Combobox(container, textvariable=self.content_source_version_var, width=20)
-        self.content_source_version_entry.grid(row=2, column=1, sticky="w", pady=(8, 0))
+        self.content_name_label = ttk.Label(form, text="Long Name:")
+        self.content_name_label.grid(row=0, column=2, sticky="w", padx=(12, 6))
+        self.content_name_entry = ttk.Entry(form, textvariable=self.content_name_var, width=52)
+        self.content_name_entry.grid(row=0, column=3, sticky="ew")
+        self.content_source_version_label = ttk.Label(form, text="Version:")
+        self.content_source_version_label.grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.content_source_version_entry = ttk.Combobox(form, textvariable=self.content_source_version_var, width=20)
+        self.content_source_version_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
         self.content_source_version_entry.bind("<<ComboboxSelected>>", self._on_content_version_selected)
 
-        version_row = ttk.Frame(container)
-        version_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(version_row, text="Effective Date:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(version_row, textvariable=self.content_effective_date_var, width=14).grid(row=0, column=1, sticky="w")
-        ttk.Label(version_row, text="YYYY-MM-DD").grid(row=0, column=2, sticky="w", padx=(6, 18))
-        ttk.Label(version_row, text="Version Description:").grid(row=0, column=3, sticky="w", padx=(0, 8))
-        ttk.Entry(version_row, textvariable=self.content_version_description_var, width=30).grid(row=0, column=4, sticky="ew")
-        version_row.columnconfigure(4, weight=1)
+        ttk.Label(form, text="Version Description:").grid(row=1, column=2, sticky="w", padx=(12, 6), pady=(8, 0))
+        ttk.Entry(form, textvariable=self.content_version_description_var).grid(row=1, column=3, sticky="ew", pady=(8, 0))
 
-        description_row = ttk.Frame(container)
-        description_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        description_row.columnconfigure(1, weight=1)
-        ttk.Label(description_row, text="Description:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(description_row, textvariable=self.content_description_var).grid(row=0, column=1, sticky="ew")
+        description_row = ttk.Frame(form)
+        description_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        description_row.columnconfigure(3, weight=1)
+        ttk.Label(description_row, text="Effective Date:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Entry(description_row, textvariable=self.content_effective_date_var, width=12).grid(row=0, column=1, sticky="w")
+        ttk.Label(description_row, text="Description:").grid(row=0, column=2, sticky="w", padx=(12, 6))
+        ttk.Entry(description_row, textvariable=self.content_description_var).grid(row=0, column=3, sticky="ew")
 
-        action_row = ttk.Frame(container)
-        action_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        action_row = ttk.Frame(form)
+        action_row.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         ttk.Button(action_row, text="New Version", command=self._new_content_version).grid(row=0, column=0, sticky="w")
         self.content_save_button = ttk.Button(action_row, text="Save", command=self._save_content_from_manager)
         self.content_save_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
@@ -2247,7 +2254,7 @@ class AToolApp:
         action_row.columnconfigure(2, weight=1)
 
         editor_frame = ttk.LabelFrame(container, text="HTML", padding=6)
-        editor_frame.grid(row=6, column=0, sticky="nsew", pady=(8, 0))
+        editor_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         editor_frame.columnconfigure(0, weight=1)
         editor_frame.rowconfigure(0, weight=1)
         self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18)
@@ -2258,7 +2265,7 @@ class AToolApp:
 
         ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file).grid(row=1, column=0, sticky="e", pady=(6, 0))
         styles_frame = ttk.LabelFrame(container, text="Styles", padding=6)
-        styles_frame.grid(row=6, column=1, sticky="nsew", pady=(8, 0), padx=(8, 0))
+        styles_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(8, 0))
         styles_frame.columnconfigure(0, weight=1)
         styles_frame.rowconfigure(0, weight=1)
         self.content_styles_tree = ttk.Treeview(styles_frame, columns=("style", "classes"), show="headings", height=8)
@@ -2275,6 +2282,16 @@ class AToolApp:
         if self.content_mode_var.get() == "create" and not self.content_name_var.get().strip():
             self.content_name_var.set(self.content_short_name_var.get().strip())
 
+    def _clear_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if self.content_browser_filter_var.get() == "filter":
+            self.content_browser_filter_var.set("")
+            self.content_filter_entry.configure(foreground="#000000")
+
+    def _restore_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if not self.content_browser_filter_var.get().strip():
+            self.content_browser_filter_var.set("filter")
+            self.content_filter_entry.configure(foreground="#777777")
+
     def _new_content_in_manager(self) -> None:
         self.content_mode_var.set("create")
         self.content_short_name_var.set("")
@@ -2287,6 +2304,7 @@ class AToolApp:
         self.content_html_text.delete("1.0", tk.END)
         for item_id in self.content_styles_tree.get_children():
             self.content_styles_tree.delete(item_id)
+        self.content_load_button.configure(state=tk.DISABLED)
         self.content_editor_status_var.set(self._content_editor_ready_text())
 
     def _content_editor_ready_text(self) -> str:
@@ -2303,6 +2321,8 @@ class AToolApp:
             self.content_browser_status_var.set("Set an active Config to browse content.")
             return
         filter_text = self.content_browser_filter_var.get().strip()
+        if filter_text == "filter":
+            filter_text = ""
         args = ["content", "list", "--timeout", str(self._get_occs_request_timeout_ms())]
         if scope == "config":
             args.extend(["--config-id", config_id])
@@ -2313,6 +2333,7 @@ class AToolApp:
             self.content_browser_tree.delete(item_id)
         self._content_browser_records.clear()
         self.content_browser_tree.insert("", tk.END, text="Loading…")
+        self.content_load_button.configure(state=tk.DISABLED)
         self.content_browser_status_var.set("")
         self._run_occs_json_command_async(
             args,
@@ -2348,9 +2369,15 @@ class AToolApp:
     def _on_content_browser_selected(self, _event: tk.Event | None = None) -> None:
         selected = self.content_browser_tree.selection()
         item = self._content_browser_records.get(selected[0]) if selected else None
+        self.content_load_button.configure(state=tk.NORMAL if item else tk.DISABLED)
+
+    def _load_selected_content(self) -> None:
+        selected = self.content_browser_tree.selection()
+        item = self._content_browser_records.get(selected[0]) if selected else None
         short_name = str(item.get("shortName", "")).strip() if item else ""
         if not short_name:
             return
+        self.content_load_button.configure(state=tk.DISABLED)
         self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
         self._run_occs_json_command_async(
             ["content", "inspect", short_name, "--include-html", "--timeout", str(self._get_occs_request_timeout_ms())],
