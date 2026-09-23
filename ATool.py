@@ -432,6 +432,12 @@ class AToolApp:
         config_menu.add_separator()
         config_menu.add_command(label="Close...", command=self.close_occs_config)
         config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
+        config_menu.add_separator()
+        active_config = self._active_occs_config_display_name()
+        config_menu.add_command(
+            label=f"Active: {active_config or '(not set)'}",
+            state=tk.DISABLED,
+        )
 
         resources_menu = tk.Menu(menu_bar, tearoff=0)
         resources_menu.add_command(label="Download Single...", command=self.get_occs_resource_to_cache)
@@ -2256,7 +2262,7 @@ class AToolApp:
 
     def _content_editor_ready_text(self) -> str:
         config_status = self._active_occs_config_status_text()
-        if self._get_last_occs_config_id():
+        if self._active_occs_config_display_name():
             return f"Ready to save content using {config_status.removeprefix('Config: ')}."
         return "Choose Config > Set… before saving content."
 
@@ -6343,13 +6349,18 @@ class AToolApp:
         section["last_config_id"] = str(config_id or "").strip()
         self._save_user_settings()
 
-    def _active_occs_config_status_text(self) -> str:
+    def _active_occs_config_display_name(self) -> str:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
-            return "Config: (not set)"
+            return ""
         label = str(section.get("active_config_label", "")).strip()
-        config_id = str(section.get("last_config_id", "")).strip()
-        return f"Config: {label or config_id}" if (label or config_id) else "Config: (not set)"
+        # Older settings stored labels such as "_andy (90)". Never surface the
+        # internal numeric ID in the authoring UI.
+        return re.sub(r"\s+\(\d+\)$", "", label).strip()
+
+    def _active_occs_config_status_text(self) -> str:
+        label = self._active_occs_config_display_name()
+        return f"Config: {label}" if label else "Config: (not set)"
 
     def _set_active_occs_config(self, config: dict[str, str]) -> None:
         config_id = str(config.get("id", "")).strip() or str(config.get("shortName", "")).strip()
@@ -6357,12 +6368,25 @@ class AToolApp:
             raise ValueError("The selected Config ID has no usable identifier.")
         section = self._occs_settings_section()
         section["last_config_id"] = config_id
-        section["active_config_label"] = self._format_occs_config_label(config) or config_id
+        section["active_config_label"] = str(config.get("shortName", "")).strip() or str(config.get("name", "")).strip()
         self._save_user_settings()
         self.config_status_text.set(self._active_occs_config_status_text())
+        self._refresh_app_menus()
         if self.content_window is not None and self.content_window.winfo_exists():
             self.content_editor_status_var.set(self._content_editor_ready_text())
-        self._show_temporary_status(f"Active Config set to {section['active_config_label']}", duration_ms=5000)
+        self._show_temporary_status(f"Active Config set to {self._active_occs_config_display_name()}", duration_ms=5000)
+
+    def _refresh_app_menus(self) -> None:
+        for window in (
+            self.root,
+            self.fields_window,
+            self.layouts_window,
+            self.data_browser_window,
+            self.content_window,
+            self.condition_library_window,
+        ):
+            if window is not None and window.winfo_exists():
+                self._attach_app_menu(window)
 
     def _require_active_occs_config_id(self, parent: tk.Misc | None = None) -> str:
         config_id = self._get_last_occs_config_id()
