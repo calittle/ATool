@@ -2234,19 +2234,23 @@ class AToolApp:
         self.content_source_version_entry.bind("<<ComboboxSelected>>", self._on_content_version_selected)
 
         ttk.Label(form, text="Version Description:").grid(row=1, column=2, sticky="w", padx=(12, 6), pady=(8, 0))
-        ttk.Entry(form, textvariable=self.content_version_description_var).grid(row=1, column=3, sticky="ew", pady=(8, 0))
+        self.content_version_description_entry = ttk.Entry(form, textvariable=self.content_version_description_var)
+        self.content_version_description_entry.grid(row=1, column=3, sticky="ew", pady=(8, 0))
 
         description_row = ttk.Frame(form)
         description_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         description_row.columnconfigure(3, weight=1)
         ttk.Label(description_row, text="Effective Date:").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Entry(description_row, textvariable=self.content_effective_date_var, width=12).grid(row=0, column=1, sticky="w")
+        self.content_effective_date_entry = ttk.Entry(description_row, textvariable=self.content_effective_date_var, width=12)
+        self.content_effective_date_entry.grid(row=0, column=1, sticky="w")
         ttk.Label(description_row, text="Description:").grid(row=0, column=2, sticky="w", padx=(12, 6))
-        ttk.Entry(description_row, textvariable=self.content_description_var).grid(row=0, column=3, sticky="ew")
+        self.content_description_entry = ttk.Entry(description_row, textvariable=self.content_description_var)
+        self.content_description_entry.grid(row=0, column=3, sticky="ew")
 
         action_row = ttk.Frame(form)
         action_row.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
-        ttk.Button(action_row, text="New Version", command=self._new_content_version).grid(row=0, column=0, sticky="w")
+        self.content_new_version_button = ttk.Button(action_row, text="New Version", command=self._new_content_version)
+        self.content_new_version_button.grid(row=0, column=0, sticky="w")
         self.content_save_button = ttk.Button(action_row, text="Save", command=self._save_content_from_manager)
         self.content_save_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
         ttk.Label(action_row, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=2, sticky="ew", padx=(12, 0))
@@ -2274,6 +2278,16 @@ class AToolApp:
         self.content_styles_tree.column("style", width=120, anchor=tk.W)
         self.content_styles_tree.column("classes", width=140, anchor=tk.W)
         self.content_styles_tree.grid(row=0, column=0, sticky="nsew")
+        self.content_metadata_controls = (
+            self.content_short_name_entry,
+            self.content_name_entry,
+            self.content_source_version_entry,
+            self.content_version_description_entry,
+            self.content_effective_date_entry,
+            self.content_description_entry,
+            self.content_new_version_button,
+            self.content_save_button,
+        )
 
     def _refresh_content_editor_mode(self) -> None:
         pass
@@ -2446,6 +2460,8 @@ class AToolApp:
     def _set_content_html_controls_enabled(self, enabled: bool) -> None:
         self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        for control in self.content_metadata_controls:
+            control.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
     def _on_content_version_loaded(self, result: dict[str, object]) -> None:
         version = result.get("version") if isinstance(result.get("version"), dict) else {}
