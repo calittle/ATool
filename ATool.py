@@ -2503,7 +2503,12 @@ class AToolApp:
         for style in styles:
             if not isinstance(style, dict):
                 continue
-            style_name = str(style.get("styleUuid", "")).strip() or "(style)"
+            style_name = (
+                str(style.get("shortName", "")).strip()
+                or str(style.get("name", "")).strip()
+                or str(style.get("styleUuid", "")).strip()
+                or "(style)"
+            )
             classes = ", ".join(str(item) for item in style.get("classNames", []) if item)
             self.content_styles_tree.insert("", tk.END, values=(style_name, classes))
         current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
