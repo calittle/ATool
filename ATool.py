@@ -2395,7 +2395,11 @@ class AToolApp:
             label = short_name if not display_name or display_name == short_name else f"{short_name}\n{display_name}"
             item_id = self.content_browser_tree.insert("", tk.END, text=label)
             self._content_browser_records[item_id] = item
-        self.content_browser_status_var.set(f"{len(self._content_browser_records)} content item{'s' if len(self._content_browser_records) != 1 else ''}.")
+        count = len(self._content_browser_records)
+        if result.get("truncated"):
+            self.content_browser_status_var.set(f"Showing first {count} content items. Refine the filter for more.")
+        else:
+            self.content_browser_status_var.set(f"{count} content item{'s' if count != 1 else ''}.")
 
     def _on_content_browser_load_failed(self, error: Exception) -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
