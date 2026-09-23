@@ -2172,7 +2172,7 @@ class AToolApp:
         workspace.pack(fill=tk.BOTH, expand=True)
         browser = ttk.Frame(workspace, padding=12, width=280)
         browser.columnconfigure(0, weight=1)
-        browser.rowconfigure(4, weight=1)
+        browser.rowconfigure(3, weight=1)
         container = ttk.Frame(workspace, padding=12)
         workspace.add(browser, weight=1)
         workspace.add(container, weight=4)
@@ -2180,7 +2180,7 @@ class AToolApp:
         container.columnconfigure(1, weight=1)
         container.rowconfigure(1, weight=1)
 
-        self.content_browser_filter_var = tk.StringVar(value="filter")
+        self.content_browser_filter_var = tk.StringVar(value="Filter by name or description")
         self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
         self.content_metadata_var = tk.StringVar()
         self._content_browser_scope = "config"
@@ -2202,11 +2202,10 @@ class AToolApp:
         self.content_filter_entry.bind("<FocusIn>", self._clear_content_filter_placeholder)
         self.content_filter_entry.bind("<FocusOut>", self._restore_content_filter_placeholder)
         self.content_filter_entry.bind("<Return>", lambda _event: self._load_content_browser(self._content_browser_scope))
-        ttk.Label(browser, text="Filter by short name, name, or description.", foreground="#666666").grid(row=3, column=0, sticky="w", pady=(4, 6))
         self.content_browser_tree = ttk.Treeview(browser, columns=("name",), show="tree", selectmode="browse")
-        self.content_browser_tree.grid(row=4, column=0, sticky="nsew")
+        self.content_browser_tree.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
         content_scrollbar = ttk.Scrollbar(browser, orient=tk.VERTICAL, command=self.content_browser_tree.yview)
-        content_scrollbar.grid(row=4, column=1, sticky="ns")
+        content_scrollbar.grid(row=3, column=1, sticky="ns", pady=(6, 0))
         self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
         self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
         ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=5, column=0, sticky="ew", pady=(8, 0))
@@ -2283,13 +2282,13 @@ class AToolApp:
             self.content_name_var.set(self.content_short_name_var.get().strip())
 
     def _clear_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
-        if self.content_browser_filter_var.get() == "filter":
+        if self.content_browser_filter_var.get() == "Filter by name or description":
             self.content_browser_filter_var.set("")
             self.content_filter_entry.configure(foreground="#000000")
 
     def _restore_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
         if not self.content_browser_filter_var.get().strip():
-            self.content_browser_filter_var.set("filter")
+            self.content_browser_filter_var.set("Filter by name or description")
             self.content_filter_entry.configure(foreground="#777777")
 
     def _new_content_in_manager(self) -> None:
@@ -2321,7 +2320,7 @@ class AToolApp:
             self.content_browser_status_var.set("Set an active Config to browse content.")
             return
         filter_text = self.content_browser_filter_var.get().strip()
-        if filter_text == "filter":
+        if filter_text == "Filter by name or description":
             filter_text = ""
         args = ["content", "list", "--timeout", str(self._get_occs_request_timeout_ms())]
         if scope == "config":
