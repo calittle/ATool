@@ -2316,6 +2316,18 @@ class AToolApp:
             self.content_new_version_button,
             self.content_save_button,
         )
+        self._content_save_baseline: tuple[str, ...] | None = None
+        for variable in (
+            self.content_short_name_var,
+            self.content_name_var,
+            self.content_source_version_var,
+            self.content_effective_date_var,
+            self.content_description_var,
+            self.content_version_description_var,
+        ):
+            variable.trace_add("write", self._on_content_editor_changed)
+        self.content_html_text.bind("<<Modified>>", self._on_content_html_modified, add="+")
+        self._capture_content_save_baseline()
         self._update_content_save_availability()
 
     def _refresh_content_editor_mode(self) -> None:
@@ -2350,6 +2362,7 @@ class AToolApp:
             self.content_styles_tree.delete(item_id)
         self.content_load_button.configure(state=tk.DISABLED)
         self.content_editor_status_var.set(self._content_editor_ready_text())
+        self._capture_content_save_baseline()
 
     def _content_editor_ready_text(self) -> str:
         return ""
@@ -2367,9 +2380,37 @@ class AToolApp:
             return
         if self.content_save_button.instate(("disabled",)) and self.content_html_text.cget("state") == tk.DISABLED:
             return
-        self.content_save_button.configure(
-            state=tk.NORMAL if self._get_last_occs_config_id() else tk.DISABLED,
+        can_save = bool(self._get_last_occs_config_id()) and self._content_has_changes()
+        self.content_save_button.configure(state=tk.NORMAL if can_save else tk.DISABLED)
+
+    def _content_save_snapshot(self) -> tuple[str, ...]:
+        return (
+            self.content_short_name_var.get().strip(),
+            self.content_name_var.get().strip(),
+            self.content_source_version_var.get().strip(),
+            self.content_description_var.get().strip(),
+            self.content_version_description_var.get().strip(),
+            self.content_html_text.get("1.0", "end-1c"),
         )
+
+    def _content_has_changes(self) -> bool:
+        snapshot = self._content_save_snapshot()
+        if self.content_mode_var.get() == "create":
+            return bool(snapshot[0] and snapshot[2] and self.content_effective_date_var.get().strip() and snapshot[5].strip())
+        return self._content_save_baseline is not None and snapshot != self._content_save_baseline
+
+    def _capture_content_save_baseline(self) -> None:
+        self._content_save_baseline = self._content_save_snapshot()
+        self.content_html_text.edit_modified(False)
+        self._update_content_save_availability()
+
+    def _on_content_editor_changed(self, *_args: object) -> None:
+        self._update_content_save_availability()
+
+    def _on_content_html_modified(self, _event: tk.Event | None = None) -> None:
+        if self.content_html_text.edit_modified():
+            self.content_html_text.edit_modified(False)
+            self._update_content_save_availability()
 
     def _load_content_browser(self, scope: str = "config") -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
@@ -2566,6 +2607,7 @@ class AToolApp:
         current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
         self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
         self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
+        self._capture_content_save_baseline()
 
     def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
         self._set_content_html_controls_enabled(True)
@@ -2703,6 +2745,7 @@ class AToolApp:
         if callable(cleanup):
             cleanup()
         self.content_editor_status_var.set(f"Saved {short_name} version {version}.")
+        self._capture_content_save_baseline()
         messagebox.showinfo("Content Manager", f"Saved {short_name} version {version} to OCCS.", parent=self.content_window)
 
     def _on_content_save_failed(self, error: Exception, cleanup: object) -> None:
