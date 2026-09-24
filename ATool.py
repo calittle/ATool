@@ -2547,9 +2547,9 @@ class AToolApp:
         if any(styles.get(name) for name in ("bold", "italic", "underline", "size")):
             options["font"] = base_font
         if styles.get("foreground"):
-            options["foreground"] = styles["foreground"]
+            options["foreground"] = self._content_html_tk_color(styles["foreground"])
         if styles.get("background"):
-            options["background"] = styles["background"]
+            options["background"] = self._content_html_tk_color(styles["background"])
         if styles.get("link"):
             options.update(foreground="#0067c8", underline=True)
         if styles.get("field"):
@@ -2572,12 +2572,21 @@ class AToolApp:
                 match = re.search(r"(\d+(?:\.\d+)?)", value)
                 if match: base_font.configure(size=max(6, round(float(match.group(1)))))
             options["font"] = base_font
-        elif key == "foreground": options["foreground"] = value
-        elif key == "background": options["background"] = value
+        elif key == "foreground": options["foreground"] = self._content_html_tk_color(value)
+        elif key == "background": options["background"] = self._content_html_tk_color(value)
         elif key == "link": options.update(foreground="#0067c8", underline=True)
         elif key == "field": options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
+
+    @staticmethod
+    def _content_html_tk_color(value: str) -> str:
+        """Convert OCCS CSS rgb() colors to a Tk-recognised colour value."""
+        match = re.fullmatch(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", value, flags=re.IGNORECASE)
+        if not match:
+            return value
+        red, green, blue = (min(255, int(component)) for component in match.groups())
+        return f"#{red:02x}{green:02x}{blue:02x}"
 
     def _content_html_get(self) -> str:
         raw = self.content_html_text.get("1.0", "end-1c")
