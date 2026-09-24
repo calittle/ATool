@@ -7782,7 +7782,7 @@ class AToolApp:
         config_id: str,
         parent: tk.Misc | None = None,
         display_name: str = "",
-    ) -> None:
+    ) -> bool:
         config_name = display_name or self._occs_config_display_name(config_id)
         payload = self._read_occs_config_lockouts()
         normalized_id = self._normalize_occs_config_id(config_id)
@@ -7790,17 +7790,19 @@ class AToolApp:
         existing = next((value for value in locked_ids if self._normalize_occs_config_id(value) == normalized_id), None)
         if existing:
             if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from {config_name}?", parent=parent):
-                return
+                return False
             payload["locked_config_ids"] = [value for value in locked_ids if self._normalize_occs_config_id(value) != normalized_id]
             action, status = "remove this shared Config lock", "unlocked"
         else:
             if not messagebox.askyesno("Lock Config", f"Lock {config_name}?\n\nATool will prevent closing or migrating it.", parent=parent):
-                return
+                return False
             locked_ids.append(config_id.strip())
             payload["locked_config_ids"] = locked_ids
             action, status = "create this shared Config lock", "locked"
         if self._write_occs_config_lockouts(payload, action):
             self._show_temporary_status(f"{config_name} {status}", duration_ms=5000)
+            return True
+        return False
 
     def open_occs_config_lockouts_dialog(self) -> None:
         dialog = self._create_toplevel(self.root)
@@ -14394,8 +14396,16 @@ class AToolApp:
             if config is None:
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
-            if config_id:
-                self._toggle_occs_config_lock(config_id, dialog, self._format_occs_config_label(config))
+            if config_id and self._toggle_occs_config_lock(
+                config_id, dialog, self._format_occs_config_label(config)
+            ):
+                selected_items = tree.selection()
+                if selected_items:
+                    item_id = selected_items[0]
+                    values = list(tree.item(item_id, "values"))
+                    if values:
+                        values[0] = "🔒" if lock_config_button.cget("text") == "Lock Configuration" else ""
+                        tree.item(item_id, values=values)
                 _update_close_button()
 
         lock_config_button.configure(command=_toggle_selected_lock)
