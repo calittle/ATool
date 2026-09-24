@@ -2526,6 +2526,10 @@ class AToolApp:
         raw = self.content_html_text.get("1.0", "end-1c")
         if self.content_html_source_mode:
             return raw
+        if self.content_html_text.edit_modified():
+            self.content_html_rich_dirty = True
+        if not self.content_html_rich_dirty:
+            return self.content_html_raw_source
         lines: list[str] = []
         for line_number in range(1, int(self.content_html_text.index("end-1c").split(".")[0]) + 1):
             start, end = f"{line_number}.0", f"{line_number}.end"
