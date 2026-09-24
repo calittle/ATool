@@ -36,15 +36,23 @@ class ContentHtmlParser(HTMLParser):
     """Small, deliberately conservative HTML-to-Tk-text adapter for OCCS content."""
 
     COMMS_DATA_TOKEN = re.compile(
-        r'<comms-data>\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
+        r'<comms-data>\s*(\$Data\s*\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
         re.IGNORECASE | re.DOTALL,
     )
     COMMS_DATA_EXPRESSION = re.compile(
-        r'^\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
+        r'^\s*(\$Data\s*\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
         re.DOTALL,
     )
     COMMS_STRUCTURE_TOKEN = re.compile(
         r'<comms-(cond|loop)>.*?</comms-\1>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    NESTED_COMMS_DATA_BODY = re.compile(
+        r'(<comms-data>\s*\$Data\s*\{)(.*?)(\}\s*</comms-data>)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    COMMS_DATA_PAYLOAD = re.compile(
+        r'<comms-data>\s*\$Data\s*(\{.*\})\s*</comms-data>',
         re.IGNORECASE | re.DOTALL,
     )
 
@@ -145,19 +153,57 @@ class ContentHtmlParser(HTMLParser):
         self._append(data[start:])
 
     @staticmethod
+    def condition_payload(raw: str) -> dict[str, object] | None:
+        """Decode a condition, including OCCS's unescaped inline data form.
+
+        OCCS permits ``<comms-data>$Data{"Id":"name"}</comms-data>`` in a
+        condition's JSON ``Text`` value.  Its inner quotes are not escaped for
+        the surrounding JSON, so repair only those quotes for display parsing.
+        The original ``raw`` HTML is always retained for an untouched item.
+        """
+        expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+        if not expression:
+            return None
+        encoded = expression.group(1)
+        try:
+            payload = json.loads(encoded)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            def escape_nested_data(match: re.Match[str]) -> str:
+                body = re.sub(r'(?<!\\)"', r'\\"', match.group(2))
+                return f"{match.group(1)}{body}{match.group(3)}"
+
+            repaired = ContentHtmlParser.NESTED_COMMS_DATA_BODY.sub(escape_nested_data, encoded)
+            if repaired == encoded:
+                return None
+            try:
+                payload = json.loads(repaired)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def data_payload(raw: str) -> dict[str, object] | None:
+        """Decode a simple, non-transformed ``comms-data`` chip."""
+        expression = ContentHtmlParser.COMMS_DATA_PAYLOAD.fullmatch(raw.strip())
+        if not expression:
+            return None
+        try:
+            payload = json.loads(expression.group(1))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
     def _structure_label(kind: str, raw: str) -> str:
         if kind == "cond":
-            expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
-            if expression:
-                try:
-                    payload = json.loads(expression.group(1))
-                    condition = str(payload.get("Condition", "")).strip() or "(no condition)"
-                    target = str(payload.get("Text", payload.get("Content", ""))).strip()
-                    return f"◆ Condition: {condition}{f' — {target}' if target else ''}"
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    pass
+            payload = ContentHtmlParser.condition_payload(raw)
+            if payload:
+                condition = str(payload.get("Condition", "")).strip() or "(no condition)"
+                target = str(payload.get("Text", payload.get("Content", ""))).strip()
+                target = ContentHtmlParser.COMMS_DATA_TOKEN.sub(lambda match: f"${match.group(2)}", target)
+                return f"◆ Condition: {condition}{f' — {target}' if target else ''}"
             return "◆ Condition"
-        return "↻ Loop (double-click to edit)"
+        return "↻ Loop"
 
 
 class AToolApp:
@@ -2334,6 +2380,7 @@ class AToolApp:
         ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
         list_row = ttk.Frame(browser)
         list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.content_list_actions = list_row
         self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config", bypass_filter=True))
         self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
         self.content_list_from_config_button.bind(
@@ -2342,13 +2389,23 @@ class AToolApp:
             add="+",
         )
         self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
-        list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
-        list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
-        list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
-        ttk.Button(list_row, text="New", command=self._new_content_in_manager).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        self.content_list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
+        self.content_list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self._attach_tooltip(self.content_list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
+        self.content_list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
+        self.content_new_button = ttk.Button(list_row, text="New", command=self._new_content_in_manager)
+        self.content_new_button.grid(row=0, column=2, sticky="w", padx=(6, 0))
         self.content_load_button = ttk.Button(list_row, text="Load", command=self._load_selected_content, state=tk.DISABLED)
         self.content_load_button.grid(row=0, column=3, sticky="w", padx=(6, 0))
+        self._content_list_action_buttons = (
+            self.content_list_from_config_button,
+            self.content_list_all_button,
+            self.content_new_button,
+            self.content_load_button,
+        )
+        self._content_list_actions_reflow_job: str | None = None
+        list_row.bind("<Configure>", self._schedule_content_list_actions_reflow, add="+")
+        self.content_window.after_idle(self._reflow_content_list_actions)
         filter_row = ttk.Frame(browser)
         filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         filter_row.columnconfigure(0, weight=1)
@@ -2494,6 +2551,8 @@ class AToolApp:
         self.content_html_text.bind("<Motion>", self._show_content_html_tag_tooltip)
         self.content_html_text.bind("<Leave>", lambda _event: self._hide_tooltip())
         self.content_html_text.bind("<Double-Button-1>", self._edit_content_html_structure_at_cursor)
+        self.content_html_text.bind("<BackSpace>", self._delete_content_html_atom_on_backspace)
+        self.content_html_text.bind("<Delete>", self._delete_content_html_atom_on_delete)
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
         html_scrollbar.grid(row=1, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
@@ -2723,6 +2782,73 @@ class AToolApp:
         except tk.TclError:
             return None
 
+    def _center_content_chip_dialog(self, dialog: tk.Toplevel) -> None:
+        """Position a modal chip editor over the visible content editor."""
+        dialog.update_idletasks()
+        editor = self.content_html_text
+        x_pos = editor.winfo_rootx() + max(0, (editor.winfo_width() - dialog.winfo_reqwidth()) // 2)
+        y_pos = editor.winfo_rooty() + max(0, (editor.winfo_height() - dialog.winfo_reqheight()) // 2)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+        dialog.lift()
+
+    def _content_html_atomic_tag_range_at(self, index: str) -> tuple[str, str] | None:
+        """Return the rich-editor chip range containing an index, if any."""
+        for tag_name in self.content_html_text.tag_names(index):
+            styles = self._content_html_tag_styles.get(tag_name, {})
+            if any(styles.get(kind) for kind in ("comms", "field", "comms-cond", "comms-loop")):
+                text_range = self._content_html_tag_range_at(tag_name, index)
+                if text_range:
+                    return text_range
+        return None
+
+    def _content_html_expand_selection_to_atoms(self, start: str, end: str) -> tuple[str, str]:
+        """Extend a selection to cover every chip it touches."""
+        expanded_start, expanded_end = start, end
+        for tag_name, styles in self._content_html_tag_styles.items():
+            if not any(styles.get(kind) for kind in ("comms", "field", "comms-cond", "comms-loop")):
+                continue
+            ranges = self.content_html_text.tag_ranges(tag_name)
+            for atom_start, atom_end in zip(ranges[0::2], ranges[1::2]):
+                if self.content_html_text.compare(atom_start, "<", expanded_end) and self.content_html_text.compare(atom_end, ">", expanded_start):
+                    if self.content_html_text.compare(atom_start, "<", expanded_start):
+                        expanded_start = str(atom_start)
+                    if self.content_html_text.compare(atom_end, ">", expanded_end):
+                        expanded_end = str(atom_end)
+        return expanded_start, expanded_end
+
+    def _delete_content_html_atom(self, start: str, end: str) -> str:
+        self.content_html_text.delete(start, end)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+        return "break"
+
+    def _delete_content_html_atom_on_backspace(self, _event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        selection = self._content_html_selection()
+        if selection:
+            start, end = self._content_html_expand_selection_to_atoms(*selection)
+            if (start, end) != selection:
+                return self._delete_content_html_atom(start, end)
+            return None
+        cursor = self.content_html_text.index(tk.INSERT)
+        if cursor == "1.0":
+            return None
+        atom = self._content_html_atomic_tag_range_at(self.content_html_text.index(f"{cursor}-1c"))
+        return self._delete_content_html_atom(*atom) if atom else None
+
+    def _delete_content_html_atom_on_delete(self, _event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        selection = self._content_html_selection()
+        if selection:
+            start, end = self._content_html_expand_selection_to_atoms(*selection)
+            if (start, end) != selection:
+                return self._delete_content_html_atom(start, end)
+            return None
+        atom = self._content_html_atomic_tag_range_at(self.content_html_text.index(tk.INSERT))
+        return self._delete_content_html_atom(*atom) if atom else None
+
     def _show_content_html_tag_tooltip(self, event: tk.Event) -> None:
         if self.content_html_source_mode:
             self._hide_tooltip()
@@ -2753,6 +2879,12 @@ class AToolApp:
                 if raw:
                     self._edit_content_html_structure(kind, raw, tag_name, index)
                     return "break"
+            if styles.get("comms"):
+                self._edit_content_html_structure("comms", styles["comms"], tag_name, index)
+                return "break"
+            if styles.get("field"):
+                self._edit_content_html_structure("comms", self._content_field_tag(styles["field"]), tag_name, index)
+                return "break"
         return None
 
     def _content_html_tag_range_at(self, tag_name: str, index: str) -> tuple[str, str] | None:
@@ -2768,8 +2900,10 @@ class AToolApp:
             return
         if kind == "comms-cond":
             self._edit_content_condition(raw, tag_name, text_range)
-        else:
+        elif kind == "comms-loop":
             self._edit_content_loop(raw, tag_name, text_range)
+        else:
+            self._edit_content_data(raw, tag_name, text_range)
 
     def _replace_content_html_structure(self, old_tag: str, text_range: tuple[str, str], kind: str, raw: str, label: str) -> None:
         start, end = text_range
@@ -2782,14 +2916,9 @@ class AToolApp:
         self._on_content_editor_changed()
 
     def _edit_content_condition(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
-        match = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
-        if not match:
+        payload = ContentHtmlParser.condition_payload(raw)
+        if payload is None:
             messagebox.showinfo("Condition", "This Condition has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
-            return
-        try:
-            payload = json.loads(match.group(1))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            messagebox.showinfo("Condition", "This Condition could not be parsed. Edit it in Source HTML.", parent=self.content_window)
             return
         dialog = self._create_toplevel(self.content_window)
         dialog.title("Edit Condition")
@@ -2799,12 +2928,29 @@ class AToolApp:
         frame.grid(sticky="nsew")
         frame.columnconfigure(1, weight=1)
         condition_var = tk.StringVar(value=str(payload.get("Condition", "")))
-        text_var = tk.StringVar(value=str(payload.get("Text", "")))
-        content_var = tk.StringVar(value=str(payload.get("Content", "")))
-        for row, (label, variable) in enumerate((("Condition:", condition_var), ("Text:", text_var), ("Content:", content_var))):
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=(0 if row == 0 else 8, 0))
-            ttk.Entry(frame, textvariable=variable, width=58).grid(row=row, column=1, sticky="ew", pady=(0 if row == 0 else 8, 0))
-        ttk.Label(frame, text="Use Text for inline content or Content to reference another Content item.", wraplength=440).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        target_type_var = tk.StringVar(value="Text" if "Text" in payload else "Content")
+        target_values = {
+            "Text": str(payload.get("Text", "")),
+            "Content": str(payload.get("Content", "")),
+        }
+        target_var = tk.StringVar(value=target_values[target_type_var.get()])
+        target_label_var = tk.StringVar(value=f"{target_type_var.get()}:")
+        ttk.Label(frame, text="Condition:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Entry(frame, textvariable=condition_var, width=58).grid(row=0, column=1, sticky="ew")
+        ttk.Label(frame, text="Target type:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        target_type = ttk.Combobox(frame, textvariable=target_type_var, values=("Text", "Content"), state="readonly", width=14)
+        target_type.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=target_label_var).grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Entry(frame, textvariable=target_var, width=58).grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        def change_target_type(_event: tk.Event | None = None) -> None:
+            target_values[target_label_var.get().rstrip(":")] = target_var.get()
+            selected = target_type_var.get()
+            target_label_var.set(f"{selected}:")
+            target_var.set(target_values[selected])
+
+        target_type.bind("<<ComboboxSelected>>", change_target_type)
+        ttk.Label(frame, text="Text inserts inline content; Content references another Content item.", wraplength=440).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
         buttons = ttk.Frame(frame)
         buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
@@ -2815,20 +2961,19 @@ class AToolApp:
                 messagebox.showerror("Condition", "Condition is required.", parent=dialog)
                 return
             payload["Condition"] = condition
-            if text_var.get().strip():
-                payload["Text"] = text_var.get()
-                payload.pop("Content", None)
-            elif content_var.get().strip():
-                payload["Content"] = content_var.get().strip()
-                payload.pop("Text", None)
-            else:
-                messagebox.showerror("Condition", "Enter Text or Content.", parent=dialog)
+            target_type_name = target_type_var.get()
+            target_value = target_var.get()
+            if not target_value.strip():
+                messagebox.showerror("Condition", f"{target_type_name} is required.", parent=dialog)
                 return
+            payload[target_type_name] = target_value if target_type_name == "Text" else target_value.strip()
+            payload.pop("Content" if target_type_name == "Text" else "Text", None)
             updated = f'<comms-cond>$Cond{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-cond>'
             self._replace_content_html_structure(tag_name, text_range, "comms-cond", updated, ContentHtmlParser._structure_label("cond", updated))
             dialog.destroy()
 
         ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+        self._center_content_chip_dialog(dialog)
 
     def _edit_content_loop(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
         dialog = self._create_toplevel(self.content_window)
@@ -2856,6 +3001,78 @@ class AToolApp:
             dialog.destroy()
 
         ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+        self._center_content_chip_dialog(dialog)
+
+    def _edit_content_data(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        payload = ContentHtmlParser.data_payload(raw)
+        if payload is None:
+            messagebox.showinfo("Data field", "This data tag has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
+            return
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Data Field")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+        field_var = tk.StringVar(value=str(payload.get("Id", "")))
+        type_options = ("(none)", "String", "Decimal", "Date", "DateTime", "Image", "PDF")
+        selected_type = str(payload.get("Type", "")) or "(none)"
+        type_var = tk.StringVar(value=selected_type)
+        format_var = tk.StringVar(value=str(payload.get("Format", "")))
+        format_presets = {
+            "(none)": (),
+            "String": (),
+            "Decimal": ("$#,##0.00", "#,##0.00", "($#,##0.00)", "#,##0.00;(#,##0.00);0.00"),
+            "Date": ("MM-dd-yyyy", "MM/dd/yyyy", "MMM dd, yyyy", "yyyy-MM-dd"),
+            "DateTime": ("yyyy-MM-dd-'T'-HH-mm-ss-SSS z",),
+            "Image": (),
+            "PDF": (),
+        }
+        ttk.Label(frame, text="Field:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        field_entry = ttk.Entry(frame, textvariable=field_var, width=58)
+        field_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(frame, text="Type:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        type_menu = ttk.Combobox(frame, textvariable=type_var, values=type_options, state="readonly", width=14)
+        type_menu.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(frame, text="Format:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        format_menu = ttk.Combobox(frame, textvariable=format_var, values=format_presets.get(selected_type, ()), width=42)
+        format_menu.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        def update_format_options(_event: tk.Event | None = None) -> None:
+            format_menu.configure(values=format_presets.get(type_var.get(), ()))
+
+        type_menu.bind("<<ComboboxSelected>>", update_format_options)
+        ttk.Label(
+            frame,
+            text="Format suggestions follow Communication Service documentation. You can type a different valid format.",
+            wraplength=460,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            field_name = field_var.get().strip()
+            if not field_name:
+                messagebox.showerror("Data field", "Field is required.", parent=dialog)
+                return
+            payload["Id"] = field_name
+            if type_var.get() == "(none)":
+                payload.pop("Type", None)
+            else:
+                payload["Type"] = type_var.get()
+            if format_var.get().strip():
+                payload["Format"] = format_var.get()
+            else:
+                payload.pop("Format", None)
+            updated = f'<comms-data>$Data{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-data>'
+            self._replace_content_html_structure(tag_name, text_range, "comms", updated, f"${field_name}")
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+        self._center_content_chip_dialog(dialog)
+        field_entry.focus_set()
 
     def _toggle_content_html_tag(self, style: str) -> None:
         if self.content_html_source_mode:
@@ -2964,6 +3181,30 @@ class AToolApp:
         if self.content_browser_filter_var.get() == "Filter by name or description":
             self.content_browser_filter_var.set("")
             self.content_filter_entry.configure(foreground="#000000")
+
+    def _schedule_content_list_actions_reflow(self, _event: tk.Event | None = None) -> None:
+        if self._content_list_actions_reflow_job is not None:
+            self.content_window.after_cancel(self._content_list_actions_reflow_job)
+        self._content_list_actions_reflow_job = self.content_window.after_idle(self._reflow_content_list_actions)
+
+    def _reflow_content_list_actions(self) -> None:
+        """Wrap Content browser actions instead of clipping them in a narrow pane."""
+        self._content_list_actions_reflow_job = None
+        available_width = self.content_list_actions.winfo_width()
+        if available_width <= 1:
+            return
+        row = column = used_width = 0
+        gap = 6
+        for button in self._content_list_action_buttons:
+            button_width = button.winfo_reqwidth()
+            needed_width = button_width if column == 0 else gap + button_width
+            if column and used_width + needed_width > available_width:
+                row += 1
+                column = used_width = 0
+                needed_width = button_width
+            button.grid_configure(row=row, column=column, padx=(0 if column == 0 else gap, 0), pady=(0, 4 if row else 0))
+            used_width += needed_width
+            column += 1
 
     def _restore_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
         if not self.content_browser_filter_var.get().strip():
@@ -3103,6 +3344,25 @@ class AToolApp:
     def _on_content_browser_loaded(self, result: dict[str, object]) -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
             return
+        # The list response resolves the Config ID authoritatively. Refresh a
+        # stale saved label so the manager never says one Config while querying
+        # another.
+        resolved_config = result.get("configId")
+        if self._content_browser_scope == "config" and isinstance(resolved_config, dict):
+            active_id = self._get_last_occs_config_id()
+            resolved_id = str(resolved_config.get("id", resolved_config.get("resolved", ""))).strip()
+            resolved_label = str(resolved_config.get("shortName", resolved_config.get("name", ""))).strip()
+            if (
+                active_id
+                and resolved_id
+                and self._normalize_occs_config_id(active_id) == self._normalize_occs_config_id(resolved_id)
+                and resolved_label
+                and resolved_label != self._active_occs_config_display_name()
+            ):
+                section = self._occs_settings_section()
+                section["active_config_label"] = resolved_label
+                self._save_user_settings()
+                self._refresh_app_menus()
         contents = result.get("contents")
         values = [item for item in contents if isinstance(item, dict)] if isinstance(contents, list) else []
         for item_id in self.content_browser_tree.get_children():
@@ -3484,7 +3744,7 @@ class AToolApp:
         else:
             args = ["content", "save", short_name, version, "--config-id", config_id, "--html", temporary_html.name,
                     "--short-name", short_name, "--name", self.content_name_var.get().strip(),
-                    "--desc", self.content_description_var.get().strip(), "--new-version", version,
+                    "--desc", self.content_description_var.get().strip(),
                     "--version-desc", self.content_version_description_var.get().strip()]
         if mode == "create":
             args.extend(["--effective-date", effective_date])
@@ -7466,7 +7726,14 @@ class AToolApp:
 
     def _set_last_occs_config_id(self, config_id: str) -> None:
         section = self._occs_settings_section()
-        section["last_config_id"] = str(config_id or "").strip()
+        previous_id = str(section.get("last_config_id", "")).strip()
+        updated_id = str(config_id or "").strip()
+        section["last_config_id"] = updated_id
+        # This helper is sometimes called with only an ID (for example after a
+        # publish retry). Do not leave the previous config's friendly name
+        # displayed beside a different ID.
+        if self._normalize_occs_config_id(previous_id) != self._normalize_occs_config_id(updated_id):
+            section["active_config_label"] = ""
         self._save_user_settings()
 
     def _active_occs_config_display_name(self) -> str:
@@ -13910,7 +14177,7 @@ class AToolApp:
             if not config_id:
                 messagebox.showerror("Publish Package to Comms", "Choose a configuration.", parent=dialog)
                 return
-            self._set_last_occs_config_id(config_id)
+            self._set_active_occs_config(config_by_label[raw_value])
             dialog.destroy()
             self._run_occs_save_dry_run(config_id)
 
@@ -14183,7 +14450,7 @@ class AToolApp:
         short_name = str(config_data.get("shortName", "")).strip()
         config_id = str(config_data.get("id", "")).strip()
         label = self._format_occs_config_label({"shortName": short_name, "id": config_id})
-        self._set_last_occs_config_id(config_id or short_name)
+        self._set_active_occs_config({"id": config_id, "shortName": short_name})
         self._show_temporary_status("Config created", duration_ms=5000)
         messagebox.showinfo(
             "Create Config",
