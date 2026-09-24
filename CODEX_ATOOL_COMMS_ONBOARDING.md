@@ -181,11 +181,32 @@ include:
 - `Package -> Open Raw AT...`
 - `Package -> Preview...`
 - `Data -> Convert and Map...`
+- `Config -> Lock`
+- `Config -> Lockouts...`
 - `Config -> Close...`
 - `Config -> Migrate`
 
 User settings include OCCS session aliases so package, preview, conversion,
 config close, and migration commands run against the intended Comms environment.
+
+### Config Locks And Lockouts
+
+ATool has a shared, ATool-only lifecycle protection record at
+`<Shared Package Folder>/config-lockouts.json`. OCCS CLI and Comms do not know
+about this record.
+
+- A Config lock protects one named active/selected configuration. It can be
+  toggled through `Config -> Lock` or the configuration list's lock button.
+- A time-based lockout protects all Config close and migration operations for
+  its specified start, timezone, and duration. Manage windows through
+  `Config -> Lockouts...`; expired windows remain visible in grey.
+- The Config list's Lock column shows `🔒` for a protected configuration.
+- ATool reads the record whenever close or migration is attempted, and again
+  immediately before migration runs. Shared-folder sync checks apply before
+  the record is changed.
+
+Keep internal IDs in the file and command arguments only. User-facing ATool UI
+should use the Config short name or name, never an OCCS Config ID/UUID.
 
 ## Trigger Debugging Workflow
 

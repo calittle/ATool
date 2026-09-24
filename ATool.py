@@ -1,6 +1,7 @@
 import hashlib
 import getpass
 import json
+import calendar
 import os
 import platform
 import re
@@ -22,7 +23,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import colorchooser, filedialog, font as tkfont, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.condition_evaluator import ConditionEvaluator
 
@@ -567,7 +568,7 @@ class AToolApp:
         config_menu.add_command(
             label="Lock",
             command=self.toggle_active_occs_config_lock,
-            state=tk.NORMAL if self._get_last_occs_config_id() else tk.DISABLED,
+            state=tk.NORMAL if self._active_occs_config_display_name() else tk.DISABLED,
         )
         config_menu.add_command(label="Lockouts...", command=self.open_occs_config_lockouts_dialog)
         config_menu.add_separator()
@@ -7112,7 +7113,7 @@ class AToolApp:
         )
         config_target_session_alias_entry.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config ID Filter:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Configuration Filter:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
         config_id_filter_entry.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
@@ -7307,7 +7308,7 @@ class AToolApp:
                 except re.error as error:
                     messagebox.showerror(
                         "User Settings",
-                        f"Config ID Filter is not a valid regular expression.\n\nDetails: {error}",
+                        f"Configuration Filter is not a valid regular expression.\n\nDetails: {error}",
                         parent=dialog,
                     )
                     return
@@ -7729,7 +7730,7 @@ class AToolApp:
     def _normalize_occs_config_id(config_id: str) -> str:
         return str(config_id or "").strip().casefold()
 
-    def _active_occs_config_lockout_message(self, config_id: str) -> str:
+    def _active_occs_config_lockout_message(self, config_id: str, display_name: str = "") -> str:
         """Return an explanation when an operation must not close or migrate."""
         payload = self._read_occs_config_lockouts()
         normalized_id = self._normalize_occs_config_id(config_id)
@@ -7739,7 +7740,7 @@ class AToolApp:
             if isinstance(value, str)
         }
         if normalized_id and normalized_id in locked_ids:
-            return f"Config ID {config_id} is locked in the shared ATool lockout file."
+            return f"Config {display_name or self._occs_config_display_name(config_id)} is locked in the shared ATool lockout file."
         now = datetime.now(timezone.utc)
         for window in payload["lockout_windows"]:
             if not isinstance(window, dict):
@@ -7758,8 +7759,8 @@ class AToolApp:
                 )
         return ""
 
-    def _prevent_occs_config_lifecycle_action(self, action: str, config_id: str) -> bool:
-        message = self._active_occs_config_lockout_message(config_id)
+    def _prevent_occs_config_lifecycle_action(self, action: str, config_id: str, display_name: str = "") -> bool:
+        message = self._active_occs_config_lockout_message(config_id, display_name)
         if not message:
             return False
         messagebox.showerror(
@@ -7770,29 +7771,36 @@ class AToolApp:
 
     def toggle_active_occs_config_lock(self) -> None:
         config_id = self._get_last_occs_config_id()
-        if not config_id:
-            messagebox.showinfo("Lock Config", "Choose Config > Set… before locking a Config ID.")
+        config_name = self._active_occs_config_display_name()
+        if not config_id or not config_name:
+            messagebox.showinfo("Lock Config", "Choose Config > Set… before locking a configuration.")
             return
-        self._toggle_occs_config_lock(config_id)
+        self._toggle_occs_config_lock(config_id, display_name=config_name)
 
-    def _toggle_occs_config_lock(self, config_id: str, parent: tk.Misc | None = None) -> None:
+    def _toggle_occs_config_lock(
+        self,
+        config_id: str,
+        parent: tk.Misc | None = None,
+        display_name: str = "",
+    ) -> None:
+        config_name = display_name or self._occs_config_display_name(config_id)
         payload = self._read_occs_config_lockouts()
         normalized_id = self._normalize_occs_config_id(config_id)
         locked_ids = [value for value in payload["locked_config_ids"] if isinstance(value, str)]
         existing = next((value for value in locked_ids if self._normalize_occs_config_id(value) == normalized_id), None)
         if existing:
-            if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from Config ID {existing}?", parent=parent):
+            if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from {config_name}?", parent=parent):
                 return
             payload["locked_config_ids"] = [value for value in locked_ids if self._normalize_occs_config_id(value) != normalized_id]
             action, status = "remove this shared Config lock", "unlocked"
         else:
-            if not messagebox.askyesno("Lock Config", f"Lock Config ID {config_id}?\n\nATool will prevent closing or migrating it.", parent=parent):
+            if not messagebox.askyesno("Lock Config", f"Lock {config_name}?\n\nATool will prevent closing or migrating it.", parent=parent):
                 return
             locked_ids.append(config_id.strip())
             payload["locked_config_ids"] = locked_ids
             action, status = "create this shared Config lock", "locked"
         if self._write_occs_config_lockouts(payload, action):
-            self._show_temporary_status(f"Config ID {config_id} {status}", duration_ms=5000)
+            self._show_temporary_status(f"{config_name} {status}", duration_ms=5000)
 
     def open_occs_config_lockouts_dialog(self) -> None:
         dialog = self._create_toplevel(self.root)
@@ -7866,31 +7874,89 @@ class AToolApp:
         dialog.grab_set()
         frame = ttk.Frame(dialog, padding=14)
         frame.pack(fill=tk.BOTH, expand=True)
-        start_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d %H:%M"))
-        timezone_var = tk.StringVar(value="UTC")
+        date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        time_var = tk.StringVar(value="24H:MM")
+        supported_timezones = sorted(available_timezones())
+        local_zone = datetime.now().astimezone().tzinfo
+        local_zone_name = getattr(local_zone, "key", "") if local_zone else ""
+        timezone_var = tk.StringVar(value=local_zone_name if local_zone_name in supported_timezones else "UTC")
         duration_var = tk.StringVar(value="60")
-        for row, (label, variable, note) in enumerate((("Start:", start_var, "YYYY-MM-DD HH:MM"), ("Timezone:", timezone_var, "IANA name, e.g. America/New_York"), ("Duration (minutes):", duration_var, ""))):
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
-            ttk.Entry(frame, textvariable=variable, width=32).grid(row=row, column=1, sticky="ew", pady=(0, 8))
-            if note:
-                ttk.Label(frame, text=note).grid(row=row, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        local_time_var = tk.StringVar(value="Local start and end times will appear here.")
+        ttk.Label(frame, text="Date:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=date_var, width=16).grid(row=0, column=1, sticky="w", pady=(0, 8))
+        ttk.Button(
+            frame,
+            text="Choose...",
+            command=lambda: self._open_occs_config_lockout_date_picker(dialog, date_var),
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        ttk.Label(frame, text="Time:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        time_entry = tk.Entry(frame, textvariable=time_var, width=16, foreground="#777777")
+        time_entry.grid(row=1, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="24-hour time").grid(row=1, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        ttk.Label(frame, text="Timezone:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        timezone_combo = ttk.Combobox(
+            frame,
+            textvariable=timezone_var,
+            values=supported_timezones,
+            state="readonly",
+            width=29,
+        )
+        timezone_combo.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(frame, text="Duration (minutes):").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=duration_var, width=16).grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, textvariable=local_time_var, justify=tk.LEFT).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 8))
+
+        def _clear_time_placeholder(_event: tk.Event) -> None:
+            if time_var.get() == "24H:MM":
+                time_var.set("")
+                time_entry.configure(foreground="#000000")
+
+        def _restore_time_placeholder(_event: tk.Event) -> None:
+            if not time_var.get().strip():
+                time_var.set("24H:MM")
+                time_entry.configure(foreground="#777777")
+
+        time_entry.bind("<FocusIn>", _clear_time_placeholder)
+        time_entry.bind("<FocusOut>", _restore_time_placeholder)
+
+        def _start_and_end() -> tuple[datetime, datetime]:
+            time_text = time_var.get().strip()
+            if time_text == "24H:MM":
+                raise ValueError("Time is required.")
+            zone = ZoneInfo(timezone_var.get().strip())
+            start = datetime.strptime(f"{date_var.get().strip()} {time_text}", "%Y-%m-%d %H:%M").replace(tzinfo=zone)
+            duration_minutes = int(duration_var.get().strip())
+            if duration_minutes <= 0:
+                raise ValueError("Duration must be greater than zero.")
+            return start, start + timedelta(minutes=duration_minutes)
+
+        def _update_local_times(*_args: object) -> None:
+            try:
+                start, end = _start_and_end()
+            except (ValueError, ZoneInfoNotFoundError):
+                local_time_var.set("Local start and end times will appear here.")
+                return
+            local_time_var.set(
+                "Your local time:\n"
+                f"Start: {start.astimezone().strftime('%Y-%m-%d %H:%M %Z')}\n"
+                f"End:   {end.astimezone().strftime('%Y-%m-%d %H:%M %Z')}"
+            )
+
+        for variable in (date_var, time_var, timezone_var, duration_var):
+            variable.trace_add("write", _update_local_times)
 
         def _save() -> None:
             try:
                 zone_name = timezone_var.get().strip()
-                zone = ZoneInfo(zone_name)
-                start = datetime.strptime(start_var.get().strip(), "%Y-%m-%d %H:%M").replace(tzinfo=zone)
-                duration_minutes = int(duration_var.get().strip())
-                if duration_minutes <= 0:
-                    raise ValueError("Duration must be greater than zero.")
+                start, end = _start_and_end()
             except (ValueError, ZoneInfoNotFoundError) as error:
-                messagebox.showerror("Add Config Lockout", f"Enter a valid start, IANA timezone, and positive duration.\n\nDetails: {error}", parent=dialog)
+                messagebox.showerror("Add Config Lockout", f"Enter a valid date, 24-hour time, timezone, and positive duration.\n\nDetails: {error}", parent=dialog)
                 return
             payload = self._read_occs_config_lockouts()
             windows = payload["lockout_windows"]
             if not isinstance(windows, list):
                 windows = []
-            windows.append({"start": start.isoformat(), "end": (start + timedelta(minutes=duration_minutes)).isoformat(), "timezone": zone_name})
+            windows.append({"start": start.isoformat(), "end": end.isoformat(), "timezone": zone_name})
             payload["lockout_windows"] = windows
             if self._write_occs_config_lockouts(payload, "add this shared Config lockout"):
                 dialog.destroy()
@@ -7898,9 +7964,65 @@ class AToolApp:
                     on_complete()
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=3, column=0, columnspan=3, sticky="e", pady=(6, 0))
+        button_frame.grid(row=5, column=0, columnspan=3, sticky="e", pady=(6, 0))
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(button_frame, text="Add Lockout", command=_save).grid(row=0, column=1)
+
+    def _open_occs_config_lockout_date_picker(self, parent: tk.Misc, date_var: tk.StringVar) -> None:
+        """Small dependency-free calendar picker for a lockout start date."""
+        try:
+            selected = datetime.strptime(date_var.get().strip(), "%Y-%m-%d")
+        except ValueError:
+            selected = datetime.now()
+        visible_year, visible_month = selected.year, selected.month
+        dialog = self._create_toplevel(parent)
+        dialog.title("Choose Lockout Date")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        month_label = ttk.Label(frame, anchor="center")
+        month_label.grid(row=0, column=1, columnspan=5, sticky="ew", pady=(0, 6))
+        days_frame = ttk.Frame(frame)
+        days_frame.grid(row=1, column=0, columnspan=7)
+
+        def _render() -> None:
+            nonlocal visible_year, visible_month
+            month_label.configure(text=f"{calendar.month_name[visible_month]} {visible_year}")
+            for child in days_frame.winfo_children():
+                child.destroy()
+            for column, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+                ttk.Label(days_frame, text=name, width=4, anchor="center").grid(row=0, column=column, pady=(0, 3))
+            for row, week in enumerate(calendar.monthcalendar(visible_year, visible_month), start=1):
+                for column, day in enumerate(week):
+                    if not day:
+                        ttk.Label(days_frame, text="", width=4).grid(row=row, column=column)
+                        continue
+                    ttk.Button(
+                        days_frame,
+                        text=str(day),
+                        width=3,
+                        command=lambda picked_day=day: _choose(picked_day),
+                    ).grid(row=row, column=column, padx=1, pady=1)
+
+        def _previous() -> None:
+            nonlocal visible_year, visible_month
+            visible_year, visible_month = (visible_year - 1, 12) if visible_month == 1 else (visible_year, visible_month - 1)
+            _render()
+
+        def _next() -> None:
+            nonlocal visible_year, visible_month
+            visible_year, visible_month = (visible_year + 1, 1) if visible_month == 12 else (visible_year, visible_month + 1)
+            _render()
+
+        def _choose(day: int) -> None:
+            date_var.set(f"{visible_year:04d}-{visible_month:02d}-{day:02d}")
+            dialog.destroy()
+
+        ttk.Button(frame, text="‹", width=3, command=_previous).grid(row=0, column=0, sticky="w")
+        ttk.Button(frame, text="›", width=3, command=_next).grid(row=0, column=6, sticky="e")
+        _render()
 
     def _get_occs_models_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -12801,7 +12923,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            f"Loading Comms Config IDs from {source_session}...",
+            f"Loading Comms configurations from {source_session}...",
             lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
             on_failure=self._on_occs_config_list_failed,
         )
@@ -13706,11 +13828,11 @@ class AToolApp:
     def _on_occs_config_list_failed(self, error: Exception) -> None:
         messagebox.showerror(
             "Publish Package to Comms",
-            "Could not load open Config IDs from Comms.\n\n"
+            "Could not load open configurations from Comms.\n\n"
             f"Details: {error}\n\n"
-            "Publishing was canceled because a valid open Config ID could not be confirmed.",
+            "Publishing was canceled because a valid open configuration could not be confirmed.",
         )
-        self._show_temporary_status("Comms publish canceled: Config IDs unavailable", duration_ms=5000)
+        self._show_temporary_status("Comms publish canceled: configurations unavailable", duration_ms=5000)
 
     def _open_occs_save_dialog(self, configs: list[dict[str, str]]) -> None:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
@@ -13721,10 +13843,10 @@ class AToolApp:
         if not configs:
             messagebox.showerror(
                 "Publish Package to Comms",
-                "No valid open Config IDs are available from Comms.\n\n"
-                "Publishing was canceled. Check the configured Config ID Filter and try again.",
+                "No valid open configurations are available from Comms.\n\n"
+                "Publishing was canceled. Check the configured Configuration Filter and try again.",
             )
-            self._show_temporary_status("Comms publish canceled: no valid open Config IDs", duration_ms=5000)
+            self._show_temporary_status("Comms publish canceled: no valid open configurations", duration_ms=5000)
             return
 
         dialog = self._create_toplevel(self.root)
@@ -13766,7 +13888,7 @@ class AToolApp:
             initial_selection = labels[0]
         config_var = tk.StringVar(value=initial_selection)
 
-        ttk.Label(container, text="Config ID:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Configuration:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_combo = ttk.Combobox(
             container,
             textvariable=config_var,
@@ -13784,7 +13906,7 @@ class AToolApp:
             raw_value = config_var.get().strip()
             config_id = self._occs_config_id_from_selection(raw_value, config_by_label)
             if not config_id:
-                messagebox.showerror("Publish Package to Comms", "Config ID is required.", parent=dialog)
+                messagebox.showerror("Publish Package to Comms", "Choose a configuration.", parent=dialog)
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
@@ -13910,13 +14032,12 @@ class AToolApp:
         if locked_config.strip().lower() == str(attempted_config_id).strip().lower():
             messagebox.showerror(
                 "Publish Package to Comms",
-                f"Package {package_name} is locked under Config {locked_config}, but that Config ID was already used.\n\n"
-                f"Details: {error}",
+                f"Package {package_name} is locked under the selected configuration, but that configuration was already used.",
             )
             return
         if not messagebox.askokcancel(
             "Package Locked",
-            f"Package {package_name} is locked under Config {locked_config}.\n\nUse that Config ID and retry?",
+            f"Package {package_name} is locked under another configuration.\n\nUse that configuration and retry?",
         ):
             return
         self._resolve_locked_occs_config_and_retry(locked_config, retry_stage)
@@ -13936,7 +14057,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            "Resolving locked Config ID...",
+            "Resolving locked configuration...",
             lambda result, lock_name=locked_config, stage=retry_stage: self._retry_occs_package_save_with_locked_config(
                 self._normalize_occs_configs(result),
                 lock_name,
@@ -14021,7 +14142,7 @@ class AToolApp:
             description = description_var.get().strip()
             if not messagebox.askyesno(
                 "Confirm Create Config",
-                f"Create open Config ID in {session_label}?\n\n{short_name}",
+                f"Create open configuration in {session_label}?\n\n{short_name}",
                 parent=dialog,
             ):
                 return
@@ -14038,7 +14159,7 @@ class AToolApp:
                     "--timeout",
                     str(self._get_occs_request_timeout_ms()),
                 ],
-                f"Creating Config ID {short_name}...",
+                f"Creating configuration {short_name}...",
                 lambda result, selected_session=session_label: self._on_occs_config_create_complete(
                     result,
                     selected_session,
@@ -14062,10 +14183,9 @@ class AToolApp:
         label = self._format_occs_config_label({"shortName": short_name, "id": config_id})
         self._set_last_occs_config_id(config_id or short_name)
         self._show_temporary_status("Config created", duration_ms=5000)
-        detail = f"\n\nConfig ID: {config_id}" if config_id else ""
         messagebox.showinfo(
             "Create Config",
-            f"Created open Config in {session_label}:\n\n{label or 'Config'}{detail}",
+            f"Created open Config in {session_label}:\n\n{label or 'Config'}",
         )
 
     def list_occs_configs(self) -> None:
@@ -14075,7 +14195,7 @@ class AToolApp:
         session_alias = self._get_occs_session_alias()
         self._run_occs_json_command_async(
             ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
-            "Listing open Config IDs...",
+            "Listing open configurations...",
             lambda result, selected_session=session_alias: self._open_occs_config_list_dialog(
                 self._normalize_occs_configs(result),
                 selected_session,
@@ -14089,14 +14209,14 @@ class AToolApp:
             return
         self._run_occs_json_command_async(
             ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
-            "Listing open Config IDs...",
+            "Listing open configurations...",
             lambda result: self._open_active_occs_config_dialog(self._normalize_occs_configs(result)),
             on_failure=lambda error: messagebox.showerror("Set Config", str(error)),
         )
 
     def _open_active_occs_config_dialog(self, configs: list[dict[str, str]]) -> None:
         if not configs:
-            messagebox.showinfo("Set Config", "No open Config IDs were returned by OCCS.")
+            messagebox.showinfo("Set Config", "No open configurations were returned by OCCS.")
             return
         dialog = self._create_toplevel(self.root)
         dialog.title("Set Active Config")
@@ -14129,7 +14249,7 @@ class AToolApp:
 
     def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
         dialog = self._create_toplevel(self.root)
-        dialog.title("Open Config IDs")
+        dialog.title("Open Configurations")
         dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
@@ -14153,17 +14273,17 @@ class AToolApp:
         filter_entry = ttk.Entry(filter_frame, textvariable=filter_var)
         filter_entry.grid(row=0, column=1, sticky="ew")
 
-        columns = ("id", "short_name", "name", "description", "status", "effective_at")
+        columns = ("locked", "short_name", "name", "description", "status", "effective_at")
         tree = ttk.Treeview(container, columns=columns, show="headings", height=min(max(len(configs), 6), 18))
         headings = {
-            "id": "Config ID",
+            "locked": "Lock",
             "short_name": "Short Name",
             "name": "Name",
             "description": "Description",
             "status": "Status",
             "effective_at": "Effective At",
         }
-        widths = {"id": 110, "short_name": 170, "name": 200, "description": 300, "status": 100, "effective_at": 165}
+        widths = {"locked": 55, "short_name": 170, "name": 200, "description": 300, "status": 100, "effective_at": 165}
         for column in columns:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths[column], stretch=column in {"name", "description"})
@@ -14176,9 +14296,9 @@ class AToolApp:
         buttons = ttk.Frame(container)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
-        lock_config_button = ttk.Button(buttons, text="Lock Config ID", state=tk.DISABLED)
+        lock_config_button = ttk.Button(buttons, text="Lock Configuration", state=tk.DISABLED)
         lock_config_button.grid(row=0, column=1, padx=(0, 8))
-        close_config_button = ttk.Button(buttons, text="Close Config ID", state=tk.DISABLED)
+        close_config_button = ttk.Button(buttons, text="Close Configuration", state=tk.DISABLED)
         close_config_button.grid(row=0, column=2)
 
         def _selected_config() -> dict[str, str] | None:
@@ -14189,7 +14309,7 @@ class AToolApp:
             config = _selected_config()
             close_config_button.configure(state=tk.NORMAL if config is not None else tk.DISABLED)
             if config is None:
-                lock_config_button.configure(state=tk.DISABLED, text="Lock Config ID")
+                lock_config_button.configure(state=tk.DISABLED, text="Lock Configuration")
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
             locked_ids = self._read_occs_config_lockouts()["locked_config_ids"]
@@ -14197,7 +14317,7 @@ class AToolApp:
                 self._normalize_occs_config_id(str(value)) == self._normalize_occs_config_id(config_id)
                 for value in locked_ids
             )
-            lock_config_button.configure(state=tk.NORMAL, text="Unlock Config ID" if is_locked else "Lock Config ID")
+            lock_config_button.configure(state=tk.NORMAL, text="Unlock Configuration" if is_locked else "Lock Configuration")
 
         def _config_sort_key(config: dict[str, str]) -> tuple[int, int | str]:
             config_id = config.get("id", "").strip()
@@ -14221,19 +14341,24 @@ class AToolApp:
             ]
             count_label.configure(
                 text=(
-                    f"{len(displayed_configs)} of {len(configs)} open Config ID"
+                    f"{len(displayed_configs)} of {len(configs)} open configuration"
                     f"{'s' if len(configs) != 1 else ''} in {session_label}"
                 )
             )
             for item_id in tree.get_children():
                 tree.delete(item_id)
             config_by_item.clear()
+            locked_ids = {
+                self._normalize_occs_config_id(str(value))
+                for value in self._read_occs_config_lockouts()["locked_config_ids"]
+            }
             for config in displayed_configs:
+                config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
                 item_id = tree.insert(
                     "",
                     tk.END,
                     values=(
-                        config.get("id", ""),
+                        "🔒" if self._normalize_occs_config_id(config_id) in locked_ids else "",
                         config.get("shortName", ""),
                         config.get("name", ""),
                         config.get("description", ""),
@@ -14250,18 +14375,18 @@ class AToolApp:
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
             if not config_id:
-                messagebox.showerror("Close Config", "The selected Config ID has no usable ID.", parent=dialog)
+                messagebox.showerror("Close Config", "The selected configuration cannot be used.", parent=dialog)
                 return
             label = self._format_occs_config_label(config) or config_id
             if not messagebox.askyesno(
                 "Confirm Close Config",
-                f"Close Config ID in {session_label}?\n\n{label}",
+                f"Close configuration in {session_label}?\n\n{label}",
                 parent=dialog,
             ):
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
-            self._run_occs_config_close(session_alias, config_id)
+            self._run_occs_config_close(session_alias, config_id, label)
 
         close_config_button.configure(command=_close_selected_config)
         def _toggle_selected_lock() -> None:
@@ -14270,7 +14395,7 @@ class AToolApp:
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
             if config_id:
-                self._toggle_occs_config_lock(config_id, dialog)
+                self._toggle_occs_config_lock(config_id, dialog, self._format_occs_config_label(config))
                 _update_close_button()
 
         lock_config_button.configure(command=_toggle_selected_lock)
@@ -14293,7 +14418,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            f"Loading Config IDs from {source_session}...",
+            f"Loading configurations from {source_session}...",
             lambda result, selected_session=source_session: self._open_occs_config_close_dialog(
                 self._normalize_occs_configs(result),
                 selected_session,
@@ -14307,9 +14432,9 @@ class AToolApp:
     def _on_occs_config_close_list_failed(self, error: Exception, source_session: str) -> None:
         if not messagebox.askyesno(
             "Close Config",
-            f"Could not load open Config IDs from {source_session}.\n\n"
+            f"Could not load open configurations from {source_session}.\n\n"
             f"Details: {error}\n\n"
-            "Continue with manual Config ID entry?",
+            "Continue with manual configuration entry?",
         ):
             return
         self._open_occs_config_close_dialog([], source_session)
@@ -14337,7 +14462,7 @@ class AToolApp:
         }
         config_var = tk.StringVar(value=self._initial_occs_config_selection(labels, configs))
 
-        ttk.Label(container, text="Config ID:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Configuration:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_combo = ttk.Combobox(
             container,
             textvariable=config_var,
@@ -14355,17 +14480,19 @@ class AToolApp:
             raw_value = config_var.get().strip()
             config_id = self._occs_config_close_id_from_selection(raw_value, config_by_label)
             if not config_id:
-                messagebox.showerror("Close Config", "Config ID is required.", parent=dialog)
+                messagebox.showerror("Close Config", "Choose a configuration.", parent=dialog)
                 return
+            selected_config = config_by_label.get(raw_value)
+            config_name = self._format_occs_config_label(selected_config) if selected_config else raw_value
             if not messagebox.askyesno(
                 "Confirm Close Config",
-                f"Close Config ID in {source_session}?\n\n{config_id}",
+                f"Close configuration in {source_session}?\n\n{config_name or 'the selected configuration'}",
                 parent=dialog,
             ):
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
-            self._run_occs_config_close(source_session, config_id)
+            self._run_occs_config_close(source_session, config_id, config_name)
 
         ttk.Button(buttons, text="Close", command=_submit).grid(row=0, column=1)
         config_combo.focus_set()
@@ -14374,8 +14501,9 @@ class AToolApp:
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
-    def _run_occs_config_close(self, source_session: str, config_id: str) -> None:
-        if self._prevent_occs_config_lifecycle_action("Close", config_id):
+    def _run_occs_config_close(self, source_session: str, config_id: str, display_name: str = "") -> None:
+        config_name = display_name or self._occs_config_display_name(config_id)
+        if self._prevent_occs_config_lifecycle_action("Close", config_id, config_name):
             return
         command = ["close-config"]
         if source_session:
@@ -14383,11 +14511,12 @@ class AToolApp:
         command.extend(["--config-id", config_id])
         self._run_occs_command_async(
             command,
-            f"Closing Config ID {config_id} in {source_session or 'the OCCS default session'}...",
-            lambda result, selected_session=source_session, selected_config_id=config_id: self._on_occs_config_close_complete(
+            f"Closing {config_name} in {source_session or 'the OCCS default session'}...",
+            lambda result, selected_session=source_session, selected_config_id=config_id, selected_config_name=config_name: self._on_occs_config_close_complete(
                 result,
                 selected_session,
                 selected_config_id,
+                selected_config_name,
             ),
             on_failure=lambda error: messagebox.showerror("Close Config", str(error)),
         )
@@ -14397,6 +14526,7 @@ class AToolApp:
         result: dict[str, object],
         source_session: str,
         config_id: str,
+        config_name: str,
     ) -> None:
         stdout = str(result.get("stdout", "")).strip()
         detail = f"\n\n{stdout}" if stdout else ""
@@ -14404,7 +14534,7 @@ class AToolApp:
         self._show_temporary_status("Config closed", duration_ms=5000)
         if messagebox.askyesno(
             "Close Config",
-            f"Config ID closed in {session_label}:\n\n{config_id}{detail}\n\nMigrate now?",
+            f"{config_name} closed in {session_label}:{detail}\n\nMigrate now?",
         ):
             self.migrate_occs_config(confirm=False)
 
@@ -15763,8 +15893,6 @@ class AToolApp:
             "",
             f"Document UUID: {row.get('document_uuid', '') or '(none)'}",
             f"Relationship UUID: {row.get('rel_uuid', '') or '(none)'}",
-            f"Document ConfigId: {row.get('document_config_id', '') or '(none)'}",
-            f"Association ConfigId: {row.get('association_config_id', '') or '(none)'}",
         ]
         diagnostics = row.get("diagnostics")
         if isinstance(diagnostics, list) and diagnostics:
@@ -18153,11 +18281,15 @@ class AToolApp:
 
     @staticmethod
     def _format_occs_config_label(config: dict[str, str]) -> str:
-        short_name = config.get("shortName", "")
-        config_id = config.get("id", "")
-        if short_name and config_id:
-            return f"{short_name} ({config_id})"
-        return short_name or config_id
+        return config.get("shortName", "").strip() or config.get("name", "").strip()
+
+    def _occs_config_display_name(self, config_id: str) -> str:
+        """Return a human-friendly Config name; IDs remain an internal detail."""
+        active_id = self._get_last_occs_config_id()
+        active_name = self._active_occs_config_display_name()
+        if active_name and self._normalize_occs_config_id(config_id) == self._normalize_occs_config_id(active_id):
+            return active_name
+        return "the selected configuration"
 
     def _filter_occs_configs_for_display(
         self,
@@ -18176,8 +18308,8 @@ class AToolApp:
             config_filter = re.compile(pattern)
         except re.error as error:
             messagebox.showwarning(
-                "Config ID Filter",
-                f"Config ID Filter is not a valid regular expression, so all Config IDs will be shown.\n\nDetails: {error}",
+                "Configuration Filter",
+                f"Configuration Filter is not a valid regular expression, so all configurations will be shown.\n\nDetails: {error}",
                 parent=parent,
             )
             return open_configs
@@ -18216,7 +18348,7 @@ class AToolApp:
                 config.get("name", "").lower(),
             }:
                 return label
-        return last_config_id
+        return labels[0] if labels else ""
 
     @staticmethod
     def _occs_config_id_from_selection(
@@ -18267,7 +18399,7 @@ class AToolApp:
             f"Version: {result.get('version', self._occs_manifest_version_short_name(self.current_occs_manifest))}",
         ]
         if config_text:
-            lines.append(f"Config ID: {config_text}")
+            lines.append(f"Configuration: {config_text}")
         lines.append(f"Changed: {', '.join(changes) if changes else 'none'}")
         raw_upload_plan = result.get("uploadPlan")
         upload_plan = [
