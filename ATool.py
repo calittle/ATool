@@ -3402,16 +3402,25 @@ class AToolApp:
         self._set_content_html_controls_enabled(True)
         self.content_html_source_mode = False
         self.content_html_source_button.configure(text="Source HTML")
-        self._content_html_set(html)
+        try:
+            self._content_html_set(html)
+        except Exception as error:  # preserve editable source when a new Comms construct is not renderable yet
+            self._debug_log(f"Content rich render failed; falling back to Source HTML: {error}")
+            self.content_html_source_mode = True
+            self.content_html_source_button.configure(text="Rich Text")
+            self._content_html_set(html)
+            self.content_editor_status_var.set("Loaded Source HTML because rich rendering was unavailable for this Content.")
         for button in self.content_html_toolbar_buttons:
-            button.configure(state=tk.NORMAL)
+            button.configure(state=tk.NORMAL if not self.content_html_source_mode or button is self.content_html_source_button else tk.DISABLED)
+        self.content_html_size_menu.configure(state="readonly" if not self.content_html_source_mode else tk.DISABLED)
         self.content_source_version_var.set(str(version.get("shortName", "")))
         effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
         self.content_effective_date_var.set(effective_date)
         self.content_version_description_var.set(str(version.get("description", "")))
         current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
         self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
-        self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
+        if not self.content_html_source_mode:
+            self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
         self._capture_content_save_baseline()
 
     def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
