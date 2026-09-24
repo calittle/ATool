@@ -2276,6 +2276,9 @@ class AToolApp:
         list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
         list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
+        ttk.Button(list_row, text="New", command=self._new_content_in_manager).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        self.content_load_button = ttk.Button(list_row, text="Load", command=self._load_selected_content, state=tk.DISABLED)
+        self.content_load_button.grid(row=0, column=3, sticky="w", padx=(6, 0))
         filter_row = ttk.Frame(browser)
         filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         filter_row.columnconfigure(0, weight=1)
@@ -2304,11 +2307,6 @@ class AToolApp:
         self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
         self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
         ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=5, column=0, sticky="ew", pady=(8, 0))
-        browser_actions = ttk.Frame(browser)
-        browser_actions.grid(row=6, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(browser_actions, text="New Content", command=self._new_content_in_manager).grid(row=0, column=0, sticky="w")
-        self.content_load_button = ttk.Button(browser_actions, text="Load", command=self._load_selected_content, state=tk.DISABLED)
-        self.content_load_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self._content_browser_sort_column = "shortName"
         self._content_browser_sort_reverse = False
 
