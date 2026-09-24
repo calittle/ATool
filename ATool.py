@@ -2235,7 +2235,7 @@ class AToolApp:
         self.content_window.title("ATool - Content Manager")
         self.content_window.minsize(700, 520)
         self._attach_app_menu(self.content_window)
-        self.content_window.protocol("WM_DELETE_WINDOW", self.content_window.withdraw)
+        self.content_window.protocol("WM_DELETE_WINDOW", self._hide_content_window)
 
         self.content_mode_var = tk.StringVar(value="create")
         self.content_short_name_var = tk.StringVar()
@@ -2709,6 +2709,8 @@ class AToolApp:
             self.content_filter_entry.configure(foreground="#777777")
 
     def _new_content_in_manager(self) -> None:
+        if not self._confirm_discard_content_changes("start a new Content item"):
+            return
         self.content_mode_var.set("create")
         self.content_short_name_var.set("")
         self.content_name_var.set("")
@@ -2727,6 +2729,25 @@ class AToolApp:
 
     def _content_editor_ready_text(self) -> str:
         return ""
+
+    def _confirm_discard_content_changes(self, action: str) -> bool:
+        """Ask before an editor action replaces unsaved Content Manager state."""
+        if not self._content_has_changes():
+            return True
+        assert self.content_window is not None
+        return messagebox.askyesno(
+            "Discard Content Changes?",
+            f"You have unsaved content changes. {action.capitalize()} will discard them.\n\nContinue?",
+            icon=messagebox.WARNING,
+            parent=self.content_window,
+        )
+
+    def _hide_content_window(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        if not self._confirm_discard_content_changes("closing the Content Manager"):
+            return
+        self.content_window.withdraw()
 
     def _attach_content_save_tooltip(self) -> None:
         self.content_save_button.bind(
@@ -2879,6 +2900,8 @@ class AToolApp:
         short_name = str(item.get("shortName", "")).strip() if item else ""
         if not short_name:
             return
+        if not self._confirm_discard_content_changes(f"loading {short_name}"):
+            return
         self.content_load_button.configure(state=tk.DISABLED)
         self._show_content_html_loading()
         self._show_content_styles_loading()
@@ -2917,6 +2940,10 @@ class AToolApp:
         short_name = self.content_short_name_var.get().strip()
         version = self.content_source_version_var.get().strip()
         if short_name and version:
+            if self._content_save_baseline is not None and version != self._content_save_baseline[2]:
+                if not self._confirm_discard_content_changes(f"loading version {version}"):
+                    self.content_source_version_var.set(self._content_save_baseline[2])
+                    return
             self._load_selected_content_version(short_name, version)
             self._load_content_styles(short_name, version)
 
