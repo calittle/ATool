@@ -42,6 +42,10 @@ class ContentHtmlParser(HTMLParser):
         r'^\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
         re.DOTALL,
     )
+    COMMS_STRUCTURE_TOKEN = re.compile(
+        r'<comms-(cond|loop)>.*?</comms-\1>',
+        re.IGNORECASE | re.DOTALL,
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -117,6 +121,20 @@ class ContentHtmlParser(HTMLParser):
             return
         # OCCS normally stores tags escaped, so the parser receives them as
         # literal text—often mixed into a much larger condition expression.
+        # Render condition/loop structures as single rich-text chips first;
+        # their potentially nested data tokens remain part of the preserved
+        # source payload rather than being rewritten independently.
+        start = 0
+        for token in self.COMMS_STRUCTURE_TOKEN.finditer(data):
+            self._append_inline_data_tokens(data[start:token.start()], styles)
+            kind = token.group(1).lower()
+            raw = token.group(0)
+            label = self._structure_label(kind, raw)
+            self._append(label, tuple(sorted({**styles, f"comms-{kind}": raw}.items())))
+            start = token.end()
+        self._append_inline_data_tokens(data[start:], styles)
+
+    def _append_inline_data_tokens(self, data: str, styles: dict[str, str]) -> None:
         start = 0
         for token in self.COMMS_DATA_TOKEN.finditer(data):
             self._append(data[start:token.start()])
@@ -124,6 +142,21 @@ class ContentHtmlParser(HTMLParser):
             self._append(f"${token.group(2)}", tuple(sorted(token_styles.items())))
             start = token.end()
         self._append(data[start:])
+
+    @staticmethod
+    def _structure_label(kind: str, raw: str) -> str:
+        if kind == "cond":
+            expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+            if expression:
+                try:
+                    payload = json.loads(expression.group(1))
+                    condition = str(payload.get("Condition", "")).strip() or "(no condition)"
+                    target = str(payload.get("Text", payload.get("Content", ""))).strip()
+                    return f"◆ Condition: {condition}{f' — {target}' if target else ''}"
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    pass
+            return "◆ Condition"
+        return "↻ Loop (double-click to edit)"
 
 
 class AToolApp:
@@ -2459,6 +2492,7 @@ class AToolApp:
         self.content_html_text.grid(row=1, column=0, sticky="nsew")
         self.content_html_text.bind("<Motion>", self._show_content_html_tag_tooltip)
         self.content_html_text.bind("<Leave>", lambda _event: self._hide_tooltip())
+        self.content_html_text.bind("<Double-Button-1>", self._edit_content_html_structure_at_cursor)
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
         html_scrollbar.grid(row=1, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
@@ -2573,6 +2607,10 @@ class AToolApp:
             options.update(foreground="#0067c8", underline=True)
         if styles.get("field") or styles.get("comms"):
             options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
+        if styles.get("comms-cond"):
+            options.update(foreground="#075985", background="#e0f2fe", underline=True)
+        if styles.get("comms-loop"):
+            options.update(foreground="#7c2d12", background="#ffedd5", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
 
@@ -2595,6 +2633,8 @@ class AToolApp:
         elif key == "background": options["background"] = self._content_html_tk_color(value)
         elif key == "link": options.update(foreground="#0067c8", underline=True)
         elif key in ("field", "comms"): options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
+        elif key == "comms-cond": options.update(foreground="#075985", background="#e0f2fe", underline=True)
+        elif key == "comms-loop": options.update(foreground="#7c2d12", background="#ffedd5", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
 
@@ -2643,6 +2683,10 @@ class AToolApp:
                 styles.update(self._content_html_tag_styles.get(tag_name, {}))
             if styles.get("comms"):
                 value = styles.pop("comms")
+            elif styles.get("comms-cond"):
+                value = styles.pop("comms-cond")
+            elif styles.get("comms-loop"):
+                value = styles.pop("comms-loop")
             elif styles.get("field"):
                 value = f'<comms-data>$Data{{"Id":"{html_escape(styles.pop("field"), quote=True)}"}}</comms-data>'
             else:
@@ -2688,10 +2732,129 @@ class AToolApp:
             styles.update(self._content_html_tag_styles.get(tag_name, {}))
         if styles.get("comms"):
             self._show_tooltip(event, styles["comms"])
+        elif styles.get("comms-cond"):
+            self._show_tooltip(event, styles["comms-cond"])
+        elif styles.get("comms-loop"):
+            self._show_tooltip(event, styles["comms-loop"])
         elif styles.get("field"):
             self._show_tooltip(event, self._content_field_tag(styles["field"]))
         else:
             self._hide_tooltip()
+
+    def _edit_content_html_structure_at_cursor(self, event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        index = self.content_html_text.index(f"@{event.x},{event.y}")
+        for tag_name in self.content_html_text.tag_names(index):
+            styles = self._content_html_tag_styles.get(tag_name, {})
+            for kind in ("comms-cond", "comms-loop"):
+                raw = styles.get(kind)
+                if raw:
+                    self._edit_content_html_structure(kind, raw, tag_name, index)
+                    return "break"
+        return None
+
+    def _content_html_tag_range_at(self, tag_name: str, index: str) -> tuple[str, str] | None:
+        ranges = self.content_html_text.tag_ranges(tag_name)
+        for start, end in zip(ranges[0::2], ranges[1::2]):
+            if self.content_html_text.compare(start, "<=", index) and self.content_html_text.compare(index, "<", end):
+                return str(start), str(end)
+        return None
+
+    def _edit_content_html_structure(self, kind: str, raw: str, tag_name: str, index: str) -> None:
+        text_range = self._content_html_tag_range_at(tag_name, index)
+        if not text_range:
+            return
+        if kind == "comms-cond":
+            self._edit_content_condition(raw, tag_name, text_range)
+        else:
+            self._edit_content_loop(raw, tag_name, text_range)
+
+    def _replace_content_html_structure(self, old_tag: str, text_range: tuple[str, str], kind: str, raw: str, label: str) -> None:
+        start, end = text_range
+        self.content_html_text.tag_remove(old_tag, start, end)
+        self.content_html_text.delete(start, end)
+        self.content_html_text.insert(start, label)
+        end = self.content_html_text.index(f"{start}+{len(label)}c")
+        self.content_html_text.tag_add(self._content_html_style_tag(kind, raw), start, end)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _edit_content_condition(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        match = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+        if not match:
+            messagebox.showinfo("Condition", "This Condition has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
+            return
+        try:
+            payload = json.loads(match.group(1))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            messagebox.showinfo("Condition", "This Condition could not be parsed. Edit it in Source HTML.", parent=self.content_window)
+            return
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Condition")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+        condition_var = tk.StringVar(value=str(payload.get("Condition", "")))
+        text_var = tk.StringVar(value=str(payload.get("Text", "")))
+        content_var = tk.StringVar(value=str(payload.get("Content", "")))
+        for row, (label, variable) in enumerate((("Condition:", condition_var), ("Text:", text_var), ("Content:", content_var))):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=(0 if row == 0 else 8, 0))
+            ttk.Entry(frame, textvariable=variable, width=58).grid(row=row, column=1, sticky="ew", pady=(0 if row == 0 else 8, 0))
+        ttk.Label(frame, text="Use Text for inline content or Content to reference another Content item.", wraplength=440).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            condition = condition_var.get().strip()
+            if not condition:
+                messagebox.showerror("Condition", "Condition is required.", parent=dialog)
+                return
+            payload["Condition"] = condition
+            if text_var.get().strip():
+                payload["Text"] = text_var.get()
+                payload.pop("Content", None)
+            elif content_var.get().strip():
+                payload["Content"] = content_var.get().strip()
+                payload.pop("Text", None)
+            else:
+                messagebox.showerror("Condition", "Enter Text or Content.", parent=dialog)
+                return
+            updated = f'<comms-cond>$Cond{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-cond>'
+            self._replace_content_html_structure(tag_name, text_range, "comms-cond", updated, ContentHtmlParser._structure_label("cond", updated))
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+
+    def _edit_content_loop(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Loop")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text="Loop source", anchor=tk.W).grid(row=0, column=0, sticky="ew")
+        source = tk.Text(frame, width=76, height=12, wrap=tk.WORD)
+        source.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        source.insert("1.0", raw)
+        ttk.Label(frame, text="Loop structures vary and may nest content; this preserves the complete tag while allowing precise editing.", wraplength=540).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            updated = source.get("1.0", "end-1c").strip()
+            if not re.fullmatch(r"<comms-loop>.*</comms-loop>", updated, re.IGNORECASE | re.DOTALL):
+                messagebox.showerror("Loop", "Loop source must be wrapped in <comms-loop> and </comms-loop>.", parent=dialog)
+                return
+            self._replace_content_html_structure(tag_name, text_range, "comms-loop", updated, ContentHtmlParser._structure_label("loop", updated))
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
 
     def _toggle_content_html_tag(self, style: str) -> None:
         if self.content_html_source_mode:
