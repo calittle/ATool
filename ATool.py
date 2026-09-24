@@ -45,9 +45,9 @@ class ContentHtmlParser(HTMLParser):
             merged.update(item)
         return tuple(sorted(merged.items()))
 
-    def _append(self, text: str) -> None:
+    def _append(self, text: str, styles: tuple[tuple[str, str], ...] | None = None) -> None:
         if text:
-            self.parts.append((text.replace("\xa0", " "), self._styles()))
+            self.parts.append((text.replace("\xa0", " "), self._styles() if styles is None else styles))
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
         attrs_map = {key: value or "" for key, value in attrs}
@@ -60,6 +60,8 @@ class ContentHtmlParser(HTMLParser):
             style["underline"] = "1"
         if tag == "a" and attrs_map.get("href"):
             style["link"] = attrs_map["href"]
+        if tag == "comms-data":
+            style["comms-data"] = "1"
         if attrs_map.get("class"):
             style["class"] = attrs_map["class"]
         for rule in attrs_map.get("style", "").split(";"):
@@ -96,6 +98,20 @@ class ContentHtmlParser(HTMLParser):
             self.stack.pop()
 
     def handle_data(self, data: str) -> None:
+        expression = re.fullmatch(r"\$Data\{\s*\"Id\"\s*:\s*\"([^\"]+)\"\s*\}", data.strip())
+        styles = dict(self._styles())
+        if expression and styles.get("comms-data"):
+            styles.pop("comms-data", None)
+            styles["field"] = expression.group(1)
+            self._append(f"${expression.group(1)}", tuple(sorted(styles.items())))
+            return
+        # OCCS normally stores these expressions escaped, so HTMLParser emits
+        # the entire tag as text instead of start/end tag callbacks.
+        token = re.fullmatch(r"<comms-data>(\$Data\{\s*\"Id\"\s*:\s*\"([^\"]+)\"\s*\})</comms-data>", data.strip())
+        if token:
+            styles["field"] = token.group(2)
+            self._append(f"${token.group(2)}", tuple(sorted(styles.items())))
+            return
         self._append(data)
 
 
@@ -2318,9 +2334,13 @@ class AToolApp:
         editor_pane = ttk.Frame(self.content_editor_splitter)
         editor_pane.columnconfigure(0, weight=1)
         editor_pane.rowconfigure(1, weight=1)
-        styles_frame = ttk.LabelFrame(self.content_editor_splitter, text="Styles", padding=6)
+        side_pane = ttk.Panedwindow(self.content_editor_splitter, orient=tk.VERTICAL)
+        styles_frame = ttk.LabelFrame(side_pane, text="Styles", padding=6)
+        fields_frame = ttk.LabelFrame(side_pane, text="Fields", padding=6)
         self.content_editor_splitter.add(editor_pane, weight=3)
-        self.content_editor_splitter.add(styles_frame, weight=1)
+        self.content_editor_splitter.add(side_pane, weight=1)
+        side_pane.add(styles_frame, weight=1)
+        side_pane.add(fields_frame, weight=2)
 
         form = ttk.Frame(editor_pane)
         form.grid(row=0, column=0, sticky="ew")
@@ -2432,6 +2452,31 @@ class AToolApp:
         self.content_styles_tree.column("style", width=120, anchor=tk.W)
         self.content_styles_tree.column("classes", width=140, anchor=tk.W)
         self.content_styles_tree.grid(row=0, column=0, sticky="nsew")
+        fields_frame.columnconfigure(0, weight=1)
+        fields_frame.rowconfigure(1, weight=1)
+        self.content_field_filter_var = tk.StringVar()
+        self.content_field_filter_entry = ttk.Entry(fields_frame, textvariable=self.content_field_filter_var)
+        self.content_field_filter_entry.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.content_field_filter_entry.insert(0, "Filter fields")
+        self.content_field_filter_entry.configure(foreground="#777777")
+        self.content_field_filter_entry.bind("<FocusIn>", self._clear_content_field_filter_placeholder)
+        self.content_field_filter_entry.bind("<FocusOut>", self._restore_content_field_filter_placeholder)
+        self.content_field_filter_var.trace_add("write", self._render_content_fields)
+        self.content_fields_tree = ttk.Treeview(fields_frame, columns=("name", "scope"), show="headings", selectmode="browse", height=10)
+        self.content_fields_tree.heading("name", text="Field")
+        self.content_fields_tree.heading("scope", text="Scope")
+        self.content_fields_tree.column("name", width=150, anchor=tk.W)
+        self.content_fields_tree.column("scope", width=75, anchor=tk.W, stretch=False)
+        self.content_fields_tree.grid(row=1, column=0, sticky="nsew")
+        content_fields_scrollbar = ttk.Scrollbar(fields_frame, orient=tk.VERTICAL, command=self.content_fields_tree.yview)
+        content_fields_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.content_fields_tree.configure(yscrollcommand=content_fields_scrollbar.set)
+        self._content_field_records: dict[str, dict[str, str]] = {}
+        self.content_fields_tree.bind("<<TreeviewSelect>>", self._on_content_field_selected)
+        self.content_fields_tree.bind("<Motion>", self._show_content_field_tooltip)
+        self.content_fields_tree.bind("<Leave>", lambda _event: self._hide_tooltip())
+        self.content_insert_field_button = ttk.Button(fields_frame, text="Insert", command=self._insert_selected_content_field, state=tk.DISABLED)
+        self.content_insert_field_button.grid(row=2, column=0, sticky="e", pady=(6, 0))
         self.content_metadata_controls = (
             self.content_short_name_entry,
             self.content_name_entry,
@@ -2454,6 +2499,7 @@ class AToolApp:
             variable.trace_add("write", self._on_content_editor_changed)
         self.content_html_text.bind("<<Modified>>", self._on_content_html_modified, add="+")
         self._capture_content_save_baseline()
+        self._refresh_content_fields()
         self._update_content_save_availability()
 
     def _content_html_set(self, html: str) -> None:
@@ -2506,6 +2552,8 @@ class AToolApp:
             options["background"] = styles["background"]
         if styles.get("link"):
             options.update(foreground="#0067c8", underline=True)
+        if styles.get("field"):
+            options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
 
@@ -2527,6 +2575,7 @@ class AToolApp:
         elif key == "foreground": options["foreground"] = value
         elif key == "background": options["background"] = value
         elif key == "link": options.update(foreground="#0067c8", underline=True)
+        elif key == "field": options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
 
@@ -2561,10 +2610,13 @@ class AToolApp:
             nonlocal buffer
             if not buffer:
                 return
-            value = html_escape("".join(buffer), quote=False)
             styles: dict[str, str] = {}
             for tag_name in active or ():
                 styles.update(self._content_html_tag_styles.get(tag_name, {}))
+            if styles.get("field"):
+                value = f'<comms-data>$Data{{"Id":"{html_escape(styles.pop("field"), quote=True)}"}}</comms-data>'
+            else:
+                value = html_escape("".join(buffer), quote=False)
             if styles.get("link"):
                 value = f'<a target="_blank" rel="noopener noreferrer" href="{html_escape(styles.pop("link"), quote=True)}">{value}</a>'
             css = []
@@ -2697,6 +2749,7 @@ class AToolApp:
     def _copy_content_name_to_long_name(self, _event: tk.Event | None = None) -> None:
         if self.content_mode_var.get() == "create" and not self.content_name_var.get().strip():
             self.content_name_var.set(self.content_short_name_var.get().strip())
+        self._refresh_content_fields()
 
     def _clear_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
         if self.content_browser_filter_var.get() == "Filter by name or description":
@@ -2723,6 +2776,7 @@ class AToolApp:
         self._content_html_set("")
         for item_id in self.content_styles_tree.get_children():
             self.content_styles_tree.delete(item_id)
+        self._refresh_content_fields()
         self.content_load_button.configure(state=tk.DISABLED)
         self.content_editor_status_var.set(self._content_editor_ready_text())
         self._capture_content_save_baseline()
@@ -2922,6 +2976,7 @@ class AToolApp:
         self.content_short_name_var.set(short_name)
         self.content_name_var.set(name)
         self.content_description_var.set(description)
+        self._refresh_content_fields()
         self.content_mode_var.set("version")
         version_names = [str(item.get("shortName", "")).strip() for item in versions if isinstance(item, dict) and str(item.get("shortName", "")).strip()]
         self.content_source_version_entry.configure(values=version_names)
@@ -3003,6 +3058,116 @@ class AToolApp:
             self.content_styles_tree.delete(item_id)
         self.content_styles_tree.insert("", tk.END, values=("Unavailable", ""))
 
+    def _clear_content_field_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if self.content_field_filter_var.get() == "Filter fields":
+            self.content_field_filter_var.set("")
+            self.content_field_filter_entry.configure(foreground="#000000")
+
+    def _restore_content_field_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if not self.content_field_filter_var.get().strip():
+            self.content_field_filter_var.set("Filter fields")
+            self.content_field_filter_entry.configure(foreground="#777777")
+
+    @staticmethod
+    def _content_field_name(field: dict[str, object]) -> str:
+        return str(field.get("name") or field.get("Name") or field.get("$$Id") or field.get("Id") or "").strip()
+
+    def _content_iteration_fields(self, content_name: str) -> list[dict[str, str]]:
+        """Find iteration fields only for AT Content nodes matching this content name."""
+        payload = getattr(self, "current_payload", None)
+        if not isinstance(payload, dict) or not content_name:
+            return []
+        fields: list[dict[str, str]] = []
+
+        def walk(value: object) -> None:
+            if isinstance(value, dict):
+                owner_name = str(value.get("Name") or value.get("$$Id") or value.get("Id") or "").strip()
+                iteration = self._extract_iteration(value)
+                iteration_name = str(iteration.get("Name") or iteration.get("$$Id") or iteration.get("Id") or "").strip() if isinstance(iteration, dict) else ""
+                if (owner_name == content_name or iteration_name == content_name) and isinstance(iteration, dict):
+                    for field in self._extract_iteration_fields(iteration):
+                        name = self._content_field_name(field)
+                        if name:
+                            fields.append({"name": name, "scope": "Iteration", "path": str(field.get("Path", "")).strip()})
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(payload)
+        return fields
+
+    def _content_available_fields(self) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        for field in self._loaded_fields:
+            if not isinstance(field, dict):
+                continue
+            name = self._content_field_name(field)
+            if name:
+                fields.append({"name": name, "scope": "AT", "path": str(field.get("path", field.get("Path", "")).strip())})
+        fields.extend(self._content_iteration_fields(self.content_short_name_var.get().strip()))
+        unique: dict[tuple[str, str], dict[str, str]] = {}
+        for field in fields:
+            unique[(field["name"], field["scope"])] = field
+        return sorted(unique.values(), key=lambda field: (field["name"].casefold(), field["scope"]))
+
+    def _refresh_content_fields(self) -> None:
+        if not hasattr(self, "content_fields_tree"):
+            return
+        self._content_field_records = {}
+        self._render_content_fields()
+
+    def _render_content_fields(self, *_args: object) -> None:
+        if not hasattr(self, "content_fields_tree"):
+            return
+        filter_text = self.content_field_filter_var.get().strip().casefold()
+        if filter_text == "filter fields":
+            filter_text = ""
+        self.content_fields_tree.delete(*self.content_fields_tree.get_children())
+        self._content_field_records = {}
+        for field in self._content_available_fields():
+            searchable = " ".join(field.values()).casefold()
+            if filter_text and filter_text not in searchable:
+                continue
+            item_id = self.content_fields_tree.insert("", tk.END, values=(field["name"], field["scope"]))
+            self._content_field_records[item_id] = field
+        self.content_insert_field_button.configure(state=tk.DISABLED)
+
+    def _selected_content_field(self) -> dict[str, str] | None:
+        selected = self.content_fields_tree.selection()
+        return self._content_field_records.get(selected[0]) if selected else None
+
+    def _content_field_tag(self, field_name: str) -> str:
+        return f'<comms-data>$Data{{"Id":"{field_name}"}}</comms-data>'
+
+    def _on_content_field_selected(self, _event: tk.Event | None = None) -> None:
+        enabled = self._selected_content_field() is not None and self.content_html_text.cget("state") == tk.NORMAL
+        self.content_insert_field_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def _show_content_field_tooltip(self, event: tk.Event) -> None:
+        item_id = self.content_fields_tree.identify_row(event.y)
+        field = self._content_field_records.get(item_id)
+        if field:
+            self._show_tooltip(event, self._content_field_tag(field["name"]))
+        else:
+            self._hide_tooltip()
+
+    def _insert_selected_content_field(self) -> None:
+        field = self._selected_content_field()
+        if not field:
+            return
+        name = field["name"]
+        if self.content_html_source_mode:
+            self.content_html_text.insert(tk.INSERT, self._content_field_tag(name))
+        else:
+            start = self.content_html_text.index(tk.INSERT)
+            self.content_html_text.insert(tk.INSERT, f"${name}")
+            self.content_html_text.tag_add(self._content_html_style_tag("field", name), start, tk.INSERT)
+            self.content_html_rich_dirty = True
+        self.content_html_text.focus_set()
+        self._on_content_editor_changed()
+
     def _show_content_html_loading(self) -> None:
         self._set_content_html_controls_enabled(False)
         self.content_html_text.configure(state=tk.NORMAL)
@@ -3013,6 +3178,8 @@ class AToolApp:
     def _set_content_html_controls_enabled(self, enabled: bool) -> None:
         self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        if hasattr(self, "content_insert_field_button"):
+            self.content_insert_field_button.configure(state=tk.DISABLED)
         for button in self.content_html_toolbar_buttons:
             button.configure(state=tk.NORMAL if enabled and (not self.content_html_source_mode or button is self.content_html_source_button) else tk.DISABLED)
         self.content_html_size_menu.configure(state="readonly" if enabled and not self.content_html_source_mode else tk.DISABLED)
