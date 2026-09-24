@@ -2264,7 +2264,7 @@ class AToolApp:
         ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
         list_row = ttk.Frame(browser)
         list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config"))
+        self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config", bypass_filter=True))
         self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
         self.content_list_from_config_button.bind(
             "<Enter>",
@@ -2272,7 +2272,6 @@ class AToolApp:
             add="+",
         )
         self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
-        self.content_list_from_config_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "config"), add="+")
         list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
         list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
@@ -2782,7 +2781,7 @@ class AToolApp:
         filter_text = self.content_browser_filter_var.get().strip()
         if filter_text == "Filter by name or description":
             filter_text = ""
-        if not filter_text and not bypass_filter:
+        if scope == "all" and not filter_text and not bypass_filter:
             self.content_browser_status_var.set("Enter a filter, or Shift-click List to list all Contents.")
             self.content_filter_entry.focus_set()
             return
