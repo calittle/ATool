@@ -176,6 +176,31 @@ sudo dnf install python3-tkinter
    - macOS: `Cmd+M`
    - Windows/Linux: `Alt+M`
 
+## Config Locks And Lockouts
+
+ATool can protect configurations from being closed or migrated. This protection
+is enforced by ATool only; OCCS CLI and Comms do not interpret it.
+
+- Use `Config -> Lock` to lock the active configuration. The same command
+  unlocks it after confirmation.
+- In `Config -> List`, the Lock column shows a 🔒 for locked configurations;
+  select one and use **Lock Configuration** or **Unlock Configuration** to
+  change its state.
+- Use `Config -> Lockouts...` to add or remove time-based lockout windows.
+  A window has a calendar-selected date, 24-hour start time, IANA timezone,
+  and duration. The dialog shows calculated start and end times in the local
+  timezone; expired windows are grey.
+
+During an active window, ATool blocks every Config close and migration. A
+configuration lock blocks close and migration for that named configuration.
+Before either operation runs, ATool rereads the shared lock record so another
+user's synchronized change is respected.
+
+The record is `config-lockouts.json` in the configured Shared Package Folder.
+It contains internal OCCS identifiers for matching only; ATool displays Config
+names in the UI. Shared-folder sync safeguards apply when creating, changing,
+or removing a lock or lockout.
+
 ## What ATool Persists
 
 ATool stores app/user metadata under:

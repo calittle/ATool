@@ -1,6 +1,7 @@
 import hashlib
 import getpass
 import json
+import calendar
 import os
 import platform
 import re
@@ -15,17 +16,148 @@ import threading
 import time
 import traceback
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
+from html.parser import HTMLParser
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, font as tkfont, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.condition_evaluator import ConditionEvaluator
 
 
 class OccsCommandCancelled(RuntimeError):
     pass
+
+
+class ContentHtmlParser(HTMLParser):
+    """Small, deliberately conservative HTML-to-Tk-text adapter for OCCS content."""
+
+    COMMS_DATA_TOKEN = re.compile(
+        r'<comms-data>\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    COMMS_DATA_EXPRESSION = re.compile(
+        r'^\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
+        re.DOTALL,
+    )
+    COMMS_STRUCTURE_TOKEN = re.compile(
+        r'<comms-(cond|loop)>.*?</comms-\1>',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+        self.stack: list[dict[str, str]] = []
+        self.list_stack: list[tuple[str, int]] = []
+
+    def _styles(self) -> tuple[tuple[str, str], ...]:
+        merged: dict[str, str] = {}
+        for item in self.stack:
+            merged.update(item)
+        return tuple(sorted(merged.items()))
+
+    def _append(self, text: str, styles: tuple[tuple[str, str], ...] | None = None) -> None:
+        if text:
+            self.parts.append((text.replace("\xa0", " "), self._styles() if styles is None else styles))
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+        attrs_map = {key: value or "" for key, value in attrs}
+        style: dict[str, str] = {}
+        if tag in ("strong", "b"):
+            style["bold"] = "1"
+        if tag in ("i", "em"):
+            style["italic"] = "1"
+        if tag == "u":
+            style["underline"] = "1"
+        if tag == "a" and attrs_map.get("href"):
+            style["link"] = attrs_map["href"]
+        if tag == "comms-data":
+            style["comms-data"] = "1"
+        if attrs_map.get("class"):
+            style["class"] = attrs_map["class"]
+        for rule in attrs_map.get("style", "").split(";"):
+            key, _, value = rule.partition(":")
+            key, value = key.strip().lower(), value.strip()
+            if key == "color" and value:
+                style["foreground"] = value
+            elif key == "background-color" and value:
+                style["background"] = value
+            elif key == "font-size" and value:
+                style["size"] = value
+        if tag in ("p", "div", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
+            self._append("\n")
+        if tag in ("ul", "ol"):
+            self.list_stack.append((tag, 0))
+        if tag == "li":
+            if self.parts and not self.parts[-1][0].endswith("\n"):
+                self._append("\n")
+            if self.list_stack:
+                kind, count = self.list_stack[-1]
+                self.list_stack[-1] = (kind, count + 1)
+                self._append(("• " if kind == "ul" else f"{count + 1}. "))
+        if tag == "br":
+            self._append("\n")
+            return
+        self.stack.append(style)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("p", "div", "li", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
+            self._append("\n")
+        if tag in ("ul", "ol") and self.list_stack:
+            self.list_stack.pop()
+        if self.stack:
+            self.stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        styles = dict(self._styles())
+        expression = self.COMMS_DATA_EXPRESSION.fullmatch(data)
+        if expression and styles.get("comms-data"):
+            styles.pop("comms-data", None)
+            styles["comms"] = f"<comms-data>{expression.group(1)}</comms-data>"
+            self._append(f"${expression.group(2)}", tuple(sorted(styles.items())))
+            return
+        # OCCS normally stores tags escaped, so the parser receives them as
+        # literal text—often mixed into a much larger condition expression.
+        # Render condition/loop structures as single rich-text chips first;
+        # their potentially nested data tokens remain part of the preserved
+        # source payload rather than being rewritten independently.
+        start = 0
+        for token in self.COMMS_STRUCTURE_TOKEN.finditer(data):
+            self._append_inline_data_tokens(data[start:token.start()], styles)
+            kind = token.group(1).lower()
+            raw = token.group(0)
+            label = self._structure_label(kind, raw)
+            self._append(label, tuple(sorted({**styles, f"comms-{kind}": raw}.items())))
+            start = token.end()
+        self._append_inline_data_tokens(data[start:], styles)
+
+    def _append_inline_data_tokens(self, data: str, styles: dict[str, str]) -> None:
+        start = 0
+        for token in self.COMMS_DATA_TOKEN.finditer(data):
+            self._append(data[start:token.start()])
+            token_styles = {**styles, "comms": token.group(0)}
+            self._append(f"${token.group(2)}", tuple(sorted(token_styles.items())))
+            start = token.end()
+        self._append(data[start:])
+
+    @staticmethod
+    def _structure_label(kind: str, raw: str) -> str:
+        if kind == "cond":
+            expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+            if expression:
+                try:
+                    payload = json.loads(expression.group(1))
+                    condition = str(payload.get("Condition", "")).strip() or "(no condition)"
+                    target = str(payload.get("Text", payload.get("Content", ""))).strip()
+                    return f"◆ Condition: {condition}{f' — {target}' if target else ''}"
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    pass
+            return "◆ Condition"
+        return "↻ Loop (double-click to edit)"
 
 
 class AToolApp:
@@ -43,6 +175,7 @@ class AToolApp:
     SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
     SHARED_PACKAGE_HISTORY_LIMIT = 5
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
+    OCCS_PARALLEL_READ_LIMIT = 4
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_RESOURCE_CACHE_TYPES = (
         ("Package", "get-package", "list-packages", "packages"),
@@ -63,6 +196,9 @@ class AToolApp:
         "document_display": {
             "collapse": False,
         },
+        "content_editor": {
+            "font_family": "",
+        },
         "diagnostics": {
             "debug_logging": False,
         },
@@ -76,6 +212,7 @@ class AToolApp:
             "config_target_session_alias": "pp",
             "config_id_filter": "",
             "last_config_id": "",
+            "active_config_label": "",
             "last_preview_render_types": ["PDF"],
             "shared_workspace_dir": "",
             "models_dir": "",
@@ -119,6 +256,7 @@ class AToolApp:
         self._fields_window_geometry_job: str | None = None
         self.layouts_window: tk.Toplevel | None = None
         self._layouts_window_geometry_job: str | None = None
+        self.content_window: tk.Toplevel | None = None
         self.data_browser_window: tk.Toplevel | None = None
         self.data_browser_search_var = tk.StringVar(value="")
         self.data_browser_search_mode_var = tk.StringVar(value="Auto")
@@ -168,7 +306,11 @@ class AToolApp:
         self._occs_operation_in_progress = False
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._occs_preview_process: subprocess.Popen[str] | None = None
         self._occs_process_lock = threading.Lock()
+        self._occs_parallel_read_semaphore = threading.BoundedSemaphore(self.OCCS_PARALLEL_READ_LIMIT)
         self._occs_download_all_in_progress = False
         self._occs_download_all_cancel_requested = False
         self._occs_download_all_process: subprocess.Popen[str] | None = None
@@ -422,11 +564,25 @@ class AToolApp:
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
+        config_menu.add_command(label="Set...", command=self.set_active_occs_config)
+        config_menu.add_command(
+            label="Lock",
+            command=self.toggle_active_occs_config_lock,
+            state=tk.NORMAL if self._active_occs_config_display_name() else tk.DISABLED,
+        )
+        config_menu.add_command(label="Lockouts...", command=self.open_occs_config_lockouts_dialog)
+        config_menu.add_separator()
         config_menu.add_command(label="Create...", command=self.create_occs_config)
         config_menu.add_command(label="List", command=self.list_occs_configs)
         config_menu.add_separator()
         config_menu.add_command(label="Close...", command=self.close_occs_config)
         config_menu.add_command(label="Migrate", command=self.migrate_occs_config)
+        config_menu.add_separator()
+        active_config = self._active_occs_config_display_name()
+        config_menu.add_command(
+            label=f"Active: {active_config or '(not set)'}",
+            state=tk.DISABLED,
+        )
 
         resources_menu = tk.Menu(menu_bar, tearoff=0)
         resources_menu.add_command(label="Download Single...", command=self.get_occs_resource_to_cache)
@@ -466,10 +622,10 @@ class AToolApp:
         )
         self._send_email_menu_entries.append((package_menu, package_menu.index(tk.END)))
         package_menu.add_command(
-            label="Cancel OCCS Operation",
+            label="Cancel Preview",
             accelerator=cancel_occs_accelerator,
-            command=self.cancel_occs_operation,
-            state=tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED,
+            command=self.cancel_occs_preview,
+            state=tk.NORMAL if self._occs_preview_in_progress else tk.DISABLED,
         )
         self._package_menu_entries.append((package_menu, package_menu.index(tk.END), "cancel"))
         package_menu.add_separator()
@@ -525,6 +681,10 @@ class AToolApp:
         window_menu.add_command(
             label="Show Layouts",
             command=self._show_layouts_window,
+        )
+        window_menu.add_command(
+            label="Show Content Manager",
+            command=self._show_content_window,
         )
         window_menu.add_command(
             label="Show Package Documents",
@@ -2128,6 +2288,1285 @@ class AToolApp:
         self.layouts_window.lift()
         self.layouts_window.focus_force()
         self._set_manager_window_visible("layouts", True)
+
+    def _show_content_window(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            self._create_content_window()
+        assert self.content_window is not None
+        self.content_window.deiconify()
+        self.content_window.lift()
+        self.content_window.focus_force()
+
+    def _create_content_window(self) -> None:
+        self.content_window = self._create_toplevel(self.root)
+        self.content_window.title("ATool - Content Manager")
+        self.content_window.minsize(700, 520)
+        self._attach_app_menu(self.content_window)
+        self.content_window.protocol("WM_DELETE_WINDOW", self._hide_content_window)
+
+        self.content_mode_var = tk.StringVar(value="create")
+        self.content_short_name_var = tk.StringVar()
+        self.content_name_var = tk.StringVar()
+        self.content_source_version_var = tk.StringVar(value="1.0")
+        self.content_new_version_var = tk.StringVar(value="1.0")
+        self.content_effective_date_var = tk.StringVar(value=datetime.now().date().isoformat())
+        self.content_description_var = tk.StringVar()
+        self.content_version_description_var = tk.StringVar()
+        self.content_editor_status_var = tk.StringVar(value=self._content_editor_ready_text())
+
+        workspace = ttk.Panedwindow(self.content_window, orient=tk.HORIZONTAL)
+        workspace.pack(fill=tk.BOTH, expand=True)
+        browser = ttk.Frame(workspace, padding=12, width=280)
+        browser.columnconfigure(0, weight=1)
+        browser.rowconfigure(3, weight=1)
+        container = ttk.Frame(workspace, padding=12)
+        workspace.add(browser, weight=1)
+        workspace.add(container, weight=4)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        self.content_browser_filter_var = tk.StringVar(value="Filter by name or description")
+        self.content_browser_type_var = tk.StringVar(value="All types")
+        self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
+        self.content_metadata_var = tk.StringVar()
+        self._content_browser_scope = "config"
+        self._content_browser_records: dict[str, dict[str, object]] = {}
+        ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        list_row = ttk.Frame(browser)
+        list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config", bypass_filter=True))
+        self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
+        self.content_list_from_config_button.bind(
+            "<Enter>",
+            lambda event: self._show_tooltip(event, f"List Contents associated with {self._active_occs_config_status_text()}. Hold Shift to list all."),
+            add="+",
+        )
+        self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
+        list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
+        list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
+        list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
+        ttk.Button(list_row, text="New", command=self._new_content_in_manager).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        self.content_load_button = ttk.Button(list_row, text="Load", command=self._load_selected_content, state=tk.DISABLED)
+        self.content_load_button.grid(row=0, column=3, sticky="w", padx=(6, 0))
+        filter_row = ttk.Frame(browser)
+        filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        filter_row.columnconfigure(0, weight=1)
+        self.content_filter_entry = ttk.Entry(filter_row, textvariable=self.content_browser_filter_var, foreground="#777777")
+        self.content_filter_entry.grid(row=0, column=0, sticky="ew")
+        self.content_filter_entry.bind("<FocusIn>", self._clear_content_filter_placeholder)
+        self.content_filter_entry.bind("<FocusOut>", self._restore_content_filter_placeholder)
+        self.content_filter_entry.bind("<Return>", lambda _event: self._load_content_browser(self._content_browser_scope))
+        self.content_type_filter = ttk.Combobox(
+            filter_row,
+            textvariable=self.content_browser_type_var,
+            values=("All types", "Text", "Image", "Link", "Chart"),
+            state="readonly",
+            width=11,
+        )
+        self.content_type_filter.grid(row=0, column=1, sticky="e", padx=(6, 0))
+        self.content_type_filter.bind("<<ComboboxSelected>>", lambda _event: self._load_content_browser(self._content_browser_scope))
+        self.content_browser_tree = ttk.Treeview(browser, columns=("shortName", "contentType"), show="headings", selectmode="browse")
+        self.content_browser_tree.heading("shortName", text="Short Name", command=lambda: self._sort_content_browser("shortName"))
+        self.content_browser_tree.heading("contentType", text="Type", command=lambda: self._sort_content_browser("contentType"))
+        self.content_browser_tree.column("shortName", anchor=tk.W, width=190)
+        self.content_browser_tree.column("contentType", anchor=tk.W, width=70, stretch=False)
+        self.content_browser_tree.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
+        content_scrollbar = ttk.Scrollbar(browser, orient=tk.VERTICAL, command=self.content_browser_tree.yview)
+        content_scrollbar.grid(row=3, column=1, sticky="ns", pady=(6, 0))
+        self.content_browser_tree.configure(yscrollcommand=content_scrollbar.set)
+        self.content_browser_tree.bind("<<TreeviewSelect>>", self._on_content_browser_selected)
+        ttk.Label(browser, textvariable=self.content_browser_status_var, wraplength=250, justify=tk.LEFT).grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        self._content_browser_sort_column = "shortName"
+        self._content_browser_sort_reverse = False
+
+        self.content_editor_splitter = ttk.Panedwindow(container, orient=tk.HORIZONTAL)
+        self.content_editor_splitter.grid(row=0, column=0, sticky="nsew")
+        editor_pane = ttk.Frame(self.content_editor_splitter)
+        editor_pane.columnconfigure(0, weight=1)
+        editor_pane.rowconfigure(1, weight=1)
+        side_pane = ttk.Panedwindow(self.content_editor_splitter, orient=tk.VERTICAL)
+        styles_frame = ttk.LabelFrame(side_pane, text="Styles", padding=6)
+        fields_frame = ttk.LabelFrame(side_pane, text="Fields", padding=6)
+        self.content_editor_splitter.add(editor_pane, weight=3)
+        self.content_editor_splitter.add(side_pane, weight=1)
+        side_pane.add(styles_frame, weight=1)
+        side_pane.add(fields_frame, weight=2)
+
+        form = ttk.Frame(editor_pane)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(3, weight=2)
+        ttk.Label(form, text="Name:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.content_short_name_entry = ttk.Entry(form, textvariable=self.content_short_name_var, width=52)
+        self.content_short_name_entry.grid(row=0, column=1, sticky="ew")
+        self.content_short_name_entry.bind("<FocusOut>", self._copy_content_name_to_long_name)
+        self.content_name_label = ttk.Label(form, text="Long Name:")
+        self.content_name_label.grid(row=0, column=2, sticky="w", padx=(12, 6))
+        self.content_name_entry = ttk.Entry(form, textvariable=self.content_name_var, width=52)
+        self.content_name_entry.grid(row=0, column=3, sticky="ew")
+        self.content_source_version_label = ttk.Label(form, text="Version:")
+        self.content_source_version_label.grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.content_source_version_entry = ttk.Combobox(form, textvariable=self.content_source_version_var, width=20)
+        self.content_source_version_entry.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+        self.content_source_version_entry.bind("<<ComboboxSelected>>", self._on_content_version_selected)
+
+        ttk.Label(form, text="Version Description:").grid(row=1, column=2, sticky="w", padx=(12, 6), pady=(8, 0))
+        self.content_version_description_entry = ttk.Entry(form, textvariable=self.content_version_description_var)
+        self.content_version_description_entry.grid(row=1, column=3, sticky="ew", pady=(8, 0))
+
+        description_row = ttk.Frame(form)
+        description_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        description_row.columnconfigure(3, weight=1)
+        ttk.Label(description_row, text="Effective Date:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.content_effective_date_entry = ttk.Entry(description_row, textvariable=self.content_effective_date_var, width=12)
+        self.content_effective_date_entry.grid(row=0, column=1, sticky="w")
+        ttk.Label(description_row, text="Description:").grid(row=0, column=2, sticky="w", padx=(12, 6))
+        self.content_description_entry = ttk.Entry(description_row, textvariable=self.content_description_var)
+        self.content_description_entry.grid(row=0, column=3, sticky="ew")
+
+        action_row = ttk.Frame(form)
+        action_row.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self.content_new_version_button = ttk.Button(action_row, text="New Version", command=self._new_content_version)
+        self.content_new_version_button.grid(row=0, column=0, sticky="w")
+        self.content_save_button = ttk.Button(action_row, text="Save", command=self._save_content_from_manager)
+        self.content_save_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self._attach_content_save_tooltip()
+        ttk.Label(action_row, textvariable=self.content_editor_status_var, anchor=tk.W).grid(row=0, column=2, sticky="ew", padx=(12, 0))
+        action_row.columnconfigure(2, weight=1)
+
+        editor_frame = ttk.LabelFrame(editor_pane, text="HTML", padding=6)
+        editor_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(1, weight=1)
+        self.content_html_source_mode = False
+        self.content_html_raw_source = ""
+        self.content_html_rich_dirty = False
+        self.content_html_toolbar = ttk.Frame(editor_frame)
+        self.content_html_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        self.content_html_toolbar.columnconfigure(15, weight=1)
+        self.content_html_toolbar_buttons: list[ttk.Button] = []
+        for column, (label, command, help_text) in enumerate((
+            ("B", lambda: self._toggle_content_html_tag("bold"), "Bold"),
+            ("I", lambda: self._toggle_content_html_tag("italic"), "Italic"),
+            ("U", lambda: self._toggle_content_html_tag("underline"), "Underline"),
+            ("•", lambda: self._toggle_content_html_list(False), "Bulleted list"),
+            ("1.", lambda: self._toggle_content_html_list(True), "Numbered list"),
+            ("A", lambda: self._set_content_html_color(False), "Set text color"),
+            ("▣", lambda: self._set_content_html_color(True), "Set text highlight"),
+            ("Link…", self._add_content_html_link, "Add or change link"),
+            ("Table…", self._insert_content_html_table, "Insert a simple table"),
+            ("Style Classes", self._show_content_style_classes_placeholder, "Style Classes will be available once configured"),
+            ("↶", lambda: self._content_html_edit("undo"), "Undo"),
+            ("↷", lambda: self._content_html_edit("redo"), "Redo"),
+        )):
+            button = ttk.Button(self.content_html_toolbar, text=label, command=command)
+            button.grid(row=0, column=column, sticky="w", padx=(0, 3))
+            self._attach_tooltip(button, help_text)
+            self.content_html_toolbar_buttons.append(button)
+        self.content_html_size_var = tk.StringVar(value="Size")
+        self.content_html_size_menu = ttk.Combobox(
+            self.content_html_toolbar,
+            textvariable=self.content_html_size_var,
+            values=("Size", "10pt", "11pt", "12pt", "14pt", "16pt", "18pt", "24pt"),
+            state="readonly",
+            width=7,
+        )
+        self.content_html_size_menu.grid(row=0, column=12, sticky="w", padx=(3, 0))
+        self.content_html_size_menu.bind("<<ComboboxSelected>>", self._set_content_html_size)
+        self._attach_tooltip(self.content_html_size_menu, "Set selected text size")
+        self.content_open_html_button = ttk.Button(self.content_html_toolbar, text="Open HTML…", command=self._open_content_html_file)
+        self.content_open_html_button.grid(row=0, column=15, sticky="e", padx=(0, 6))
+        self.content_html_source_button = ttk.Button(self.content_html_toolbar, text="Source HTML", command=self._toggle_content_html_source)
+        self.content_html_source_button.grid(row=0, column=16, sticky="e")
+        self._attach_tooltip(self.content_html_source_button, "Switch between rich editing and exact HTML source")
+        self.content_html_toolbar_buttons.append(self.content_html_source_button)
+        self.content_html_text = tk.Text(
+            editor_frame,
+            wrap=tk.WORD,
+            undo=True,
+            height=18,
+            padx=8,
+            pady=6,
+            font=self._content_editor_font(),
+        )
+        self.content_html_text.grid(row=1, column=0, sticky="nsew")
+        self.content_html_text.bind("<Motion>", self._show_content_html_tag_tooltip)
+        self.content_html_text.bind("<Leave>", lambda _event: self._hide_tooltip())
+        self.content_html_text.bind("<Double-Button-1>", self._edit_content_html_structure_at_cursor)
+        html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
+        html_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
+
+        styles_frame.columnconfigure(0, weight=1)
+        styles_frame.rowconfigure(0, weight=1)
+        self.content_styles_tree = ttk.Treeview(styles_frame, columns=("style", "classes"), show="headings", height=8)
+        self.content_styles_tree.heading("style", text="Style")
+        self.content_styles_tree.heading("classes", text="Classes")
+        self.content_styles_tree.column("style", width=120, anchor=tk.W)
+        self.content_styles_tree.column("classes", width=140, anchor=tk.W)
+        self.content_styles_tree.grid(row=0, column=0, sticky="nsew")
+        fields_frame.columnconfigure(0, weight=1)
+        fields_frame.rowconfigure(1, weight=1)
+        self.content_field_filter_var = tk.StringVar()
+        self.content_field_filter_entry = ttk.Entry(fields_frame, textvariable=self.content_field_filter_var)
+        self.content_field_filter_entry.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.content_field_filter_entry.insert(0, "Filter fields")
+        self.content_field_filter_entry.configure(foreground="#777777")
+        self.content_field_filter_entry.bind("<FocusIn>", self._clear_content_field_filter_placeholder)
+        self.content_field_filter_entry.bind("<FocusOut>", self._restore_content_field_filter_placeholder)
+        self.content_field_filter_var.trace_add("write", self._render_content_fields)
+        self.content_fields_tree = ttk.Treeview(fields_frame, columns=("name", "scope"), show="headings", selectmode="browse", height=10)
+        self.content_fields_tree.heading("name", text="Field")
+        self.content_fields_tree.heading("scope", text="Scope")
+        self.content_fields_tree.column("name", width=150, anchor=tk.W)
+        self.content_fields_tree.column("scope", width=75, anchor=tk.W, stretch=False)
+        self.content_fields_tree.grid(row=1, column=0, sticky="nsew")
+        content_fields_scrollbar = ttk.Scrollbar(fields_frame, orient=tk.VERTICAL, command=self.content_fields_tree.yview)
+        content_fields_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.content_fields_tree.configure(yscrollcommand=content_fields_scrollbar.set)
+        self._content_field_records: dict[str, dict[str, str]] = {}
+        self.content_fields_tree.bind("<<TreeviewSelect>>", self._on_content_field_selected)
+        self.content_fields_tree.bind("<Motion>", self._show_content_field_tooltip)
+        self.content_fields_tree.bind("<Leave>", lambda _event: self._hide_tooltip())
+        self.content_insert_field_button = ttk.Button(fields_frame, text="Insert", command=self._insert_selected_content_field, state=tk.DISABLED)
+        self.content_insert_field_button.grid(row=2, column=0, sticky="e", pady=(6, 0))
+        self.content_metadata_controls = (
+            self.content_short_name_entry,
+            self.content_name_entry,
+            self.content_source_version_entry,
+            self.content_version_description_entry,
+            self.content_effective_date_entry,
+            self.content_description_entry,
+            self.content_new_version_button,
+            self.content_save_button,
+        )
+        self._content_save_baseline: tuple[str, ...] | None = None
+        for variable in (
+            self.content_short_name_var,
+            self.content_name_var,
+            self.content_source_version_var,
+            self.content_effective_date_var,
+            self.content_description_var,
+            self.content_version_description_var,
+        ):
+            variable.trace_add("write", self._on_content_editor_changed)
+        self.content_html_text.bind("<<Modified>>", self._on_content_html_modified, add="+")
+        self._capture_content_save_baseline()
+        self._refresh_content_fields()
+        self._update_content_save_availability()
+
+    def _content_html_set(self, html: str) -> None:
+        self.content_html_raw_source = html
+        self.content_html_text.configure(state=tk.NORMAL)
+        self.content_html_text.delete("1.0", tk.END)
+        self._content_html_tag_styles: dict[str, dict[str, str]] = {}
+        if self.content_html_source_mode:
+            self.content_html_text.insert("1.0", html)
+        else:
+            parser = ContentHtmlParser()
+            try:
+                parser.feed(html)
+                parser.close()
+            except Exception:
+                parser.parts = [(html, ())]
+            for text, styles in parser.parts:
+                start = self.content_html_text.index(tk.INSERT)
+                self.content_html_text.insert(tk.INSERT, text)
+                end = self.content_html_text.index(tk.INSERT)
+                if styles:
+                    tag_name = self._content_html_combined_style_tag(dict(styles))
+                    self.content_html_text.tag_add(tag_name, start, end)
+        self.content_html_text.edit_modified(False)
+        self.content_html_rich_dirty = False
+
+    def _content_html_combined_style_tag(self, styles: dict[str, str]) -> str:
+        encoded = json.dumps(styles, sort_keys=True)
+        tag_name = f"content_html_combined_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:10]}"
+        if tag_name in self._content_html_tag_styles:
+            return tag_name
+        self._content_html_tag_styles[tag_name] = styles
+        options: dict[str, object] = {}
+        base_font = tkfont.Font(font=self.content_html_text.cget("font"))
+        if styles.get("bold"):
+            base_font.configure(weight="bold")
+        if styles.get("italic"):
+            base_font.configure(slant="italic")
+        if styles.get("underline"):
+            base_font.configure(underline=True)
+        if styles.get("size"):
+            match = re.search(r"(\d+(?:\.\d+)?)", styles["size"])
+            if match:
+                base_font.configure(size=max(6, round(float(match.group(1)))))
+        if any(styles.get(name) for name in ("bold", "italic", "underline", "size")):
+            options["font"] = base_font
+        if styles.get("foreground"):
+            options["foreground"] = self._content_html_tk_color(styles["foreground"])
+        if styles.get("background"):
+            options["background"] = self._content_html_tk_color(styles["background"])
+        if styles.get("link"):
+            options.update(foreground="#0067c8", underline=True)
+        if styles.get("field") or styles.get("comms"):
+            options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
+        if styles.get("comms-cond"):
+            options.update(foreground="#075985", background="#e0f2fe", underline=True)
+        if styles.get("comms-loop"):
+            options.update(foreground="#7c2d12", background="#ffedd5", underline=True)
+        self.content_html_text.tag_configure(tag_name, **options)
+        return tag_name
+
+    def _content_html_style_tag(self, key: str, value: str = "1") -> str:
+        tag_name = f"content_html_{key}_{hashlib.sha1(value.encode('utf-8')).hexdigest()[:10]}"
+        if tag_name in self._content_html_tag_styles:
+            return tag_name
+        self._content_html_tag_styles[tag_name] = {key: value}
+        options: dict[str, object] = {}
+        base_font = tkfont.Font(font=self.content_html_text.cget("font"))
+        if key in ("bold", "italic", "underline", "size"):
+            if key == "bold": base_font.configure(weight="bold")
+            elif key == "italic": base_font.configure(slant="italic")
+            elif key == "underline": base_font.configure(underline=True)
+            elif key == "size":
+                match = re.search(r"(\d+(?:\.\d+)?)", value)
+                if match: base_font.configure(size=max(6, round(float(match.group(1)))))
+            options["font"] = base_font
+        elif key == "foreground": options["foreground"] = self._content_html_tk_color(value)
+        elif key == "background": options["background"] = self._content_html_tk_color(value)
+        elif key == "link": options.update(foreground="#0067c8", underline=True)
+        elif key in ("field", "comms"): options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
+        elif key == "comms-cond": options.update(foreground="#075985", background="#e0f2fe", underline=True)
+        elif key == "comms-loop": options.update(foreground="#7c2d12", background="#ffedd5", underline=True)
+        self.content_html_text.tag_configure(tag_name, **options)
+        return tag_name
+
+    @staticmethod
+    def _content_html_tk_color(value: str) -> str:
+        """Convert OCCS CSS rgb() colors to a Tk-recognised colour value."""
+        match = re.fullmatch(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", value, flags=re.IGNORECASE)
+        if not match:
+            return value
+        red, green, blue = (min(255, int(component)) for component in match.groups())
+        return f"#{red:02x}{green:02x}{blue:02x}"
+
+    def _content_html_get(self) -> str:
+        raw = self.content_html_text.get("1.0", "end-1c")
+        if self.content_html_source_mode:
+            return raw
+        if self.content_html_text.edit_modified():
+            self.content_html_rich_dirty = True
+        if not self.content_html_rich_dirty:
+            return self.content_html_raw_source
+        lines: list[str] = []
+        for line_number in range(1, int(self.content_html_text.index("end-1c").split(".")[0]) + 1):
+            start, end = f"{line_number}.0", f"{line_number}.end"
+            content = self._content_html_text_range_to_html(start, end)
+            if content.startswith("• "):
+                lines.append(f"<ul><li>{content[2:]}</li></ul>")
+            elif re.match(r"^\d+\. ", content):
+                numbered_content = re.sub(r"^\d+\. ", "", content)
+                lines.append(f"<ol><li>{numbered_content}</li></ol>")
+            elif content:
+                lines.append(f"<p>{content}</p>")
+        return "".join(lines) or "<p></p>"
+
+    def _content_html_text_range_to_html(self, start: str, end: str) -> str:
+        output: list[str] = []
+        index = start
+        active: tuple[str, ...] | None = None
+        buffer: list[str] = []
+
+        def flush() -> None:
+            nonlocal buffer
+            if not buffer:
+                return
+            styles: dict[str, str] = {}
+            for tag_name in active or ():
+                styles.update(self._content_html_tag_styles.get(tag_name, {}))
+            if styles.get("comms"):
+                value = styles.pop("comms")
+            elif styles.get("comms-cond"):
+                value = styles.pop("comms-cond")
+            elif styles.get("comms-loop"):
+                value = styles.pop("comms-loop")
+            elif styles.get("field"):
+                value = f'<comms-data>$Data{{"Id":"{html_escape(styles.pop("field"), quote=True)}"}}</comms-data>'
+            else:
+                value = html_escape("".join(buffer), quote=False)
+            if styles.get("link"):
+                value = f'<a target="_blank" rel="noopener noreferrer" href="{html_escape(styles.pop("link"), quote=True)}">{value}</a>'
+            css = []
+            if styles.get("foreground"): css.append(f'color:{styles["foreground"]}')
+            if styles.get("background"): css.append(f'background-color:{styles["background"]}')
+            if styles.get("size"): css.append(f'font-size:{styles["size"]}')
+            if styles.get("class"):
+                value = f'<span class="{html_escape(styles["class"], quote=True)}">{value}</span>'
+            if css: value = f'<span style="{";".join(css)};">{value}</span>'
+            if styles.get("underline"): value = f"<u>{value}</u>"
+            if styles.get("italic"): value = f"<i>{value}</i>"
+            if styles.get("bold"): value = f"<strong>{value}</strong>"
+            output.append(value)
+            buffer = []
+
+        while self.content_html_text.compare(index, "<", end):
+            tags = tuple(tag for tag in self.content_html_text.tag_names(index) if tag.startswith("content_html_"))
+            if active != tags:
+                flush()
+                active = tags
+            buffer.append(self.content_html_text.get(index))
+            index = self.content_html_text.index(f"{index}+1c")
+        flush()
+        return "".join(output)
+
+    def _content_html_selection(self) -> tuple[str, str] | None:
+        try:
+            return (self.content_html_text.index("sel.first"), self.content_html_text.index("sel.last"))
+        except tk.TclError:
+            return None
+
+    def _show_content_html_tag_tooltip(self, event: tk.Event) -> None:
+        if self.content_html_source_mode:
+            self._hide_tooltip()
+            return
+        index = self.content_html_text.index(f"@{event.x},{event.y}")
+        styles: dict[str, str] = {}
+        for tag_name in self.content_html_text.tag_names(index):
+            styles.update(self._content_html_tag_styles.get(tag_name, {}))
+        if styles.get("comms"):
+            self._show_tooltip(event, styles["comms"])
+        elif styles.get("comms-cond"):
+            self._show_tooltip(event, styles["comms-cond"])
+        elif styles.get("comms-loop"):
+            self._show_tooltip(event, styles["comms-loop"])
+        elif styles.get("field"):
+            self._show_tooltip(event, self._content_field_tag(styles["field"]))
+        else:
+            self._hide_tooltip()
+
+    def _edit_content_html_structure_at_cursor(self, event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        index = self.content_html_text.index(f"@{event.x},{event.y}")
+        for tag_name in self.content_html_text.tag_names(index):
+            styles = self._content_html_tag_styles.get(tag_name, {})
+            for kind in ("comms-cond", "comms-loop"):
+                raw = styles.get(kind)
+                if raw:
+                    self._edit_content_html_structure(kind, raw, tag_name, index)
+                    return "break"
+        return None
+
+    def _content_html_tag_range_at(self, tag_name: str, index: str) -> tuple[str, str] | None:
+        ranges = self.content_html_text.tag_ranges(tag_name)
+        for start, end in zip(ranges[0::2], ranges[1::2]):
+            if self.content_html_text.compare(start, "<=", index) and self.content_html_text.compare(index, "<", end):
+                return str(start), str(end)
+        return None
+
+    def _edit_content_html_structure(self, kind: str, raw: str, tag_name: str, index: str) -> None:
+        text_range = self._content_html_tag_range_at(tag_name, index)
+        if not text_range:
+            return
+        if kind == "comms-cond":
+            self._edit_content_condition(raw, tag_name, text_range)
+        else:
+            self._edit_content_loop(raw, tag_name, text_range)
+
+    def _replace_content_html_structure(self, old_tag: str, text_range: tuple[str, str], kind: str, raw: str, label: str) -> None:
+        start, end = text_range
+        self.content_html_text.tag_remove(old_tag, start, end)
+        self.content_html_text.delete(start, end)
+        self.content_html_text.insert(start, label)
+        end = self.content_html_text.index(f"{start}+{len(label)}c")
+        self.content_html_text.tag_add(self._content_html_style_tag(kind, raw), start, end)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _edit_content_condition(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        match = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+        if not match:
+            messagebox.showinfo("Condition", "This Condition has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
+            return
+        try:
+            payload = json.loads(match.group(1))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            messagebox.showinfo("Condition", "This Condition could not be parsed. Edit it in Source HTML.", parent=self.content_window)
+            return
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Condition")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+        condition_var = tk.StringVar(value=str(payload.get("Condition", "")))
+        text_var = tk.StringVar(value=str(payload.get("Text", "")))
+        content_var = tk.StringVar(value=str(payload.get("Content", "")))
+        for row, (label, variable) in enumerate((("Condition:", condition_var), ("Text:", text_var), ("Content:", content_var))):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=(0 if row == 0 else 8, 0))
+            ttk.Entry(frame, textvariable=variable, width=58).grid(row=row, column=1, sticky="ew", pady=(0 if row == 0 else 8, 0))
+        ttk.Label(frame, text="Use Text for inline content or Content to reference another Content item.", wraplength=440).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            condition = condition_var.get().strip()
+            if not condition:
+                messagebox.showerror("Condition", "Condition is required.", parent=dialog)
+                return
+            payload["Condition"] = condition
+            if text_var.get().strip():
+                payload["Text"] = text_var.get()
+                payload.pop("Content", None)
+            elif content_var.get().strip():
+                payload["Content"] = content_var.get().strip()
+                payload.pop("Text", None)
+            else:
+                messagebox.showerror("Condition", "Enter Text or Content.", parent=dialog)
+                return
+            updated = f'<comms-cond>$Cond{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-cond>'
+            self._replace_content_html_structure(tag_name, text_range, "comms-cond", updated, ContentHtmlParser._structure_label("cond", updated))
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+
+    def _edit_content_loop(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Loop")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text="Loop source", anchor=tk.W).grid(row=0, column=0, sticky="ew")
+        source = tk.Text(frame, width=76, height=12, wrap=tk.WORD)
+        source.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        source.insert("1.0", raw)
+        ttk.Label(frame, text="Loop structures vary and may nest content; this preserves the complete tag while allowing precise editing.", wraplength=540).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            updated = source.get("1.0", "end-1c").strip()
+            if not re.fullmatch(r"<comms-loop>.*</comms-loop>", updated, re.IGNORECASE | re.DOTALL):
+                messagebox.showerror("Loop", "Loop source must be wrapped in <comms-loop> and </comms-loop>.", parent=dialog)
+                return
+            self._replace_content_html_structure(tag_name, text_range, "comms-loop", updated, ContentHtmlParser._structure_label("loop", updated))
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+
+    def _toggle_content_html_tag(self, style: str) -> None:
+        if self.content_html_source_mode:
+            return
+        selected = self._content_html_selection()
+        if not selected:
+            self.content_editor_status_var.set("Select text to format it.")
+            return
+        tag_name = self._content_html_style_tag(style)
+        if tag_name in self.content_html_text.tag_names(selected[0]):
+            self.content_html_text.tag_remove(tag_name, *selected)
+        else:
+            self.content_html_text.tag_add(tag_name, *selected)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _set_content_html_color(self, background: bool) -> None:
+        if self.content_html_source_mode or not self._content_html_selection():
+            self.content_editor_status_var.set("Select text to color it.")
+            return
+        chosen = colorchooser.askcolor(parent=self.content_window, title="Select highlight color" if background else "Select text color")[1]
+        if chosen:
+            self.content_html_text.tag_add(self._content_html_style_tag("background" if background else "foreground", chosen), *self._content_html_selection())
+            self.content_html_rich_dirty = True
+            self._on_content_editor_changed()
+
+    def _set_content_html_size(self, _event: tk.Event | None = None) -> None:
+        size = self.content_html_size_var.get()
+        selected = self._content_html_selection()
+        if self.content_html_source_mode or not selected or size == "Size":
+            if size != "Size":
+                self.content_editor_status_var.set("Select text to set its size.")
+            return
+        self.content_html_text.tag_add(self._content_html_style_tag("size", size), *selected)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _add_content_html_link(self) -> None:
+        selected = self._content_html_selection()
+        if self.content_html_source_mode or not selected:
+            self.content_editor_status_var.set("Select text to turn into a link.")
+            return
+        url = simpledialog.askstring("Content Link", "URL:", parent=self.content_window)
+        if url:
+            self.content_html_text.tag_add(self._content_html_style_tag("link", url.strip()), *selected)
+            self.content_html_rich_dirty = True
+            self._on_content_editor_changed()
+
+    def _toggle_content_html_list(self, numbered: bool) -> None:
+        if self.content_html_source_mode:
+            return
+        selected = self._content_html_selection() or (self.content_html_text.index("insert linestart"), self.content_html_text.index("insert lineend"))
+        first, last = int(selected[0].split(".")[0]), int(selected[1].split(".")[0])
+        for line in range(first, last + 1):
+            index = f"{line}.0"
+            value = self.content_html_text.get(index, f"{line}.end")
+            prefix = f"{line - first + 1}. " if numbered else "• "
+            if value.startswith(("• ", "1. ", "2. ", "3. ")):
+                self.content_html_text.delete(index, f"{index}+2c")
+            else:
+                self.content_html_text.insert(index, prefix)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _insert_content_html_table(self) -> None:
+        if self.content_html_source_mode:
+            self.content_html_text.insert(tk.INSERT, "<table><tbody><tr><td>Cell</td><td>Cell</td></tr></tbody></table>")
+        else:
+            self.content_html_text.insert(tk.INSERT, "\nTable: Cell 1 | Cell 2\n")
+            self.content_editor_status_var.set("For editable table structure or sizing, use Source HTML.")
+        if not self.content_html_source_mode:
+            self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _show_content_style_classes_placeholder(self) -> None:
+        self.content_editor_status_var.set("Style Classes are reserved for the forthcoming style-class workflow.")
+
+    def _content_html_edit(self, action: str) -> None:
+        try:
+            self.content_html_text.edit_undo() if action == "undo" else self.content_html_text.edit_redo()
+        except tk.TclError:
+            return
+        if not self.content_html_source_mode:
+            self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _toggle_content_html_source(self) -> None:
+        html = self.content_html_raw_source if not self.content_html_source_mode and not self.content_html_rich_dirty else self._content_html_get()
+        self.content_html_source_mode = not self.content_html_source_mode
+        self.content_html_source_button.configure(text="Rich Text" if self.content_html_source_mode else "Source HTML")
+        self._content_html_set(html)
+        for button in self.content_html_toolbar_buttons[:-1]:
+            button.configure(state=tk.DISABLED if self.content_html_source_mode else tk.NORMAL)
+        self.content_html_size_menu.configure(state=tk.DISABLED if self.content_html_source_mode else "readonly")
+        self._on_content_editor_changed()
+
+    def _refresh_content_editor_mode(self) -> None:
+        pass
+
+    def _copy_content_name_to_long_name(self, _event: tk.Event | None = None) -> None:
+        if self.content_mode_var.get() == "create" and not self.content_name_var.get().strip():
+            self.content_name_var.set(self.content_short_name_var.get().strip())
+        self._refresh_content_fields()
+
+    def _clear_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if self.content_browser_filter_var.get() == "Filter by name or description":
+            self.content_browser_filter_var.set("")
+            self.content_filter_entry.configure(foreground="#000000")
+
+    def _restore_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if not self.content_browser_filter_var.get().strip():
+            self.content_browser_filter_var.set("Filter by name or description")
+            self.content_filter_entry.configure(foreground="#777777")
+
+    def _new_content_in_manager(self) -> None:
+        if not self._confirm_discard_content_changes("start a new Content item"):
+            return
+        self.content_mode_var.set("create")
+        self.content_short_name_var.set("")
+        self.content_name_var.set("")
+        self.content_source_version_var.set("1.0")
+        self.content_source_version_entry.configure(values=[])
+        self.content_effective_date_var.set(datetime.now().date().isoformat())
+        self.content_description_var.set("")
+        self.content_version_description_var.set("")
+        self._set_content_html_controls_enabled(True)
+        self._content_html_set("")
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self._refresh_content_fields()
+        self.content_load_button.configure(state=tk.DISABLED)
+        self.content_editor_status_var.set(self._content_editor_ready_text())
+        self._capture_content_save_baseline()
+
+    def _content_editor_ready_text(self) -> str:
+        return ""
+
+    def _confirm_discard_content_changes(self, action: str) -> bool:
+        """Ask before an editor action replaces unsaved Content Manager state."""
+        if not self._content_has_changes():
+            return True
+        assert self.content_window is not None
+        return messagebox.askyesno(
+            "Discard Content Changes?",
+            f"You have unsaved content changes. {action.capitalize()} will discard them.\n\nContinue?",
+            icon=messagebox.WARNING,
+            parent=self.content_window,
+        )
+
+    def _hide_content_window(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        if not self._confirm_discard_content_changes("closing the Content Manager"):
+            return
+        self.content_window.withdraw()
+
+    def _attach_content_save_tooltip(self) -> None:
+        self.content_save_button.bind(
+            "<Enter>",
+            lambda event: self._show_tooltip(event, self._active_occs_config_status_text()),
+            add="+",
+        )
+        self.content_save_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
+
+    def _update_content_save_availability(self) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        if self.content_save_button.instate(("disabled",)) and self.content_html_text.cget("state") == tk.DISABLED:
+            return
+        can_save = bool(self._get_last_occs_config_id()) and self._content_has_changes()
+        self.content_save_button.configure(state=tk.NORMAL if can_save else tk.DISABLED)
+
+    def _content_save_snapshot(self) -> tuple[str, ...]:
+        return (
+            self.content_short_name_var.get().strip(),
+            self.content_name_var.get().strip(),
+            self.content_source_version_var.get().strip(),
+            self.content_effective_date_var.get().strip(),
+            self.content_description_var.get().strip(),
+            self.content_version_description_var.get().strip(),
+            self._content_html_get(),
+        )
+
+    def _content_has_changes(self) -> bool:
+        snapshot = self._content_save_snapshot()
+        if self.content_mode_var.get() == "create":
+            return bool(snapshot[0] and snapshot[2] and snapshot[3] and snapshot[6].strip())
+        return self._content_save_baseline is not None and snapshot != self._content_save_baseline
+
+    def _capture_content_save_baseline(self) -> None:
+        self._content_save_baseline = self._content_save_snapshot()
+        self.content_html_text.edit_modified(False)
+        self._update_content_save_availability()
+
+    def _on_content_editor_changed(self, *_args: object) -> None:
+        self._update_content_save_availability()
+
+    def _on_content_html_modified(self, _event: tk.Event | None = None) -> None:
+        if self.content_html_text.edit_modified():
+            self.content_html_text.edit_modified(False)
+            if not self.content_html_source_mode:
+                self.content_html_rich_dirty = True
+            self._update_content_save_availability()
+
+    def _load_all_content_browser(self, _event: tk.Event, scope: str) -> str:
+        self._load_content_browser(scope, bypass_filter=True)
+        return "break"
+
+    def _load_content_browser(self, scope: str = "config", *, bypass_filter: bool = False) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        config_id = self._get_last_occs_config_id()
+        if scope == "config" and not config_id:
+            self.content_browser_status_var.set("Set an active Config to browse content.")
+            return
+        filter_text = self.content_browser_filter_var.get().strip()
+        if filter_text == "Filter by name or description":
+            filter_text = ""
+        if scope == "all" and not filter_text and not bypass_filter:
+            self.content_browser_status_var.set("Enter a filter, or Shift-click List to list all Contents.")
+            self.content_filter_entry.focus_set()
+            return
+        args = ["content", "list", "--timeout", str(self._get_occs_request_timeout_ms())]
+        if scope == "config":
+            args.extend(["--config-id", config_id])
+        if filter_text:
+            args.extend(["--filter", filter_text])
+        content_type = self.content_browser_type_var.get().strip()
+        if content_type and content_type != "All types":
+            args.extend(["--type", content_type])
+        self._content_browser_scope = scope
+        for item_id in self.content_browser_tree.get_children():
+            self.content_browser_tree.delete(item_id)
+        self._content_browser_records.clear()
+        self.content_browser_tree.insert("", tk.END, values=("Loading…", ""))
+        self.content_load_button.configure(state=tk.DISABLED)
+        self.content_browser_status_var.set("")
+        self._run_occs_json_command_async(
+            args,
+            "Loading content browser...",
+            self._on_content_browser_loaded,
+            on_failure=self._on_content_browser_load_failed,
+        )
+
+    def _on_content_browser_loaded(self, result: dict[str, object]) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        contents = result.get("contents")
+        values = [item for item in contents if isinstance(item, dict)] if isinstance(contents, list) else []
+        for item_id in self.content_browser_tree.get_children():
+            self.content_browser_tree.delete(item_id)
+        self._content_browser_records.clear()
+        for item in self._sorted_content_browser_items(values):
+            short_name = str(item.get("shortName", "")).strip()
+            if not short_name:
+                continue
+            item_id = self.content_browser_tree.insert("", tk.END, values=(short_name, str(item.get("contentType", "")).strip()))
+            self._content_browser_records[item_id] = item
+        count = len(self._content_browser_records)
+        if result.get("truncated"):
+            self.content_browser_status_var.set(f"Showing first {count} content items. Refine the filter for more.")
+        else:
+            self.content_browser_status_var.set(f"{count} content item{'s' if count != 1 else ''}.")
+
+    def _on_content_browser_load_failed(self, error: Exception) -> None:
+        if self.content_window is None or not self.content_window.winfo_exists():
+            return
+        self.content_browser_status_var.set("Could not load content.")
+        messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _sorted_content_browser_items(self, items: list[dict[str, object]]) -> list[dict[str, object]]:
+        column = self._content_browser_sort_column
+        return sorted(
+            items,
+            key=lambda item: str(item.get(column, "")).casefold(),
+            reverse=self._content_browser_sort_reverse,
+        )
+
+    def _sort_content_browser(self, column: str) -> None:
+        if column == self._content_browser_sort_column:
+            self._content_browser_sort_reverse = not self._content_browser_sort_reverse
+        else:
+            self._content_browser_sort_column = column
+            self._content_browser_sort_reverse = False
+        items = list(self._content_browser_records.values())
+        for item_id in self.content_browser_tree.get_children():
+            self.content_browser_tree.delete(item_id)
+        self._content_browser_records.clear()
+        for item in self._sorted_content_browser_items(items):
+            item_id = self.content_browser_tree.insert(
+                "", tk.END,
+                values=(str(item.get("shortName", "")).strip(), str(item.get("contentType", "")).strip()),
+            )
+            self._content_browser_records[item_id] = item
+        self.content_load_button.configure(state=tk.DISABLED)
+
+    def _on_content_browser_selected(self, _event: tk.Event | None = None) -> None:
+        selected = self.content_browser_tree.selection()
+        item = self._content_browser_records.get(selected[0]) if selected else None
+        self.content_load_button.configure(state=tk.NORMAL if item else tk.DISABLED)
+
+    def _load_selected_content(self) -> None:
+        selected = self.content_browser_tree.selection()
+        item = self._content_browser_records.get(selected[0]) if selected else None
+        short_name = str(item.get("shortName", "")).strip() if item else ""
+        if not short_name:
+            return
+        if not self._confirm_discard_content_changes(f"loading {short_name}"):
+            return
+        self.content_load_button.configure(state=tk.DISABLED)
+        self._show_content_html_loading()
+        self._show_content_styles_loading()
+        self.content_metadata_var.set(f"Loading {short_name} metadata and versions…")
+        self._run_occs_json_command_async(
+            ["content", "inspect", short_name, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} versions...",
+            self._on_content_inspected,
+            on_failure=lambda error: self._on_content_inspect_failed(error, short_name),
+        )
+
+    def _on_content_inspected(self, result: dict[str, object]) -> None:
+        content = result.get("content") if isinstance(result.get("content"), dict) else {}
+        versions = result.get("versions") if isinstance(result.get("versions"), list) else []
+        short_name = str(content.get("shortName", "")).strip()
+        name = str(content.get("name", "")).strip()
+        description = str(content.get("description", "")).strip()
+        self.content_short_name_var.set(short_name)
+        self.content_name_var.set(name)
+        self.content_description_var.set(description)
+        self._refresh_content_fields()
+        self.content_mode_var.set("version")
+        version_names = [str(item.get("shortName", "")).strip() for item in versions if isinstance(item, dict) and str(item.get("shortName", "")).strip()]
+        self.content_source_version_entry.configure(values=version_names)
+        if version_names:
+            self.content_source_version_var.set(version_names[0])
+        summary = f"{name or short_name}\nShort name: {short_name}"
+        if description:
+            summary += f"\n{description}"
+        summary += f"\nVersions: {', '.join(version_names) or '(none)'}"
+        self.content_metadata_var.set(summary)
+        if version_names:
+            self._load_selected_content_version(short_name, version_names[0])
+            self._load_content_styles(short_name, version_names[0])
+
+    def _on_content_version_selected(self, _event: tk.Event | None = None) -> None:
+        short_name = self.content_short_name_var.get().strip()
+        version = self.content_source_version_var.get().strip()
+        if short_name and version:
+            if self._content_save_baseline is not None and version != self._content_save_baseline[2]:
+                if not self._confirm_discard_content_changes(f"loading version {version}"):
+                    self.content_source_version_var.set(self._content_save_baseline[2])
+                    return
+            self._load_selected_content_version(short_name, version)
+            self._load_content_styles(short_name, version)
+
+    def _on_content_inspect_failed(self, error: Exception, short_name: str) -> None:
+        self.content_metadata_var.set(f"Could not load {short_name} metadata.")
+        self._set_content_html_controls_enabled(True)
+        if self.content_window is not None and self.content_window.winfo_exists():
+            messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _load_selected_content_version(self, short_name: str, version: str) -> None:
+        self._show_content_html_loading()
+        self.content_editor_status_var.set(f"Loading {short_name} version {version}…")
+        self._run_occs_json_command_async(
+            ["content", "read", short_name, version, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} version {version}...",
+            self._on_content_version_loaded,
+            on_failure=lambda error: self._on_content_version_load_failed(error, short_name, version),
+        )
+
+    def _load_content_styles(self, short_name: str, version: str) -> None:
+        self._show_content_styles_loading()
+        self._run_occs_json_command_async(
+            ["content", "styles", short_name, version, "--timeout", str(self._get_occs_request_timeout_ms())],
+            f"Loading {short_name} styles...",
+            lambda result: self._on_content_styles_loaded(result, short_name, version),
+            on_failure=lambda _error: self._on_content_styles_load_failed(short_name, version),
+            allow_parallel_read=True,
+        )
+
+    def _show_content_styles_loading(self) -> None:
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self.content_styles_tree.insert("", tk.END, values=("Loading…", ""))
+
+    def _on_content_styles_loaded(self, result: dict[str, object], short_name: str, version: str) -> None:
+        if short_name != self.content_short_name_var.get().strip() or version != self.content_source_version_var.get().strip():
+            return
+        styles = result.get("styles") if isinstance(result.get("styles"), list) else []
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        for style in styles:
+            if not isinstance(style, dict):
+                continue
+            style_name = (
+                str(style.get("shortName", "")).strip()
+                or str(style.get("name", "")).strip()
+                or str(style.get("styleUuid", "")).strip()
+                or "(style)"
+            )
+            classes = ", ".join(str(item) for item in style.get("classNames", []) if item)
+            self.content_styles_tree.insert("", tk.END, values=(style_name, classes))
+
+    def _on_content_styles_load_failed(self, short_name: str, version: str) -> None:
+        if short_name != self.content_short_name_var.get().strip() or version != self.content_source_version_var.get().strip():
+            return
+        for item_id in self.content_styles_tree.get_children():
+            self.content_styles_tree.delete(item_id)
+        self.content_styles_tree.insert("", tk.END, values=("Unavailable", ""))
+
+    def _clear_content_field_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if self.content_field_filter_var.get() == "Filter fields":
+            self.content_field_filter_var.set("")
+            self.content_field_filter_entry.configure(foreground="#000000")
+
+    def _restore_content_field_filter_placeholder(self, _event: tk.Event | None = None) -> None:
+        if not self.content_field_filter_var.get().strip():
+            self.content_field_filter_var.set("Filter fields")
+            self.content_field_filter_entry.configure(foreground="#777777")
+
+    @staticmethod
+    def _content_field_name(field: dict[str, object]) -> str:
+        return str(field.get("name") or field.get("Name") or field.get("$$Id") or field.get("Id") or "").strip()
+
+    def _content_iteration_fields(self, content_name: str) -> list[dict[str, str]]:
+        """Find iteration fields only for AT Content nodes matching this content name."""
+        payload = getattr(self, "current_payload", None)
+        if not isinstance(payload, dict) or not content_name:
+            return []
+        fields: list[dict[str, str]] = []
+
+        def walk(value: object) -> None:
+            if isinstance(value, dict):
+                owner_name = str(value.get("Name") or value.get("$$Id") or value.get("Id") or "").strip()
+                iteration = self._extract_iteration(value)
+                iteration_name = str(iteration.get("Name") or iteration.get("$$Id") or iteration.get("Id") or "").strip() if isinstance(iteration, dict) else ""
+                if (owner_name == content_name or iteration_name == content_name) and isinstance(iteration, dict):
+                    for field in self._extract_iteration_fields(iteration):
+                        name = self._content_field_name(field)
+                        if name:
+                            fields.append({"name": name, "scope": "Iteration", "path": str(field.get("Path", "")).strip()})
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(payload)
+        return fields
+
+    def _content_available_fields(self) -> list[dict[str, str]]:
+        fields: list[dict[str, str]] = []
+        for field in self._loaded_fields:
+            if not isinstance(field, dict):
+                continue
+            name = self._content_field_name(field)
+            if name:
+                fields.append({"name": name, "scope": "AT", "path": str(field.get("path", field.get("Path", "")).strip())})
+        fields.extend(self._content_iteration_fields(self.content_short_name_var.get().strip()))
+        unique: dict[tuple[str, str], dict[str, str]] = {}
+        for field in fields:
+            unique[(field["name"], field["scope"])] = field
+        return sorted(unique.values(), key=lambda field: (field["name"].casefold(), field["scope"]))
+
+    def _refresh_content_fields(self) -> None:
+        if not hasattr(self, "content_fields_tree"):
+            return
+        self._content_field_records = {}
+        self._render_content_fields()
+
+    def _render_content_fields(self, *_args: object) -> None:
+        if not hasattr(self, "content_fields_tree"):
+            return
+        filter_text = self.content_field_filter_var.get().strip().casefold()
+        if filter_text == "filter fields":
+            filter_text = ""
+        self.content_fields_tree.delete(*self.content_fields_tree.get_children())
+        self._content_field_records = {}
+        for field in self._content_available_fields():
+            searchable = " ".join(field.values()).casefold()
+            if filter_text and filter_text not in searchable:
+                continue
+            item_id = self.content_fields_tree.insert("", tk.END, values=(field["name"], field["scope"]))
+            self._content_field_records[item_id] = field
+        self.content_insert_field_button.configure(state=tk.DISABLED)
+
+    def _selected_content_field(self) -> dict[str, str] | None:
+        selected = self.content_fields_tree.selection()
+        return self._content_field_records.get(selected[0]) if selected else None
+
+    def _content_field_tag(self, field_name: str) -> str:
+        return f'<comms-data>$Data{{"Id":"{field_name}"}}</comms-data>'
+
+    def _on_content_field_selected(self, _event: tk.Event | None = None) -> None:
+        enabled = self._selected_content_field() is not None and self.content_html_text.cget("state") == tk.NORMAL
+        self.content_insert_field_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def _show_content_field_tooltip(self, event: tk.Event) -> None:
+        item_id = self.content_fields_tree.identify_row(event.y)
+        field = self._content_field_records.get(item_id)
+        if field:
+            self._show_tooltip(event, self._content_field_tag(field["name"]))
+        else:
+            self._hide_tooltip()
+
+    def _insert_selected_content_field(self) -> None:
+        field = self._selected_content_field()
+        if not field:
+            return
+        name = field["name"]
+        if self.content_html_source_mode:
+            self.content_html_text.insert(tk.INSERT, self._content_field_tag(name))
+        else:
+            start = self.content_html_text.index(tk.INSERT)
+            self.content_html_text.insert(tk.INSERT, f"${name}")
+            self.content_html_text.tag_add(self._content_html_style_tag("field", name), start, tk.INSERT)
+            self.content_html_rich_dirty = True
+        self.content_html_text.focus_set()
+        self._on_content_editor_changed()
+
+    def _show_content_html_loading(self) -> None:
+        self._set_content_html_controls_enabled(False)
+        self.content_html_text.configure(state=tk.NORMAL)
+        self.content_html_text.delete("1.0", tk.END)
+        self.content_html_text.insert("1.0", "Loading…")
+        self.content_html_text.configure(state=tk.DISABLED)
+
+    def _set_content_html_controls_enabled(self, enabled: bool) -> None:
+        self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        if hasattr(self, "content_insert_field_button"):
+            self.content_insert_field_button.configure(state=tk.DISABLED)
+        for button in self.content_html_toolbar_buttons:
+            button.configure(state=tk.NORMAL if enabled and (not self.content_html_source_mode or button is self.content_html_source_button) else tk.DISABLED)
+        self.content_html_size_menu.configure(state="readonly" if enabled and not self.content_html_source_mode else tk.DISABLED)
+        for control in self.content_metadata_controls:
+            control.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        if enabled:
+            self._update_content_save_availability()
+
+    def _on_content_version_loaded(self, result: dict[str, object]) -> None:
+        version = result.get("version") if isinstance(result.get("version"), dict) else {}
+        html = str(result.get("html", ""))
+        self._set_content_html_controls_enabled(True)
+        self.content_html_source_mode = False
+        self.content_html_source_button.configure(text="Source HTML")
+        try:
+            self._content_html_set(html)
+        except Exception as error:  # preserve editable source when a new Comms construct is not renderable yet
+            self._debug_log(f"Content rich render failed; falling back to Source HTML: {error}")
+            self.content_html_source_mode = True
+            self.content_html_source_button.configure(text="Rich Text")
+            self._content_html_set(html)
+            self.content_editor_status_var.set("Loaded Source HTML because rich rendering was unavailable for this Content.")
+        for button in self.content_html_toolbar_buttons:
+            button.configure(state=tk.NORMAL if not self.content_html_source_mode or button is self.content_html_source_button else tk.DISABLED)
+        self.content_html_size_menu.configure(state="readonly" if not self.content_html_source_mode else tk.DISABLED)
+        self.content_source_version_var.set(str(version.get("shortName", "")))
+        effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
+        self.content_effective_date_var.set(effective_date)
+        self.content_version_description_var.set(str(version.get("description", "")))
+        current_metadata = self.content_metadata_var.get().split("\nVersions:", 1)[0]
+        self.content_metadata_var.set(f"{current_metadata}\nVersion: {version.get('shortName', '')}    Effective: {effective_date or '-'}")
+        if not self.content_html_source_mode:
+            self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
+        self._capture_content_save_baseline()
+
+    def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
+        self._set_content_html_controls_enabled(True)
+        self.content_editor_status_var.set(f"Could not load {short_name} version {version}.")
+        if self.content_window is not None and self.content_window.winfo_exists():
+            messagebox.showerror("Content Manager", str(error), parent=self.content_window)
+
+    def _open_content_html_file(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self.content_window,
+            title="Open Content HTML",
+            filetypes=[("HTML", "*.html *.htm"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            html = Path(path).read_text(encoding="utf-8")
+        except OSError as error:
+            messagebox.showerror("Open Content HTML", str(error), parent=self.content_window)
+            return
+        self._content_html_set(html)
+        self.content_editor_status_var.set(f"Loaded {os.path.basename(path)}")
+
+    def _save_content_from_manager(self) -> None:
+        assert self.content_window is not None
+        config_id = self._require_active_occs_config_id(self.content_window)
+        if not config_id:
+            return
+        short_name = self.content_short_name_var.get().strip()
+        version = self.content_source_version_var.get().strip()
+        effective_date = self.content_effective_date_var.get().strip()
+        html = self._content_html_get()
+        if not short_name or not version or not effective_date or not html.strip():
+            messagebox.showerror("Content Manager", "Content short name, version, effective date, and HTML are required.", parent=self.content_window)
+            return
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", effective_date):
+            messagebox.showerror("Content Manager", "Effective date must be YYYY-MM-DD.", parent=self.content_window)
+            return
+        mode = self.content_mode_var.get()
+        action = "create content" if mode == "create" else f"save {short_name} version {version}"
+        if not messagebox.askyesno("Confirm Content Save", f"Use {self._active_occs_config_status_text()} to {action} for {short_name}?", parent=self.content_window):
+            return
+        temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
+        try:
+            temporary_html.write(html)
+            temporary_html.close()
+        except OSError as error:
+            temporary_html.close()
+            Path(temporary_html.name).unlink(missing_ok=True)
+            messagebox.showerror("Content Manager", f"Could not prepare HTML upload: {error}", parent=self.content_window)
+            return
+        if mode == "create":
+            args = ["content", "create", short_name, "--config-id", config_id, "--html", temporary_html.name, "--version", version]
+            display_name = self.content_name_var.get().strip()
+            if display_name:
+                args.extend(["--name", display_name])
+            if self.content_description_var.get().strip():
+                args.extend(["--desc", self.content_description_var.get().strip()])
+        else:
+            args = ["content", "save", short_name, version, "--config-id", config_id, "--html", temporary_html.name,
+                    "--short-name", short_name, "--name", self.content_name_var.get().strip(),
+                    "--desc", self.content_description_var.get().strip(), "--new-version", version,
+                    "--version-desc", self.content_version_description_var.get().strip()]
+        if mode == "create":
+            args.extend(["--effective-date", effective_date])
+        args.extend(["--timeout", str(self._get_occs_request_timeout_ms())])
+        self.content_editor_status_var.set("Saving to OCCS…")
+
+        def _cleanup() -> None:
+            Path(temporary_html.name).unlink(missing_ok=True)
+
+        self._run_occs_json_command_async(
+            args,
+            "Saving content to OCCS...",
+            lambda result: self._on_content_save_complete(result, short_name, version, _cleanup),
+            on_failure=lambda error: self._on_content_save_failed(error, _cleanup),
+        )
+
+    def _new_content_version(self) -> None:
+        assert self.content_window is not None
+        if self.content_mode_var.get() == "create":
+            messagebox.showerror("Content Manager", "Load or save a content item before creating a new version.", parent=self.content_window)
+            return
+        source_version = self.content_source_version_var.get().strip()
+        short_name = self.content_short_name_var.get().strip()
+        if not short_name or not source_version:
+            messagebox.showerror("Content Manager", "Select a content version first.", parent=self.content_window)
+            return
+        new_version = simpledialog.askstring("New Version", "Version name:", parent=self.content_window)
+        if not new_version:
+            return
+        effective_date = simpledialog.askstring("New Version", "Effective date (YYYY-MM-DD):", initialvalue=datetime.now().date().isoformat(), parent=self.content_window)
+        if not effective_date:
+            return
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", effective_date):
+            messagebox.showerror("New Version", "Effective date must be YYYY-MM-DD.", parent=self.content_window)
+            return
+        config_id = self._require_active_occs_config_id(self.content_window)
+        if not config_id:
+            return
+        if not messagebox.askyesno(
+            "Create Content Version",
+            f"Create version {new_version.strip()} from {source_version} for {short_name} using {self._active_occs_config_status_text()}?",
+            parent=self.content_window,
+        ):
+            return
+        html = self._content_html_get()
+        temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
+        try:
+            temporary_html.write(html)
+            temporary_html.close()
+        except OSError as error:
+            temporary_html.close()
+            Path(temporary_html.name).unlink(missing_ok=True)
+            messagebox.showerror("New Version", f"Could not prepare HTML upload: {error}", parent=self.content_window)
+            return
+        args = ["content", "version", short_name, new_version.strip(), "--config-id", config_id, "--from-version", source_version,
+                "--html", temporary_html.name, "--effective-date", effective_date]
+        self.content_editor_status_var.set(f"Creating version {new_version.strip()}…")
+        self._run_occs_json_command_async(
+            args,
+            f"Creating {short_name} version {new_version.strip()}...",
+            lambda result: self._on_new_content_version_complete(result, short_name, new_version.strip(), temporary_html.name),
+            on_failure=lambda error: self._on_content_save_failed(error, lambda: Path(temporary_html.name).unlink(missing_ok=True)),
+        )
+
+    def _on_new_content_version_complete(self, result: dict[str, object], short_name: str, version: str, html_path: str) -> None:
+        Path(html_path).unlink(missing_ok=True)
+        self.content_source_version_var.set(version)
+        self.content_editor_status_var.set(f"Created version {version}.")
+        self._load_selected_content_version(short_name, version)
+
+    def _on_content_save_complete(self, result: dict[str, object], short_name: str, version: str, cleanup: object) -> None:
+        if callable(cleanup):
+            cleanup()
+        self.content_editor_status_var.set(f"Saved {short_name} version {version}.")
+        self._capture_content_save_baseline()
+        messagebox.showinfo("Content Manager", f"Saved {short_name} version {version} to OCCS.", parent=self.content_window)
+
+    def _on_content_save_failed(self, error: Exception, cleanup: object) -> None:
+        if callable(cleanup):
+            cleanup()
+        self.content_editor_status_var.set("Save failed.")
+        messagebox.showerror("Content Manager", str(error), parent=self.content_window)
 
     def _hide_layouts_window(self) -> None:
         if self.layouts_window is None or not self.layouts_window.winfo_exists():
@@ -5214,7 +6653,7 @@ class AToolApp:
             if entry_name == "preview":
                 state = tk.NORMAL if self._can_preview_occs_package() else tk.DISABLED
             elif entry_name == "cancel":
-                state = tk.NORMAL if self._occs_operation_in_progress else tk.DISABLED
+                state = tk.NORMAL if self._occs_preview_in_progress else tk.DISABLED
             else:
                 continue
             try:
@@ -5537,8 +6976,22 @@ class AToolApp:
         )
         collapse_check.grid(row=0, column=0, sticky="w")
 
+        content_editor_group = ttk.LabelFrame(container, text="Content Editor", padding=10)
+        content_editor_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        content_editor_group.columnconfigure(1, weight=1)
+        content_editor_font_var = tk.StringVar(value=self._get_content_editor_font_family() or "System Default")
+        ttk.Label(content_editor_group, text="HTML Font:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        content_editor_font_entry = ttk.Combobox(
+            content_editor_group,
+            textvariable=content_editor_font_var,
+            values=("System Default", *sorted(tkfont.families())),
+            width=38,
+        )
+        content_editor_font_entry.grid(row=0, column=1, sticky="ew")
+        self._attach_tooltip(content_editor_font_entry, "Font used by the rich HTML editor; leave as System Default for ATool's proportional UI font.")
+
         diagnostics_group = ttk.LabelFrame(container, text="Diagnostics", padding=10)
-        diagnostics_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        diagnostics_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         debug_var = tk.BooleanVar(value=self._is_debug_logging_enabled())
         debug_check = ttk.Checkbutton(
@@ -5549,7 +7002,7 @@ class AToolApp:
         debug_check.grid(row=0, column=0, sticky="w")
 
         occs_group = ttk.LabelFrame(container, text="OCCS CLI", padding=10)
-        occs_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        occs_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         occs_group.columnconfigure(1, weight=1)
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
@@ -5660,7 +7113,7 @@ class AToolApp:
         )
         config_target_session_alias_entry.grid(row=6, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        ttk.Label(occs_group, text="Config ID Filter:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(occs_group, text="Configuration Filter:").grid(row=7, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_id_filter_entry = ttk.Entry(occs_group, textvariable=config_id_filter_var, width=54)
         config_id_filter_entry.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(8, 0))
 
@@ -5779,7 +7232,7 @@ class AToolApp:
         )
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
-        preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        preview_group.grid(row=5, column=0, sticky="ew", pady=(10, 0))
         preview_group.columnconfigure(1, weight=1)
 
         def _browse_preview_program(render_type: str) -> None:
@@ -5831,10 +7284,10 @@ class AToolApp:
             wraplength=520,
             justify=tk.LEFT,
         )
-        path_label.grid(row=5, column=0, sticky="w", pady=(10, 0))
+        path_label.grid(row=6, column=0, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=6, column=0, sticky="e", pady=(14, 0))
+        buttons.grid(row=7, column=0, sticky="e", pady=(14, 0))
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
@@ -5855,7 +7308,7 @@ class AToolApp:
                 except re.error as error:
                     messagebox.showerror(
                         "User Settings",
-                        f"Config ID Filter is not a valid regular expression.\n\nDetails: {error}",
+                        f"Configuration Filter is not a valid regular expression.\n\nDetails: {error}",
                         parent=dialog,
                     )
                     return
@@ -5877,6 +7330,8 @@ class AToolApp:
                     return
             self._set_confirm_on_quit_enabled(bool(confirm_on_quit_var.get()))
             self._set_document_collapse_enabled(bool(collapse_var.get()))
+            selected_content_editor_font = content_editor_font_var.get().strip()
+            self._set_content_editor_font_family("" if selected_content_editor_font == "System Default" else selected_content_editor_font)
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
@@ -5944,7 +7399,9 @@ class AToolApp:
 
     def _set_occs_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
-        section["session_alias"] = str(session_alias or "").strip()
+        alias = str(session_alias or "").strip()
+        section["session_alias"] = alias
+        self._update_app_state({"last_occs_session_alias": alias})
 
     def _set_occs_pre_prod_session_alias(self, session_alias: str) -> None:
         section = self._occs_settings_section()
@@ -6011,6 +7468,56 @@ class AToolApp:
         section = self._occs_settings_section()
         section["last_config_id"] = str(config_id or "").strip()
         self._save_user_settings()
+
+    def _active_occs_config_display_name(self) -> str:
+        section = self.user_settings.get("occs")
+        if not isinstance(section, dict):
+            return ""
+        label = str(section.get("active_config_label", "")).strip()
+        # Older settings stored labels such as "_andy (90)". Never surface the
+        # internal numeric ID in the authoring UI.
+        return re.sub(r"\s+\(\d+\)$", "", label).strip()
+
+    def _active_occs_config_status_text(self) -> str:
+        label = self._active_occs_config_display_name()
+        return f"Config : {label}" if label else "Config : (not set)"
+
+    def _set_active_occs_config(self, config: dict[str, str]) -> None:
+        config_id = str(config.get("id", "")).strip() or str(config.get("shortName", "")).strip()
+        if not config_id:
+            raise ValueError("The selected Config ID has no usable identifier.")
+        section = self._occs_settings_section()
+        section["last_config_id"] = config_id
+        section["active_config_label"] = str(config.get("shortName", "")).strip() or str(config.get("name", "")).strip()
+        self._save_user_settings()
+        self._refresh_app_menus()
+        if self.content_window is not None and self.content_window.winfo_exists():
+            self.content_editor_status_var.set(self._content_editor_ready_text())
+            self._update_content_save_availability()
+        self._show_temporary_status(f"Active Config set to {self._active_occs_config_display_name()}", duration_ms=5000)
+
+    def _refresh_app_menus(self) -> None:
+        for window in (
+            self.root,
+            self.fields_window,
+            self.layouts_window,
+            self.data_browser_window,
+            self.content_window,
+            self.condition_library_window,
+        ):
+            if window is not None and window.winfo_exists():
+                self._attach_app_menu(window)
+
+    def _require_active_occs_config_id(self, parent: tk.Misc | None = None) -> str:
+        config_id = self._get_last_occs_config_id()
+        if config_id:
+            return config_id
+        messagebox.showinfo(
+            "Content Manager",
+            "Choose Config > Set… before creating or versioning content.",
+            parent=parent or self.root,
+        )
+        return ""
 
     def _occs_settings_section(self) -> dict[str, object]:
         section = self.user_settings.setdefault("occs", {})
@@ -6170,6 +7677,352 @@ class AToolApp:
         if isinstance(section, dict):
             configured = str(section.get("shared_workspace_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_shared_workspace_dir())
+
+    def _occs_config_lockout_path(self) -> Path:
+        """The shared, ATool-owned record of protected Config IDs and windows."""
+        return Path(self._get_occs_shared_workspace_dir()) / "config-lockouts.json"
+
+    def _read_occs_config_lockouts(self) -> dict[str, object]:
+        path = self._occs_config_lockout_path()
+        try:
+            with open(path, encoding="utf-8") as source:
+                raw = json.load(source)
+        except FileNotFoundError:
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showerror(
+                "Config Lockouts",
+                f"Could not read the shared Config lockout file:\n{path}\n\nDetails: {error}",
+            )
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        if not isinstance(raw, dict):
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        locked_ids = raw.get("locked_config_ids")
+        windows = raw.get("lockout_windows")
+        return {
+            "version": 1,
+            "locked_config_ids": [str(value).strip() for value in locked_ids if str(value).strip()]
+            if isinstance(locked_ids, list) else [],
+            "lockout_windows": [entry for entry in windows if isinstance(entry, dict)]
+            if isinstance(windows, list) else [],
+        }
+
+    def _write_occs_config_lockouts(self, payload: dict[str, object], action: str) -> bool:
+        if not self._require_shared_folder_sync(action):
+            return False
+        path = self._occs_config_lockout_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = path.with_suffix(".json.tmp")
+            with open(temp_path, "w", encoding="utf-8") as target:
+                json.dump(payload, target, indent=2, sort_keys=True)
+                target.write("\n")
+            os.replace(temp_path, path)
+            return True
+        except OSError as error:
+            messagebox.showerror(
+                "Config Lockouts",
+                f"Could not write the shared Config lockout file:\n{path}\n\nDetails: {error}",
+            )
+            return False
+
+    @staticmethod
+    def _normalize_occs_config_id(config_id: str) -> str:
+        return str(config_id or "").strip().casefold()
+
+    def _active_occs_config_lockout_message(self, config_id: str, display_name: str = "") -> str:
+        """Return an explanation when an operation must not close or migrate."""
+        payload = self._read_occs_config_lockouts()
+        normalized_id = self._normalize_occs_config_id(config_id)
+        locked_ids = {
+            self._normalize_occs_config_id(value)
+            for value in payload["locked_config_ids"]
+            if isinstance(value, str)
+        }
+        if normalized_id and normalized_id in locked_ids:
+            return f"Config {display_name or self._occs_config_display_name(config_id)} is locked in the shared ATool lockout file."
+        now = datetime.now(timezone.utc)
+        for window in payload["lockout_windows"]:
+            if not isinstance(window, dict):
+                continue
+            try:
+                start = datetime.fromisoformat(str(window.get("start", "")).replace("Z", "+00:00"))
+                end = datetime.fromisoformat(str(window.get("end", "")).replace("Z", "+00:00"))
+                if start.tzinfo is None or end.tzinfo is None:
+                    continue
+            except ValueError:
+                continue
+            if start.astimezone(timezone.utc) <= now < end.astimezone(timezone.utc):
+                return (
+                    "A shared Config lockout window is active until "
+                    f"{end.astimezone().strftime('%Y-%m-%d %H:%M %Z')}."
+                )
+        return ""
+
+    def _prevent_occs_config_lifecycle_action(self, action: str, config_id: str, display_name: str = "") -> bool:
+        message = self._active_occs_config_lockout_message(config_id, display_name)
+        if not message:
+            return False
+        messagebox.showerror(
+            f"{action} Config",
+            f"{message}\n\nATool will not {action.lower()} this Config while the protection is active.",
+        )
+        return True
+
+    def toggle_active_occs_config_lock(self) -> None:
+        config_id = self._get_last_occs_config_id()
+        config_name = self._active_occs_config_display_name()
+        if not config_id or not config_name:
+            messagebox.showinfo("Lock Config", "Choose Config > Set… before locking a configuration.")
+            return
+        self._toggle_occs_config_lock(config_id, display_name=config_name)
+
+    def _toggle_occs_config_lock(
+        self,
+        config_id: str,
+        parent: tk.Misc | None = None,
+        display_name: str = "",
+    ) -> None:
+        config_name = display_name or self._occs_config_display_name(config_id)
+        payload = self._read_occs_config_lockouts()
+        normalized_id = self._normalize_occs_config_id(config_id)
+        locked_ids = [value for value in payload["locked_config_ids"] if isinstance(value, str)]
+        existing = next((value for value in locked_ids if self._normalize_occs_config_id(value) == normalized_id), None)
+        if existing:
+            if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from {config_name}?", parent=parent):
+                return
+            payload["locked_config_ids"] = [value for value in locked_ids if self._normalize_occs_config_id(value) != normalized_id]
+            action, status = "remove this shared Config lock", "unlocked"
+        else:
+            if not messagebox.askyesno("Lock Config", f"Lock {config_name}?\n\nATool will prevent closing or migrating it.", parent=parent):
+                return
+            locked_ids.append(config_id.strip())
+            payload["locked_config_ids"] = locked_ids
+            action, status = "create this shared Config lock", "locked"
+        if self._write_occs_config_lockouts(payload, action):
+            self._show_temporary_status(f"{config_name} {status}", duration_ms=5000)
+
+    def open_occs_config_lockouts_dialog(self) -> None:
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Config Lockouts")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+        ttk.Label(container, text="Shared lockout windows block every Config close and migration while active.").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        columns = ("start", "end", "timezone", "duration")
+        tree = ttk.Treeview(container, columns=columns, show="headings", height=12)
+        for key, label, width in (("start", "Start", 210), ("end", "End", 210), ("timezone", "Timezone", 120), ("duration", "Duration", 110)):
+            tree.heading(key, text=label)
+            tree.column(key, width=width, stretch=key in {"start", "end"})
+        tree.tag_configure("past", foreground="#888888")
+        tree.grid(row=1, column=0, sticky="nsew")
+        item_windows: dict[str, dict[str, object]] = {}
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _refresh() -> None:
+            for item in tree.get_children():
+                tree.delete(item)
+            item_windows.clear()
+            now = datetime.now(timezone.utc)
+            for window in self._read_occs_config_lockouts()["lockout_windows"]:
+                if not isinstance(window, dict):
+                    continue
+                try:
+                    start = datetime.fromisoformat(str(window.get("start", "")).replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(str(window.get("end", "")).replace("Z", "+00:00"))
+                    zone_name = str(window.get("timezone", "UTC"))
+                    zone = ZoneInfo(zone_name)
+                    duration = end - start
+                except (ValueError, ZoneInfoNotFoundError):
+                    continue
+                tags = ("past",) if end.astimezone(timezone.utc) <= now else ()
+                item = tree.insert("", tk.END, values=(start.astimezone(zone).strftime("%Y-%m-%d %H:%M"), end.astimezone(zone).strftime("%Y-%m-%d %H:%M"), zone_name, str(duration)), tags=tags)
+                item_windows[item] = window
+
+        def _add() -> None:
+            self._open_occs_config_lockout_add_dialog(dialog, _refresh)
+
+        def _remove() -> None:
+            selected = tree.selection()
+            if not selected:
+                return
+            window = item_windows.get(selected[0])
+            if window is None or not messagebox.askyesno("Remove Lockout", "Remove the selected shared lockout window?", parent=dialog):
+                return
+            payload = self._read_occs_config_lockouts()
+            payload["lockout_windows"] = [entry for entry in payload["lockout_windows"] if entry != window]
+            if self._write_occs_config_lockouts(payload, "remove this shared Config lockout"):
+                _refresh()
+
+        ttk.Button(buttons, text="Add...", command=_add).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Remove", command=_remove).grid(row=0, column=2)
+        _refresh()
+        dialog.geometry("700x390")
+
+    def _open_occs_config_lockout_add_dialog(self, parent: tk.Misc, on_complete: object) -> None:
+        dialog = self._create_toplevel(parent)
+        dialog.title("Add Config Lockout")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        time_var = tk.StringVar(value="24H:MM")
+        supported_timezones = sorted(available_timezones())
+        local_zone = datetime.now().astimezone().tzinfo
+        local_zone_name = getattr(local_zone, "key", "") if local_zone else ""
+        timezone_var = tk.StringVar(value=local_zone_name if local_zone_name in supported_timezones else "UTC")
+        duration_var = tk.StringVar(value="60")
+        local_time_var = tk.StringVar(value="Local start and end times will appear here.")
+        ttk.Label(frame, text="Date:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=date_var, width=16).grid(row=0, column=1, sticky="w", pady=(0, 8))
+        ttk.Button(
+            frame,
+            text="Choose...",
+            command=lambda: self._open_occs_config_lockout_date_picker(dialog, date_var),
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        ttk.Label(frame, text="Time:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        time_entry = tk.Entry(frame, textvariable=time_var, width=16, foreground="#777777")
+        time_entry.grid(row=1, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="24-hour time").grid(row=1, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+        ttk.Label(frame, text="Timezone:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        timezone_combo = ttk.Combobox(
+            frame,
+            textvariable=timezone_var,
+            values=supported_timezones,
+            state="readonly",
+            width=29,
+        )
+        timezone_combo.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(frame, text="Duration (minutes):").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=duration_var, width=16).grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, textvariable=local_time_var, justify=tk.LEFT).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 8))
+
+        def _clear_time_placeholder(_event: tk.Event) -> None:
+            if time_var.get() == "24H:MM":
+                time_var.set("")
+                time_entry.configure(foreground="#000000")
+
+        def _restore_time_placeholder(_event: tk.Event) -> None:
+            if not time_var.get().strip():
+                time_var.set("24H:MM")
+                time_entry.configure(foreground="#777777")
+
+        time_entry.bind("<FocusIn>", _clear_time_placeholder)
+        time_entry.bind("<FocusOut>", _restore_time_placeholder)
+
+        def _start_and_end() -> tuple[datetime, datetime]:
+            time_text = time_var.get().strip()
+            if time_text == "24H:MM":
+                raise ValueError("Time is required.")
+            zone = ZoneInfo(timezone_var.get().strip())
+            start = datetime.strptime(f"{date_var.get().strip()} {time_text}", "%Y-%m-%d %H:%M").replace(tzinfo=zone)
+            duration_minutes = int(duration_var.get().strip())
+            if duration_minutes <= 0:
+                raise ValueError("Duration must be greater than zero.")
+            return start, start + timedelta(minutes=duration_minutes)
+
+        def _update_local_times(*_args: object) -> None:
+            try:
+                start, end = _start_and_end()
+            except (ValueError, ZoneInfoNotFoundError):
+                local_time_var.set("Local start and end times will appear here.")
+                return
+            local_time_var.set(
+                "Your local time:\n"
+                f"Start: {start.astimezone().strftime('%Y-%m-%d %H:%M %Z')}\n"
+                f"End:   {end.astimezone().strftime('%Y-%m-%d %H:%M %Z')}"
+            )
+
+        for variable in (date_var, time_var, timezone_var, duration_var):
+            variable.trace_add("write", _update_local_times)
+
+        def _save() -> None:
+            try:
+                zone_name = timezone_var.get().strip()
+                start, end = _start_and_end()
+            except (ValueError, ZoneInfoNotFoundError) as error:
+                messagebox.showerror("Add Config Lockout", f"Enter a valid date, 24-hour time, timezone, and positive duration.\n\nDetails: {error}", parent=dialog)
+                return
+            payload = self._read_occs_config_lockouts()
+            windows = payload["lockout_windows"]
+            if not isinstance(windows, list):
+                windows = []
+            windows.append({"start": start.isoformat(), "end": end.isoformat(), "timezone": zone_name})
+            payload["lockout_windows"] = windows
+            if self._write_occs_config_lockouts(payload, "add this shared Config lockout"):
+                dialog.destroy()
+                if callable(on_complete):
+                    on_complete()
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=5, column=0, columnspan=3, sticky="e", pady=(6, 0))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_frame, text="Add Lockout", command=_save).grid(row=0, column=1)
+
+    def _open_occs_config_lockout_date_picker(self, parent: tk.Misc, date_var: tk.StringVar) -> None:
+        """Small dependency-free calendar picker for a lockout start date."""
+        try:
+            selected = datetime.strptime(date_var.get().strip(), "%Y-%m-%d")
+        except ValueError:
+            selected = datetime.now()
+        visible_year, visible_month = selected.year, selected.month
+        dialog = self._create_toplevel(parent)
+        dialog.title("Choose Lockout Date")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        month_label = ttk.Label(frame, anchor="center")
+        month_label.grid(row=0, column=1, columnspan=5, sticky="ew", pady=(0, 6))
+        days_frame = ttk.Frame(frame)
+        days_frame.grid(row=1, column=0, columnspan=7)
+
+        def _render() -> None:
+            nonlocal visible_year, visible_month
+            month_label.configure(text=f"{calendar.month_name[visible_month]} {visible_year}")
+            for child in days_frame.winfo_children():
+                child.destroy()
+            for column, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+                ttk.Label(days_frame, text=name, width=4, anchor="center").grid(row=0, column=column, pady=(0, 3))
+            for row, week in enumerate(calendar.monthcalendar(visible_year, visible_month), start=1):
+                for column, day in enumerate(week):
+                    if not day:
+                        ttk.Label(days_frame, text="", width=4).grid(row=row, column=column)
+                        continue
+                    ttk.Button(
+                        days_frame,
+                        text=str(day),
+                        width=3,
+                        command=lambda picked_day=day: _choose(picked_day),
+                    ).grid(row=row, column=column, padx=1, pady=1)
+
+        def _previous() -> None:
+            nonlocal visible_year, visible_month
+            visible_year, visible_month = (visible_year - 1, 12) if visible_month == 1 else (visible_year, visible_month - 1)
+            _render()
+
+        def _next() -> None:
+            nonlocal visible_year, visible_month
+            visible_year, visible_month = (visible_year + 1, 1) if visible_month == 12 else (visible_year, visible_month + 1)
+            _render()
+
+        def _choose(day: int) -> None:
+            date_var.set(f"{visible_year:04d}-{visible_month:02d}-{day:02d}")
+            dialog.destroy()
+
+        ttk.Button(frame, text="‹", width=3, command=_previous).grid(row=0, column=0, sticky="w")
+        ttk.Button(frame, text="›", width=3, command=_next).grid(row=0, column=6, sticky="e")
+        _render()
 
     def _get_occs_models_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -6561,6 +8414,34 @@ class AToolApp:
             return False
         return bool(document_display.get("collapse"))
 
+    def _get_content_editor_font_family(self) -> str:
+        editor = self.user_settings.get("content_editor")
+        if not isinstance(editor, dict):
+            return ""
+        value = editor.get("font_family")
+        return value.strip() if isinstance(value, str) else ""
+
+    def _content_editor_font(self) -> object:
+        family = self._get_content_editor_font_family()
+        if not family:
+            return "TkDefaultFont"
+        default_size = abs(int(tkfont.nametofont("TkDefaultFont").cget("size")))
+        return (family, default_size)
+
+    def _set_content_editor_font_family(self, family: str) -> None:
+        editor = self.user_settings.setdefault("content_editor", {})
+        if not isinstance(editor, dict):
+            editor = {}
+            self.user_settings["content_editor"] = editor
+        editor["font_family"] = family.strip()
+        if hasattr(self, "content_html_text") and self.content_html_text.winfo_exists():
+            html = self._content_html_get()
+            had_rich_edits = self.content_html_rich_dirty
+            self.content_html_text.configure(font=self._content_editor_font())
+            self._content_html_set(html)
+            self.content_html_rich_dirty = had_rich_edits
+            self._update_content_save_availability()
+
     def _get_confirm_on_quit_setting(self) -> bool:
         application = self.user_settings.get("application")
         if not isinstance(application, dict):
@@ -6609,6 +8490,12 @@ class AToolApp:
             if isinstance(collapse_value, bool):
                 settings["document_display"]["collapse"] = collapse_value
 
+        content_editor = parsed.get("content_editor")
+        if isinstance(content_editor, dict):
+            font_family = content_editor.get("font_family")
+            if isinstance(font_family, str):
+                settings["content_editor"]["font_family"] = font_family
+
         diagnostics = parsed.get("diagnostics")
         if isinstance(diagnostics, dict):
             debug_value = diagnostics.get("debug_logging")
@@ -6626,6 +8513,7 @@ class AToolApp:
                 "config_target_session_alias",
                 "config_id_filter",
                 "last_config_id",
+                "active_config_label",
                 "shared_workspace_dir",
                 "models_dir",
                 "comms_cache_dir",
@@ -9804,7 +11692,7 @@ class AToolApp:
         return "break"
 
     def _cancel_occs_event(self, event: tk.Event) -> str:
-        self.cancel_occs_operation()
+        self.cancel_occs_preview()
         return "break"
 
     def _quit_event(self, event: tk.Event) -> str:
@@ -10051,6 +11939,9 @@ class AToolApp:
             return
 
         state = self._read_app_state()
+        saved_session_alias = str(state.get("last_occs_session_alias", "")).strip()
+        if saved_session_alias:
+            self._set_occs_session_alias(saved_session_alias)
         bundle_dir_text = str(state.get("last_occs_bundle", "")).strip()
         if not bundle_dir_text:
             messagebox.showinfo("Open Session", "No previous package session was found.")
@@ -10688,7 +12579,7 @@ class AToolApp:
             if use_pre_prod_session_var.get():
                 args[1:1] = ["--session", pre_prod_session_alias]
             dialog.destroy()
-            self._run_occs_command_async(
+            self._run_occs_preview_command_async(
                 args,
                 f"Previewing package {package_name}...",
                 lambda result, selected_render_types=render_types, should_open=open_after_var.get(): self._on_occs_preview_complete(
@@ -11032,7 +12923,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            f"Loading Comms Config IDs from {source_session}...",
+            f"Loading Comms configurations from {source_session}...",
             lambda result: self._open_occs_save_dialog(self._normalize_occs_configs(result)),
             on_failure=self._on_occs_config_list_failed,
         )
@@ -11937,11 +13828,11 @@ class AToolApp:
     def _on_occs_config_list_failed(self, error: Exception) -> None:
         messagebox.showerror(
             "Publish Package to Comms",
-            "Could not load open Config IDs from Comms.\n\n"
+            "Could not load open configurations from Comms.\n\n"
             f"Details: {error}\n\n"
-            "Publishing was canceled because a valid open Config ID could not be confirmed.",
+            "Publishing was canceled because a valid open configuration could not be confirmed.",
         )
-        self._show_temporary_status("Comms publish canceled: Config IDs unavailable", duration_ms=5000)
+        self._show_temporary_status("Comms publish canceled: configurations unavailable", duration_ms=5000)
 
     def _open_occs_save_dialog(self, configs: list[dict[str, str]]) -> None:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
@@ -11952,10 +13843,10 @@ class AToolApp:
         if not configs:
             messagebox.showerror(
                 "Publish Package to Comms",
-                "No valid open Config IDs are available from Comms.\n\n"
-                "Publishing was canceled. Check the configured Config ID Filter and try again.",
+                "No valid open configurations are available from Comms.\n\n"
+                "Publishing was canceled. Check the configured Configuration Filter and try again.",
             )
-            self._show_temporary_status("Comms publish canceled: no valid open Config IDs", duration_ms=5000)
+            self._show_temporary_status("Comms publish canceled: no valid open configurations", duration_ms=5000)
             return
 
         dialog = self._create_toplevel(self.root)
@@ -11997,7 +13888,7 @@ class AToolApp:
             initial_selection = labels[0]
         config_var = tk.StringVar(value=initial_selection)
 
-        ttk.Label(container, text="Config ID:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Configuration:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_combo = ttk.Combobox(
             container,
             textvariable=config_var,
@@ -12015,7 +13906,7 @@ class AToolApp:
             raw_value = config_var.get().strip()
             config_id = self._occs_config_id_from_selection(raw_value, config_by_label)
             if not config_id:
-                messagebox.showerror("Publish Package to Comms", "Config ID is required.", parent=dialog)
+                messagebox.showerror("Publish Package to Comms", "Choose a configuration.", parent=dialog)
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
@@ -12141,13 +14032,12 @@ class AToolApp:
         if locked_config.strip().lower() == str(attempted_config_id).strip().lower():
             messagebox.showerror(
                 "Publish Package to Comms",
-                f"Package {package_name} is locked under Config {locked_config}, but that Config ID was already used.\n\n"
-                f"Details: {error}",
+                f"Package {package_name} is locked under the selected configuration, but that configuration was already used.",
             )
             return
         if not messagebox.askokcancel(
             "Package Locked",
-            f"Package {package_name} is locked under Config {locked_config}.\n\nUse that Config ID and retry?",
+            f"Package {package_name} is locked under another configuration.\n\nUse that configuration and retry?",
         ):
             return
         self._resolve_locked_occs_config_and_retry(locked_config, retry_stage)
@@ -12167,7 +14057,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            "Resolving locked Config ID...",
+            "Resolving locked configuration...",
             lambda result, lock_name=locked_config, stage=retry_stage: self._retry_occs_package_save_with_locked_config(
                 self._normalize_occs_configs(result),
                 lock_name,
@@ -12252,7 +14142,7 @@ class AToolApp:
             description = description_var.get().strip()
             if not messagebox.askyesno(
                 "Confirm Create Config",
-                f"Create open Config ID in {session_label}?\n\n{short_name}",
+                f"Create open configuration in {session_label}?\n\n{short_name}",
                 parent=dialog,
             ):
                 return
@@ -12269,7 +14159,7 @@ class AToolApp:
                     "--timeout",
                     str(self._get_occs_request_timeout_ms()),
                 ],
-                f"Creating Config ID {short_name}...",
+                f"Creating configuration {short_name}...",
                 lambda result, selected_session=session_label: self._on_occs_config_create_complete(
                     result,
                     selected_session,
@@ -12293,10 +14183,9 @@ class AToolApp:
         label = self._format_occs_config_label({"shortName": short_name, "id": config_id})
         self._set_last_occs_config_id(config_id or short_name)
         self._show_temporary_status("Config created", duration_ms=5000)
-        detail = f"\n\nConfig ID: {config_id}" if config_id else ""
         messagebox.showinfo(
             "Create Config",
-            f"Created open Config in {session_label}:\n\n{label or 'Config'}{detail}",
+            f"Created open Config in {session_label}:\n\n{label or 'Config'}",
         )
 
     def list_occs_configs(self) -> None:
@@ -12306,7 +14195,7 @@ class AToolApp:
         session_alias = self._get_occs_session_alias()
         self._run_occs_json_command_async(
             ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
-            "Listing open Config IDs...",
+            "Listing open configurations...",
             lambda result, selected_session=session_alias: self._open_occs_config_list_dialog(
                 self._normalize_occs_configs(result),
                 selected_session,
@@ -12314,9 +14203,53 @@ class AToolApp:
             on_failure=lambda error: messagebox.showerror("List Configs", str(error)),
         )
 
+    def set_active_occs_config(self) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Set Config", "An OCCS operation is already in progress.")
+            return
+        self._run_occs_json_command_async(
+            ["list-configs", "--timeout", str(self._get_occs_request_timeout_ms())],
+            "Listing open configurations...",
+            lambda result: self._open_active_occs_config_dialog(self._normalize_occs_configs(result)),
+            on_failure=lambda error: messagebox.showerror("Set Config", str(error)),
+        )
+
+    def _open_active_occs_config_dialog(self, configs: list[dict[str, str]]) -> None:
+        if not configs:
+            messagebox.showinfo("Set Config", "No open configurations were returned by OCCS.")
+            return
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Set Active Config")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(1, weight=1)
+        labels = [self._format_occs_config_label(config) for config in configs]
+        by_label = {label: config for label, config in zip(labels, configs) if label}
+        selected = self._initial_occs_config_selection(labels, configs)
+        config_var = tk.StringVar(value=selected if selected in by_label else labels[0])
+        ttk.Label(container, text="Active Config:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        combo = ttk.Combobox(container, textvariable=config_var, values=labels, state="readonly", width=58)
+        combo.grid(row=0, column=1, sticky="ew")
+        buttons = ttk.Frame(container)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _apply() -> None:
+            config = by_label.get(config_var.get().strip())
+            if config is None:
+                return
+            self._set_active_occs_config(config)
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Set Config", command=_apply).grid(row=0, column=1)
+        combo.focus_set()
+
     def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
         dialog = self._create_toplevel(self.root)
-        dialog.title("Open Config IDs")
+        dialog.title("Open Configurations")
         dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
@@ -12340,17 +14273,17 @@ class AToolApp:
         filter_entry = ttk.Entry(filter_frame, textvariable=filter_var)
         filter_entry.grid(row=0, column=1, sticky="ew")
 
-        columns = ("id", "short_name", "name", "description", "status", "effective_at")
+        columns = ("locked", "short_name", "name", "description", "status", "effective_at")
         tree = ttk.Treeview(container, columns=columns, show="headings", height=min(max(len(configs), 6), 18))
         headings = {
-            "id": "Config ID",
+            "locked": "Lock",
             "short_name": "Short Name",
             "name": "Name",
             "description": "Description",
             "status": "Status",
             "effective_at": "Effective At",
         }
-        widths = {"id": 110, "short_name": 170, "name": 200, "description": 300, "status": 100, "effective_at": 165}
+        widths = {"locked": 55, "short_name": 170, "name": 200, "description": 300, "status": 100, "effective_at": 165}
         for column in columns:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths[column], stretch=column in {"name", "description"})
@@ -12363,15 +14296,28 @@ class AToolApp:
         buttons = ttk.Frame(container)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
-        close_config_button = ttk.Button(buttons, text="Close Config ID", state=tk.DISABLED)
-        close_config_button.grid(row=0, column=1)
+        lock_config_button = ttk.Button(buttons, text="Lock Configuration", state=tk.DISABLED)
+        lock_config_button.grid(row=0, column=1, padx=(0, 8))
+        close_config_button = ttk.Button(buttons, text="Close Configuration", state=tk.DISABLED)
+        close_config_button.grid(row=0, column=2)
 
         def _selected_config() -> dict[str, str] | None:
             selected_items = tree.selection()
             return config_by_item.get(selected_items[0]) if selected_items else None
 
         def _update_close_button(*_args: object) -> None:
-            close_config_button.configure(state=tk.NORMAL if _selected_config() is not None else tk.DISABLED)
+            config = _selected_config()
+            close_config_button.configure(state=tk.NORMAL if config is not None else tk.DISABLED)
+            if config is None:
+                lock_config_button.configure(state=tk.DISABLED, text="Lock Configuration")
+                return
+            config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
+            locked_ids = self._read_occs_config_lockouts()["locked_config_ids"]
+            is_locked = any(
+                self._normalize_occs_config_id(str(value)) == self._normalize_occs_config_id(config_id)
+                for value in locked_ids
+            )
+            lock_config_button.configure(state=tk.NORMAL, text="Unlock Configuration" if is_locked else "Lock Configuration")
 
         def _config_sort_key(config: dict[str, str]) -> tuple[int, int | str]:
             config_id = config.get("id", "").strip()
@@ -12395,19 +14341,24 @@ class AToolApp:
             ]
             count_label.configure(
                 text=(
-                    f"{len(displayed_configs)} of {len(configs)} open Config ID"
+                    f"{len(displayed_configs)} of {len(configs)} open configuration"
                     f"{'s' if len(configs) != 1 else ''} in {session_label}"
                 )
             )
             for item_id in tree.get_children():
                 tree.delete(item_id)
             config_by_item.clear()
+            locked_ids = {
+                self._normalize_occs_config_id(str(value))
+                for value in self._read_occs_config_lockouts()["locked_config_ids"]
+            }
             for config in displayed_configs:
+                config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
                 item_id = tree.insert(
                     "",
                     tk.END,
                     values=(
-                        config.get("id", ""),
+                        "🔒" if self._normalize_occs_config_id(config_id) in locked_ids else "",
                         config.get("shortName", ""),
                         config.get("name", ""),
                         config.get("description", ""),
@@ -12424,20 +14375,30 @@ class AToolApp:
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
             if not config_id:
-                messagebox.showerror("Close Config", "The selected Config ID has no usable ID.", parent=dialog)
+                messagebox.showerror("Close Config", "The selected configuration cannot be used.", parent=dialog)
                 return
             label = self._format_occs_config_label(config) or config_id
             if not messagebox.askyesno(
                 "Confirm Close Config",
-                f"Close Config ID in {session_label}?\n\n{label}",
+                f"Close configuration in {session_label}?\n\n{label}",
                 parent=dialog,
             ):
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
-            self._run_occs_config_close(session_alias, config_id)
+            self._run_occs_config_close(session_alias, config_id, label)
 
         close_config_button.configure(command=_close_selected_config)
+        def _toggle_selected_lock() -> None:
+            config = _selected_config()
+            if config is None:
+                return
+            config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
+            if config_id:
+                self._toggle_occs_config_lock(config_id, dialog, self._format_occs_config_label(config))
+                _update_close_button()
+
+        lock_config_button.configure(command=_toggle_selected_lock)
         tree.bind("<<TreeviewSelect>>", _update_close_button)
         filter_var.trace_add("write", _refresh_configs)
         _refresh_configs()
@@ -12457,7 +14418,7 @@ class AToolApp:
                 "--timeout",
                 str(self._get_occs_request_timeout_ms()),
             ],
-            f"Loading Config IDs from {source_session}...",
+            f"Loading configurations from {source_session}...",
             lambda result, selected_session=source_session: self._open_occs_config_close_dialog(
                 self._normalize_occs_configs(result),
                 selected_session,
@@ -12471,9 +14432,9 @@ class AToolApp:
     def _on_occs_config_close_list_failed(self, error: Exception, source_session: str) -> None:
         if not messagebox.askyesno(
             "Close Config",
-            f"Could not load open Config IDs from {source_session}.\n\n"
+            f"Could not load open configurations from {source_session}.\n\n"
             f"Details: {error}\n\n"
-            "Continue with manual Config ID entry?",
+            "Continue with manual configuration entry?",
         ):
             return
         self._open_occs_config_close_dialog([], source_session)
@@ -12501,7 +14462,7 @@ class AToolApp:
         }
         config_var = tk.StringVar(value=self._initial_occs_config_selection(labels, configs))
 
-        ttk.Label(container, text="Config ID:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Configuration:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         config_combo = ttk.Combobox(
             container,
             textvariable=config_var,
@@ -12519,17 +14480,19 @@ class AToolApp:
             raw_value = config_var.get().strip()
             config_id = self._occs_config_close_id_from_selection(raw_value, config_by_label)
             if not config_id:
-                messagebox.showerror("Close Config", "Config ID is required.", parent=dialog)
+                messagebox.showerror("Close Config", "Choose a configuration.", parent=dialog)
                 return
+            selected_config = config_by_label.get(raw_value)
+            config_name = self._format_occs_config_label(selected_config) if selected_config else raw_value
             if not messagebox.askyesno(
                 "Confirm Close Config",
-                f"Close Config ID in {source_session}?\n\n{config_id}",
+                f"Close configuration in {source_session}?\n\n{config_name or 'the selected configuration'}",
                 parent=dialog,
             ):
                 return
             self._set_last_occs_config_id(config_id)
             dialog.destroy()
-            self._run_occs_config_close(source_session, config_id)
+            self._run_occs_config_close(source_session, config_id, config_name)
 
         ttk.Button(buttons, text="Close", command=_submit).grid(row=0, column=1)
         config_combo.focus_set()
@@ -12538,18 +14501,22 @@ class AToolApp:
         y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
-    def _run_occs_config_close(self, source_session: str, config_id: str) -> None:
+    def _run_occs_config_close(self, source_session: str, config_id: str, display_name: str = "") -> None:
+        config_name = display_name or self._occs_config_display_name(config_id)
+        if self._prevent_occs_config_lifecycle_action("Close", config_id, config_name):
+            return
         command = ["close-config"]
         if source_session:
             command.extend(["--session", source_session])
         command.extend(["--config-id", config_id])
         self._run_occs_command_async(
             command,
-            f"Closing Config ID {config_id} in {source_session or 'the OCCS default session'}...",
-            lambda result, selected_session=source_session, selected_config_id=config_id: self._on_occs_config_close_complete(
+            f"Closing {config_name} in {source_session or 'the OCCS default session'}...",
+            lambda result, selected_session=source_session, selected_config_id=config_id, selected_config_name=config_name: self._on_occs_config_close_complete(
                 result,
                 selected_session,
                 selected_config_id,
+                selected_config_name,
             ),
             on_failure=lambda error: messagebox.showerror("Close Config", str(error)),
         )
@@ -12559,6 +14526,7 @@ class AToolApp:
         result: dict[str, object],
         source_session: str,
         config_id: str,
+        config_name: str,
     ) -> None:
         stdout = str(result.get("stdout", "")).strip()
         detail = f"\n\n{stdout}" if stdout else ""
@@ -12566,7 +14534,7 @@ class AToolApp:
         self._show_temporary_status("Config closed", duration_ms=5000)
         if messagebox.askyesno(
             "Close Config",
-            f"Config ID closed in {session_label}:\n\n{config_id}{detail}\n\nMigrate now?",
+            f"{config_name} closed in {session_label}:{detail}\n\nMigrate now?",
         ):
             self.migrate_occs_config(confirm=False)
 
@@ -12576,6 +14544,9 @@ class AToolApp:
             return
         source_session = self._get_occs_config_source_session_alias()
         target_session = self._get_occs_config_target_session_alias()
+        config_id = self._get_last_occs_config_id()
+        if self._prevent_occs_config_lifecycle_action("Migrate", config_id):
+            return
         if confirm and not messagebox.askyesno(
             "Confirm Migrate Config",
             f"Run OCCS migrate?\n\nSource: {source_session}\nTarget: {target_session}",
@@ -12606,6 +14577,8 @@ class AToolApp:
                     f"Could not refresh OCCS session {failed_session}.\n\nDetails: {error}",
                 ),
             )
+            return
+        if self._prevent_occs_config_lifecycle_action("Migrate", self._get_last_occs_config_id()):
             return
         self._run_occs_command_async(
             [
@@ -12933,6 +14906,48 @@ class AToolApp:
                 return f"Shared package folder was updated, but baseline metadata could not be refreshed: {error}"
         return ""
 
+    def _run_occs_preview_command_async(
+        self,
+        args: list[str],
+        status_message: str,
+        on_success: object,
+        on_failure: object | None = None,
+    ) -> None:
+        if self._occs_operation_in_progress:
+            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+            return
+        self._occs_operation_in_progress = True
+        self._occs_preview_in_progress = True
+        self._occs_preview_cancel_requested = False
+        self._update_package_menu_states()
+        self._start_occs_status_timer(status_message)
+
+        def _worker() -> None:
+            try:
+                result = self._run_occs_command(
+                    args,
+                    track_active_process=False,
+                    honor_cancellation=False,
+                    process_slot="_occs_preview_process",
+                    cancellation_requested=lambda: self._occs_preview_cancel_requested,
+                )
+                self.root.after(0, lambda result=result: self._on_occs_preview_command_success(result, on_success))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+                self.root.after(0, lambda error=error, stack=stack: self._on_occs_preview_command_failure(error, stack, on_failure))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_occs_preview_command_success(self, result: dict[str, object], on_success: object) -> None:
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._on_occs_command_success(result, on_success)
+
+    def _on_occs_preview_command_failure(self, error: Exception, stack: str, on_failure: object | None) -> None:
+        self._occs_preview_in_progress = False
+        self._occs_preview_cancel_requested = False
+        self._on_occs_command_failure(error, stack, on_failure)
+
     def _run_occs_command_async(
         self,
         args: list[str],
@@ -13041,7 +15056,12 @@ class AToolApp:
         status_message: str,
         on_success: object,
         on_failure: object | None = None,
+        *,
+        allow_parallel_read: bool = False,
     ) -> None:
+        if allow_parallel_read:
+            self._run_occs_json_command_parallel_async(args, on_success, on_failure)
+            return
         if self._occs_operation_in_progress:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
@@ -13065,6 +15085,35 @@ class AToolApp:
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
+
+    def _run_occs_json_command_parallel_async(
+        self,
+        args: list[str],
+        on_success: object,
+        on_failure: object | None,
+    ) -> None:
+        """Run a bounded read without taking the single write/cancel slot."""
+        self._debug_log(f"Parallel OCCS read queued: {' '.join(args)}")
+
+        def _worker() -> None:
+            try:
+                with self._occs_parallel_read_semaphore:
+                    result = self._run_occs_json_command(args, track_active_process=False)
+                if callable(on_success):
+                    self.root.after(0, lambda result=result: on_success(result))
+            except Exception as error:  # pragma: no cover - defensive runtime safety
+                stack = traceback.format_exc()
+
+                def _report_failure(error: Exception = error, stack: str = stack) -> None:
+                    self._debug_log(f"Parallel OCCS read failed:\n{stack}")
+                    if callable(on_failure):
+                        on_failure(error)
+                    else:
+                        messagebox.showerror("OCCS Error", str(error))
+
+                self.root.after(0, _report_failure)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
@@ -13097,13 +15146,15 @@ class AToolApp:
         messagebox.showerror("OCCS Error", str(error))
 
     def cancel_occs_operation(self) -> None:
-        if not self._occs_operation_in_progress:
-            messagebox.showinfo("OCCS", "No OCCS operation is currently running.")
-            return
+        self.cancel_occs_preview()
 
-        self._occs_cancel_requested = True
-        self._set_occs_status_timer_message("Canceling OCCS operation...")
-        self._terminate_active_occs_process()
+    def cancel_occs_preview(self) -> None:
+        if not self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "No Preview is currently running.")
+            return
+        self._occs_preview_cancel_requested = True
+        self._set_occs_status_timer_message("Canceling Preview...")
+        self._terminate_tracked_occs_process("_occs_preview_process")
 
     def _terminate_active_occs_process(self) -> None:
         self._terminate_tracked_occs_process("_occs_process")
@@ -13123,14 +15174,14 @@ class AToolApp:
         except (OSError, ProcessLookupError):
             return
 
-    def _run_occs_json_command(self, args: list[str]) -> dict[str, object]:
+    def _run_occs_json_command(self, args: list[str], *, track_active_process: bool = True) -> dict[str, object]:
         command_args = [str(arg) for arg in args]
         if "--json" not in command_args:
             command_args.append("--json")
         login_attempted = False
 
         while True:
-            completed = self._run_occs_cli(command_args)
+            completed = self._run_occs_cli(command_args, track_active_process=track_active_process, honor_cancellation=track_active_process)
             stdout = (completed.stdout or "").strip()
             stderr = (completed.stderr or "").strip()
             parsed = self._parse_occs_json_stdout(stdout)
@@ -13138,7 +15189,7 @@ class AToolApp:
             if completed.returncode != 0:
                 message = self._occs_error_message(parsed, stderr, completed.returncode)
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(command_args, message)
+                    self._run_occs_login_for_retry(command_args, message, track_active_process=track_active_process)
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -13154,18 +15205,39 @@ class AToolApp:
                 raise RuntimeError(message)
             return parsed
 
-    def _run_occs_command(self, args: list[str]) -> dict[str, object]:
+    def _run_occs_command(
+        self,
+        args: list[str],
+        *,
+        track_active_process: bool = True,
+        honor_cancellation: bool = True,
+        process_slot: str | None = None,
+        cancellation_requested: object | None = None,
+    ) -> dict[str, object]:
         command_args = [str(arg) for arg in args]
         login_attempted = False
 
         while True:
-            completed = self._run_occs_cli(command_args)
+            completed = self._run_occs_cli(
+                command_args,
+                track_active_process=track_active_process,
+                honor_cancellation=honor_cancellation,
+                process_slot=process_slot,
+                cancellation_requested=cancellation_requested,
+            )
             stdout = (completed.stdout or "").strip()
             stderr = (completed.stderr or "").strip()
             if completed.returncode != 0:
                 message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(command_args, message)
+                    self._run_occs_login_for_retry(
+                        command_args,
+                        message,
+                        track_active_process=track_active_process,
+                        update_status=track_active_process,
+                        process_slot=process_slot,
+                        cancellation_requested=cancellation_requested,
+                    )
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -13338,6 +15410,8 @@ class AToolApp:
 
         command_name = command_args[0]
         if command_name == "package":
+            return [command_name, "--session", session_alias, *command_args[1:]]
+        if command_name == "content":
             return [command_name, "--session", session_alias, *command_args[1:]]
         if command_name in {"preview", "convertxml", "list-configs", "create-config"}:
             return [command_name, "--session", session_alias, *command_args[1:]]
@@ -13819,8 +15893,6 @@ class AToolApp:
             "",
             f"Document UUID: {row.get('document_uuid', '') or '(none)'}",
             f"Relationship UUID: {row.get('rel_uuid', '') or '(none)'}",
-            f"Document ConfigId: {row.get('document_config_id', '') or '(none)'}",
-            f"Association ConfigId: {row.get('association_config_id', '') or '(none)'}",
         ]
         diagnostics = row.get("diagnostics")
         if isinstance(diagnostics, list) and diagnostics:
@@ -16209,11 +18281,15 @@ class AToolApp:
 
     @staticmethod
     def _format_occs_config_label(config: dict[str, str]) -> str:
-        short_name = config.get("shortName", "")
-        config_id = config.get("id", "")
-        if short_name and config_id:
-            return f"{short_name} ({config_id})"
-        return short_name or config_id
+        return config.get("shortName", "").strip() or config.get("name", "").strip()
+
+    def _occs_config_display_name(self, config_id: str) -> str:
+        """Return a human-friendly Config name; IDs remain an internal detail."""
+        active_id = self._get_last_occs_config_id()
+        active_name = self._active_occs_config_display_name()
+        if active_name and self._normalize_occs_config_id(config_id) == self._normalize_occs_config_id(active_id):
+            return active_name
+        return "the selected configuration"
 
     def _filter_occs_configs_for_display(
         self,
@@ -16232,8 +18308,8 @@ class AToolApp:
             config_filter = re.compile(pattern)
         except re.error as error:
             messagebox.showwarning(
-                "Config ID Filter",
-                f"Config ID Filter is not a valid regular expression, so all Config IDs will be shown.\n\nDetails: {error}",
+                "Configuration Filter",
+                f"Configuration Filter is not a valid regular expression, so all configurations will be shown.\n\nDetails: {error}",
                 parent=parent,
             )
             return open_configs
@@ -16272,7 +18348,7 @@ class AToolApp:
                 config.get("name", "").lower(),
             }:
                 return label
-        return last_config_id
+        return labels[0] if labels else ""
 
     @staticmethod
     def _occs_config_id_from_selection(
@@ -16323,7 +18399,7 @@ class AToolApp:
             f"Version: {result.get('version', self._occs_manifest_version_short_name(self.current_occs_manifest))}",
         ]
         if config_text:
-            lines.append(f"Config ID: {config_text}")
+            lines.append(f"Configuration: {config_text}")
         lines.append(f"Changed: {', '.join(changes) if changes else 'none'}")
         raw_upload_plan = result.get("uploadPlan")
         upload_plan = [

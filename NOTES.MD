@@ -18,6 +18,17 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 
 ## Config Management
 
+- Added ATool-only Config lifecycle protection stored in the shared package
+  folder's `config-lockouts.json`. `Config > Lock` toggles the active Config's
+  protection, while the Config list exposes lock/unlock actions and a 🔒 lock
+  indicator for protected configurations.
+- Added `Config > Lockouts...` for shared time-based close/migration lockouts.
+  Users select a date, 24-hour time, IANA timezone, and duration; the dialog
+  previews local start/end times and renders expired windows in grey.
+- Close and migration reread Config locks and lockout windows before running
+  (and migration checks again after session refresh), blocking protected work.
+- Config selection and lifecycle UI now show Config names rather than internal
+  Config IDs/UUIDs.
 - Added `Config > Create...`, which creates an open Config ID through `occs create-config` using the configured OCCS session and request timeout.
 - Added `Config > List`, which shows the open Config IDs returned by `occs list-configs` for the configured OCCS session and lets the user close a selected Config ID.
 - Added `Config > Get Resource to Cache`, which refreshes the selected Package, Style, Layout, Content, Font, or Document cache from Comms into the Comms Cache Folder configured in User Settings. The dialog remembers the five most recently requested name/type pairs.
