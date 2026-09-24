@@ -16,9 +16,11 @@ import time
 import traceback
 import unicodedata
 from datetime import datetime
+from html import escape as html_escape
+from html.parser import HTMLParser
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, font as tkfont, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
 
 from atool_core.condition_evaluator import ConditionEvaluator
@@ -26,6 +28,75 @@ from atool_core.condition_evaluator import ConditionEvaluator
 
 class OccsCommandCancelled(RuntimeError):
     pass
+
+
+class ContentHtmlParser(HTMLParser):
+    """Small, deliberately conservative HTML-to-Tk-text adapter for OCCS content."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+        self.stack: list[dict[str, str]] = []
+        self.list_stack: list[tuple[str, int]] = []
+
+    def _styles(self) -> tuple[tuple[str, str], ...]:
+        merged: dict[str, str] = {}
+        for item in self.stack:
+            merged.update(item)
+        return tuple(sorted(merged.items()))
+
+    def _append(self, text: str) -> None:
+        if text:
+            self.parts.append((text.replace("\xa0", " "), self._styles()))
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+        attrs_map = {key: value or "" for key, value in attrs}
+        style: dict[str, str] = {}
+        if tag in ("strong", "b"):
+            style["bold"] = "1"
+        if tag in ("i", "em"):
+            style["italic"] = "1"
+        if tag == "u":
+            style["underline"] = "1"
+        if tag == "a" and attrs_map.get("href"):
+            style["link"] = attrs_map["href"]
+        if attrs_map.get("class"):
+            style["class"] = attrs_map["class"]
+        for rule in attrs_map.get("style", "").split(";"):
+            key, _, value = rule.partition(":")
+            key, value = key.strip().lower(), value.strip()
+            if key == "color" and value:
+                style["foreground"] = value
+            elif key == "background-color" and value:
+                style["background"] = value
+            elif key == "font-size" and value:
+                style["size"] = value
+        if tag in ("p", "div", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
+            self._append("\n")
+        if tag in ("ul", "ol"):
+            self.list_stack.append((tag, 0))
+        if tag == "li":
+            if self.parts and not self.parts[-1][0].endswith("\n"):
+                self._append("\n")
+            if self.list_stack:
+                kind, count = self.list_stack[-1]
+                self.list_stack[-1] = (kind, count + 1)
+                self._append(("• " if kind == "ul" else f"{count + 1}. "))
+        if tag == "br":
+            self._append("\n")
+            return
+        self.stack.append(style)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("p", "div", "li", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
+            self._append("\n")
+        if tag in ("ul", "ol") and self.list_stack:
+            self.list_stack.pop()
+        if self.stack:
+            self.stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        self._append(data)
 
 
 class AToolApp:
@@ -2296,15 +2367,55 @@ class AToolApp:
         editor_frame = ttk.LabelFrame(editor_pane, text="HTML", padding=6)
         editor_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         editor_frame.columnconfigure(0, weight=1)
-        editor_frame.rowconfigure(0, weight=1)
-        self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18)
-        self.content_html_text.grid(row=0, column=0, sticky="nsew")
+        editor_frame.rowconfigure(1, weight=1)
+        self.content_html_source_mode = False
+        self.content_html_raw_source = ""
+        self.content_html_rich_dirty = False
+        self.content_html_toolbar = ttk.Frame(editor_frame)
+        self.content_html_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        self.content_html_toolbar.columnconfigure(15, weight=1)
+        self.content_html_toolbar_buttons: list[ttk.Button] = []
+        for column, (label, command, help_text) in enumerate((
+            ("B", lambda: self._toggle_content_html_tag("bold"), "Bold"),
+            ("I", lambda: self._toggle_content_html_tag("italic"), "Italic"),
+            ("U", lambda: self._toggle_content_html_tag("underline"), "Underline"),
+            ("•", lambda: self._toggle_content_html_list(False), "Bulleted list"),
+            ("1.", lambda: self._toggle_content_html_list(True), "Numbered list"),
+            ("A", lambda: self._set_content_html_color(False), "Set text color"),
+            ("▣", lambda: self._set_content_html_color(True), "Set text highlight"),
+            ("Link…", self._add_content_html_link, "Add or change link"),
+            ("Table…", self._insert_content_html_table, "Insert a simple table"),
+            ("Style Classes", self._show_content_style_classes_placeholder, "Style Classes will be available once configured"),
+            ("↶", lambda: self._content_html_edit("undo"), "Undo"),
+            ("↷", lambda: self._content_html_edit("redo"), "Redo"),
+        )):
+            button = ttk.Button(self.content_html_toolbar, text=label, command=command)
+            button.grid(row=0, column=column, sticky="w", padx=(0, 3))
+            self._attach_tooltip(button, help_text)
+            self.content_html_toolbar_buttons.append(button)
+        self.content_html_size_var = tk.StringVar(value="Size")
+        self.content_html_size_menu = ttk.Combobox(
+            self.content_html_toolbar,
+            textvariable=self.content_html_size_var,
+            values=("Size", "10pt", "11pt", "12pt", "14pt", "16pt", "18pt", "24pt"),
+            state="readonly",
+            width=7,
+        )
+        self.content_html_size_menu.grid(row=0, column=12, sticky="w", padx=(3, 0))
+        self.content_html_size_menu.bind("<<ComboboxSelected>>", self._set_content_html_size)
+        self._attach_tooltip(self.content_html_size_menu, "Set selected text size")
+        self.content_html_source_button = ttk.Button(self.content_html_toolbar, text="Source HTML", command=self._toggle_content_html_source)
+        self.content_html_source_button.grid(row=0, column=15, sticky="e")
+        self._attach_tooltip(self.content_html_source_button, "Switch between rich editing and exact HTML source")
+        self.content_html_toolbar_buttons.append(self.content_html_source_button)
+        self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18, padx=8, pady=6)
+        self.content_html_text.grid(row=1, column=0, sticky="nsew")
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
-        html_scrollbar.grid(row=0, column=1, sticky="ns")
+        html_scrollbar.grid(row=1, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
 
         self.content_open_html_button = ttk.Button(editor_frame, text="Open HTML…", command=self._open_content_html_file)
-        self.content_open_html_button.grid(row=1, column=0, sticky="e", pady=(6, 0))
+        self.content_open_html_button.grid(row=2, column=0, sticky="e", pady=(6, 0))
         styles_frame.columnconfigure(0, weight=1)
         styles_frame.rowconfigure(0, weight=1)
         self.content_styles_tree = ttk.Treeview(styles_frame, columns=("style", "classes"), show="headings", height=8)
@@ -2337,6 +2448,237 @@ class AToolApp:
         self._capture_content_save_baseline()
         self._update_content_save_availability()
 
+    def _content_html_set(self, html: str) -> None:
+        self.content_html_raw_source = html
+        self.content_html_text.configure(state=tk.NORMAL)
+        self.content_html_text.delete("1.0", tk.END)
+        self._content_html_tag_styles: dict[str, dict[str, str]] = {}
+        if self.content_html_source_mode:
+            self.content_html_text.insert("1.0", html)
+        else:
+            parser = ContentHtmlParser()
+            try:
+                parser.feed(html)
+                parser.close()
+            except Exception:
+                parser.parts = [(html, ())]
+            for text, styles in parser.parts:
+                start = self.content_html_text.index(tk.INSERT)
+                self.content_html_text.insert(tk.INSERT, text)
+                end = self.content_html_text.index(tk.INSERT)
+                if styles:
+                    tag_name = self._content_html_combined_style_tag(dict(styles))
+                    self.content_html_text.tag_add(tag_name, start, end)
+        self.content_html_text.edit_modified(False)
+        self.content_html_rich_dirty = False
+
+    def _content_html_combined_style_tag(self, styles: dict[str, str]) -> str:
+        encoded = json.dumps(styles, sort_keys=True)
+        tag_name = f"content_html_combined_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:10]}"
+        if tag_name in self._content_html_tag_styles:
+            return tag_name
+        self._content_html_tag_styles[tag_name] = styles
+        options: dict[str, object] = {}
+        base_font = tkfont.Font(font=self.content_html_text.cget("font"))
+        if styles.get("bold"):
+            base_font.configure(weight="bold")
+        if styles.get("italic"):
+            base_font.configure(slant="italic")
+        if styles.get("underline"):
+            base_font.configure(underline=True)
+        if styles.get("size"):
+            match = re.search(r"(\d+(?:\.\d+)?)", styles["size"])
+            if match:
+                base_font.configure(size=max(6, round(float(match.group(1)))))
+        if any(styles.get(name) for name in ("bold", "italic", "underline", "size")):
+            options["font"] = base_font
+        if styles.get("foreground"):
+            options["foreground"] = styles["foreground"]
+        if styles.get("background"):
+            options["background"] = styles["background"]
+        if styles.get("link"):
+            options.update(foreground="#0067c8", underline=True)
+        self.content_html_text.tag_configure(tag_name, **options)
+        return tag_name
+
+    def _content_html_style_tag(self, key: str, value: str = "1") -> str:
+        tag_name = f"content_html_{key}_{hashlib.sha1(value.encode('utf-8')).hexdigest()[:10]}"
+        if tag_name in self._content_html_tag_styles:
+            return tag_name
+        self._content_html_tag_styles[tag_name] = {key: value}
+        options: dict[str, object] = {}
+        base_font = tkfont.Font(font=self.content_html_text.cget("font"))
+        if key in ("bold", "italic", "underline", "size"):
+            if key == "bold": base_font.configure(weight="bold")
+            elif key == "italic": base_font.configure(slant="italic")
+            elif key == "underline": base_font.configure(underline=True)
+            elif key == "size":
+                match = re.search(r"(\d+(?:\.\d+)?)", value)
+                if match: base_font.configure(size=max(6, round(float(match.group(1)))))
+            options["font"] = base_font
+        elif key == "foreground": options["foreground"] = value
+        elif key == "background": options["background"] = value
+        elif key == "link": options.update(foreground="#0067c8", underline=True)
+        self.content_html_text.tag_configure(tag_name, **options)
+        return tag_name
+
+    def _content_html_get(self) -> str:
+        raw = self.content_html_text.get("1.0", "end-1c")
+        if self.content_html_source_mode:
+            return raw
+        lines: list[str] = []
+        for line_number in range(1, int(self.content_html_text.index("end-1c").split(".")[0]) + 1):
+            start, end = f"{line_number}.0", f"{line_number}.end"
+            content = self._content_html_text_range_to_html(start, end)
+            if content.startswith("• "):
+                lines.append(f"<ul><li>{content[2:]}</li></ul>")
+            elif re.match(r"^\d+\. ", content):
+                numbered_content = re.sub(r"^\d+\. ", "", content)
+                lines.append(f"<ol><li>{numbered_content}</li></ol>")
+            elif content:
+                lines.append(f"<p>{content}</p>")
+        return "".join(lines) or "<p></p>"
+
+    def _content_html_text_range_to_html(self, start: str, end: str) -> str:
+        output: list[str] = []
+        index = start
+        active: tuple[str, ...] | None = None
+        buffer: list[str] = []
+
+        def flush() -> None:
+            nonlocal buffer
+            if not buffer:
+                return
+            value = html_escape("".join(buffer), quote=False)
+            styles: dict[str, str] = {}
+            for tag_name in active or ():
+                styles.update(self._content_html_tag_styles.get(tag_name, {}))
+            if styles.get("link"):
+                value = f'<a target="_blank" rel="noopener noreferrer" href="{html_escape(styles.pop("link"), quote=True)}">{value}</a>'
+            css = []
+            if styles.get("foreground"): css.append(f'color:{styles["foreground"]}')
+            if styles.get("background"): css.append(f'background-color:{styles["background"]}')
+            if styles.get("size"): css.append(f'font-size:{styles["size"]}')
+            if styles.get("class"):
+                value = f'<span class="{html_escape(styles["class"], quote=True)}">{value}</span>'
+            if css: value = f'<span style="{";".join(css)};">{value}</span>'
+            if styles.get("underline"): value = f"<u>{value}</u>"
+            if styles.get("italic"): value = f"<i>{value}</i>"
+            if styles.get("bold"): value = f"<strong>{value}</strong>"
+            output.append(value)
+            buffer = []
+
+        while self.content_html_text.compare(index, "<", end):
+            tags = tuple(tag for tag in self.content_html_text.tag_names(index) if tag.startswith("content_html_"))
+            if active != tags:
+                flush()
+                active = tags
+            buffer.append(self.content_html_text.get(index))
+            index = self.content_html_text.index(f"{index}+1c")
+        flush()
+        return "".join(output)
+
+    def _content_html_selection(self) -> tuple[str, str] | None:
+        try:
+            return (self.content_html_text.index("sel.first"), self.content_html_text.index("sel.last"))
+        except tk.TclError:
+            return None
+
+    def _toggle_content_html_tag(self, style: str) -> None:
+        if self.content_html_source_mode:
+            return
+        selected = self._content_html_selection()
+        if not selected:
+            self.content_editor_status_var.set("Select text to format it.")
+            return
+        tag_name = self._content_html_style_tag(style)
+        if tag_name in self.content_html_text.tag_names(selected[0]):
+            self.content_html_text.tag_remove(tag_name, *selected)
+        else:
+            self.content_html_text.tag_add(tag_name, *selected)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _set_content_html_color(self, background: bool) -> None:
+        if self.content_html_source_mode or not self._content_html_selection():
+            self.content_editor_status_var.set("Select text to color it.")
+            return
+        chosen = colorchooser.askcolor(parent=self.content_window, title="Select highlight color" if background else "Select text color")[1]
+        if chosen:
+            self.content_html_text.tag_add(self._content_html_style_tag("background" if background else "foreground", chosen), *self._content_html_selection())
+            self.content_html_rich_dirty = True
+            self._on_content_editor_changed()
+
+    def _set_content_html_size(self, _event: tk.Event | None = None) -> None:
+        size = self.content_html_size_var.get()
+        selected = self._content_html_selection()
+        if self.content_html_source_mode or not selected or size == "Size":
+            if size != "Size":
+                self.content_editor_status_var.set("Select text to set its size.")
+            return
+        self.content_html_text.tag_add(self._content_html_style_tag("size", size), *selected)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _add_content_html_link(self) -> None:
+        selected = self._content_html_selection()
+        if self.content_html_source_mode or not selected:
+            self.content_editor_status_var.set("Select text to turn into a link.")
+            return
+        url = simpledialog.askstring("Content Link", "URL:", parent=self.content_window)
+        if url:
+            self.content_html_text.tag_add(self._content_html_style_tag("link", url.strip()), *selected)
+            self.content_html_rich_dirty = True
+            self._on_content_editor_changed()
+
+    def _toggle_content_html_list(self, numbered: bool) -> None:
+        if self.content_html_source_mode:
+            return
+        selected = self._content_html_selection() or (self.content_html_text.index("insert linestart"), self.content_html_text.index("insert lineend"))
+        first, last = int(selected[0].split(".")[0]), int(selected[1].split(".")[0])
+        for line in range(first, last + 1):
+            index = f"{line}.0"
+            value = self.content_html_text.get(index, f"{line}.end")
+            prefix = f"{line - first + 1}. " if numbered else "• "
+            if value.startswith(("• ", "1. ", "2. ", "3. ")):
+                self.content_html_text.delete(index, f"{index}+2c")
+            else:
+                self.content_html_text.insert(index, prefix)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _insert_content_html_table(self) -> None:
+        if self.content_html_source_mode:
+            self.content_html_text.insert(tk.INSERT, "<table><tbody><tr><td>Cell</td><td>Cell</td></tr></tbody></table>")
+        else:
+            self.content_html_text.insert(tk.INSERT, "\nTable: Cell 1 | Cell 2\n")
+            self.content_editor_status_var.set("For editable table structure or sizing, use Source HTML.")
+        if not self.content_html_source_mode:
+            self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _show_content_style_classes_placeholder(self) -> None:
+        self.content_editor_status_var.set("Style Classes are reserved for the forthcoming style-class workflow.")
+
+    def _content_html_edit(self, action: str) -> None:
+        try:
+            self.content_html_text.edit_undo() if action == "undo" else self.content_html_text.edit_redo()
+        except tk.TclError:
+            return
+        if not self.content_html_source_mode:
+            self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _toggle_content_html_source(self) -> None:
+        html = self.content_html_raw_source if not self.content_html_source_mode and not self.content_html_rich_dirty else self._content_html_get()
+        self.content_html_source_mode = not self.content_html_source_mode
+        self.content_html_source_button.configure(text="Rich Text" if self.content_html_source_mode else "Source HTML")
+        self._content_html_set(html)
+        for button in self.content_html_toolbar_buttons[:-1]:
+            button.configure(state=tk.DISABLED if self.content_html_source_mode else tk.NORMAL)
+        self.content_html_size_menu.configure(state=tk.DISABLED if self.content_html_source_mode else "readonly")
+        self._on_content_editor_changed()
+
     def _refresh_content_editor_mode(self) -> None:
         pass
 
@@ -2364,7 +2706,7 @@ class AToolApp:
         self.content_description_var.set("")
         self.content_version_description_var.set("")
         self._set_content_html_controls_enabled(True)
-        self.content_html_text.delete("1.0", tk.END)
+        self._content_html_set("")
         for item_id in self.content_styles_tree.get_children():
             self.content_styles_tree.delete(item_id)
         self.content_load_button.configure(state=tk.DISABLED)
@@ -2395,15 +2737,16 @@ class AToolApp:
             self.content_short_name_var.get().strip(),
             self.content_name_var.get().strip(),
             self.content_source_version_var.get().strip(),
+            self.content_effective_date_var.get().strip(),
             self.content_description_var.get().strip(),
             self.content_version_description_var.get().strip(),
-            self.content_html_text.get("1.0", "end-1c"),
+            self._content_html_get(),
         )
 
     def _content_has_changes(self) -> bool:
         snapshot = self._content_save_snapshot()
         if self.content_mode_var.get() == "create":
-            return bool(snapshot[0] and snapshot[2] and self.content_effective_date_var.get().strip() and snapshot[5].strip())
+            return bool(snapshot[0] and snapshot[2] and snapshot[3] and snapshot[6].strip())
         return self._content_save_baseline is not None and snapshot != self._content_save_baseline
 
     def _capture_content_save_baseline(self) -> None:
@@ -2417,6 +2760,8 @@ class AToolApp:
     def _on_content_html_modified(self, _event: tk.Event | None = None) -> None:
         if self.content_html_text.edit_modified():
             self.content_html_text.edit_modified(False)
+            if not self.content_html_source_mode:
+                self.content_html_rich_dirty = True
             self._update_content_save_availability()
 
     def _load_all_content_browser(self, _event: tk.Event, scope: str) -> str:
@@ -2629,6 +2974,9 @@ class AToolApp:
     def _set_content_html_controls_enabled(self, enabled: bool) -> None:
         self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        for button in self.content_html_toolbar_buttons:
+            button.configure(state=tk.NORMAL if enabled and (not self.content_html_source_mode or button is self.content_html_source_button) else tk.DISABLED)
+        self.content_html_size_menu.configure(state="readonly" if enabled and not self.content_html_source_mode else tk.DISABLED)
         for control in self.content_metadata_controls:
             control.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         if enabled:
@@ -2638,8 +2986,11 @@ class AToolApp:
         version = result.get("version") if isinstance(result.get("version"), dict) else {}
         html = str(result.get("html", ""))
         self._set_content_html_controls_enabled(True)
-        self.content_html_text.delete("1.0", tk.END)
-        self.content_html_text.insert("1.0", html)
+        self.content_html_source_mode = False
+        self.content_html_source_button.configure(text="Source HTML")
+        self._content_html_set(html)
+        for button in self.content_html_toolbar_buttons:
+            button.configure(state=tk.NORMAL)
         self.content_source_version_var.set(str(version.get("shortName", "")))
         effective_date = str(version.get("effectiveDate", "")).replace("T00:00:00.000000Z", "")
         self.content_effective_date_var.set(effective_date)
@@ -2668,8 +3019,7 @@ class AToolApp:
         except OSError as error:
             messagebox.showerror("Open Content HTML", str(error), parent=self.content_window)
             return
-        self.content_html_text.delete("1.0", tk.END)
-        self.content_html_text.insert("1.0", html)
+        self._content_html_set(html)
         self.content_editor_status_var.set(f"Loaded {os.path.basename(path)}")
 
     def _save_content_from_manager(self) -> None:
@@ -2680,7 +3030,7 @@ class AToolApp:
         short_name = self.content_short_name_var.get().strip()
         version = self.content_source_version_var.get().strip()
         effective_date = self.content_effective_date_var.get().strip()
-        html = self.content_html_text.get("1.0", "end-1c")
+        html = self._content_html_get()
         if not short_name or not version or not effective_date or not html.strip():
             messagebox.showerror("Content Manager", "Content short name, version, effective date, and HTML are required.", parent=self.content_window)
             return
@@ -2755,7 +3105,7 @@ class AToolApp:
             parent=self.content_window,
         ):
             return
-        html = self.content_html_text.get("1.0", "end-1c")
+        html = self._content_html_get()
         temporary_html = tempfile.NamedTemporaryFile(prefix="atool-content-", suffix=".html", delete=False, mode="w", encoding="utf-8")
         try:
             temporary_html.write(html)
