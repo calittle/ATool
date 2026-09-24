@@ -135,6 +135,9 @@ class AToolApp:
         "document_display": {
             "collapse": False,
         },
+        "content_editor": {
+            "font_family": "",
+        },
         "diagnostics": {
             "debug_logging": False,
         },
@@ -2407,7 +2410,15 @@ class AToolApp:
         self.content_html_source_button.grid(row=0, column=16, sticky="e")
         self._attach_tooltip(self.content_html_source_button, "Switch between rich editing and exact HTML source")
         self.content_html_toolbar_buttons.append(self.content_html_source_button)
-        self.content_html_text = tk.Text(editor_frame, wrap=tk.WORD, undo=True, height=18, padx=8, pady=6)
+        self.content_html_text = tk.Text(
+            editor_frame,
+            wrap=tk.WORD,
+            undo=True,
+            height=18,
+            padx=8,
+            pady=6,
+            font=self._content_editor_font(),
+        )
         self.content_html_text.grid(row=1, column=0, sticky="nsew")
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
         html_scrollbar.grid(row=1, column=1, sticky="ns")
@@ -6553,8 +6564,22 @@ class AToolApp:
         )
         collapse_check.grid(row=0, column=0, sticky="w")
 
+        content_editor_group = ttk.LabelFrame(container, text="Content Editor", padding=10)
+        content_editor_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        content_editor_group.columnconfigure(1, weight=1)
+        content_editor_font_var = tk.StringVar(value=self._get_content_editor_font_family() or "System Default")
+        ttk.Label(content_editor_group, text="HTML Font:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        content_editor_font_entry = ttk.Combobox(
+            content_editor_group,
+            textvariable=content_editor_font_var,
+            values=("System Default", *sorted(tkfont.families())),
+            width=38,
+        )
+        content_editor_font_entry.grid(row=0, column=1, sticky="ew")
+        self._attach_tooltip(content_editor_font_entry, "Font used by the rich HTML editor; leave as System Default for ATool's proportional UI font.")
+
         diagnostics_group = ttk.LabelFrame(container, text="Diagnostics", padding=10)
-        diagnostics_group.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        diagnostics_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         debug_var = tk.BooleanVar(value=self._is_debug_logging_enabled())
         debug_check = ttk.Checkbutton(
@@ -6565,7 +6590,7 @@ class AToolApp:
         debug_check.grid(row=0, column=0, sticky="w")
 
         occs_group = ttk.LabelFrame(container, text="OCCS CLI", padding=10)
-        occs_group.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        occs_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         occs_group.columnconfigure(1, weight=1)
 
         cli_path_var = tk.StringVar(value=self._get_occs_cli_path())
@@ -6795,7 +6820,7 @@ class AToolApp:
         )
 
         preview_group = ttk.LabelFrame(container, text="Preview Open Programs", padding=10)
-        preview_group.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        preview_group.grid(row=5, column=0, sticky="ew", pady=(10, 0))
         preview_group.columnconfigure(1, weight=1)
 
         def _browse_preview_program(render_type: str) -> None:
@@ -6847,10 +6872,10 @@ class AToolApp:
             wraplength=520,
             justify=tk.LEFT,
         )
-        path_label.grid(row=5, column=0, sticky="w", pady=(10, 0))
+        path_label.grid(row=6, column=0, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=6, column=0, sticky="e", pady=(14, 0))
+        buttons.grid(row=7, column=0, sticky="e", pady=(14, 0))
 
         cancel_btn = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
         cancel_btn.grid(row=0, column=0, padx=(0, 8))
@@ -6893,6 +6918,8 @@ class AToolApp:
                     return
             self._set_confirm_on_quit_enabled(bool(confirm_on_quit_var.get()))
             self._set_document_collapse_enabled(bool(collapse_var.get()))
+            selected_content_editor_font = content_editor_font_var.get().strip()
+            self._set_content_editor_font_family("" if selected_content_editor_font == "System Default" else selected_content_editor_font)
             self._set_debug_logging_enabled(bool(debug_var.get()))
             self._set_occs_cli_path(cli_path_var.get())
             self._set_occs_work_dir(work_dir_var.get())
@@ -7629,6 +7656,34 @@ class AToolApp:
             return False
         return bool(document_display.get("collapse"))
 
+    def _get_content_editor_font_family(self) -> str:
+        editor = self.user_settings.get("content_editor")
+        if not isinstance(editor, dict):
+            return ""
+        value = editor.get("font_family")
+        return value.strip() if isinstance(value, str) else ""
+
+    def _content_editor_font(self) -> object:
+        family = self._get_content_editor_font_family()
+        if not family:
+            return "TkDefaultFont"
+        default_size = abs(int(tkfont.nametofont("TkDefaultFont").cget("size")))
+        return (family, default_size)
+
+    def _set_content_editor_font_family(self, family: str) -> None:
+        editor = self.user_settings.setdefault("content_editor", {})
+        if not isinstance(editor, dict):
+            editor = {}
+            self.user_settings["content_editor"] = editor
+        editor["font_family"] = family.strip()
+        if hasattr(self, "content_html_text") and self.content_html_text.winfo_exists():
+            html = self._content_html_get()
+            had_rich_edits = self.content_html_rich_dirty
+            self.content_html_text.configure(font=self._content_editor_font())
+            self._content_html_set(html)
+            self.content_html_rich_dirty = had_rich_edits
+            self._update_content_save_availability()
+
     def _get_confirm_on_quit_setting(self) -> bool:
         application = self.user_settings.get("application")
         if not isinstance(application, dict):
@@ -7676,6 +7731,12 @@ class AToolApp:
             collapse_value = document_display.get("collapse")
             if isinstance(collapse_value, bool):
                 settings["document_display"]["collapse"] = collapse_value
+
+        content_editor = parsed.get("content_editor")
+        if isinstance(content_editor, dict):
+            font_family = content_editor.get("font_family")
+            if isinstance(font_family, str):
+                settings["content_editor"]["font_family"] = font_family
 
         diagnostics = parsed.get("diagnostics")
         if isinstance(diagnostics, dict):
