@@ -15,13 +15,14 @@ import threading
 import time
 import traceback
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from html.parser import HTMLParser
 from pathlib import Path
 import tkinter as tk
 from tkinter import colorchooser, filedialog, font as tkfont, messagebox, simpledialog, ttk
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from atool_core.condition_evaluator import ConditionEvaluator
 
@@ -32,6 +33,15 @@ class OccsCommandCancelled(RuntimeError):
 
 class ContentHtmlParser(HTMLParser):
     """Small, deliberately conservative HTML-to-Tk-text adapter for OCCS content."""
+
+    COMMS_DATA_TOKEN = re.compile(
+        r'<comms-data>\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    COMMS_DATA_EXPRESSION = re.compile(
+        r'^\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
+        re.DOTALL,
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -98,21 +108,22 @@ class ContentHtmlParser(HTMLParser):
             self.stack.pop()
 
     def handle_data(self, data: str) -> None:
-        expression = re.fullmatch(r"\$Data\{\s*\"Id\"\s*:\s*\"([^\"]+)\"\s*\}", data.strip())
         styles = dict(self._styles())
+        expression = self.COMMS_DATA_EXPRESSION.fullmatch(data)
         if expression and styles.get("comms-data"):
             styles.pop("comms-data", None)
-            styles["field"] = expression.group(1)
-            self._append(f"${expression.group(1)}", tuple(sorted(styles.items())))
+            styles["comms"] = f"<comms-data>{expression.group(1)}</comms-data>"
+            self._append(f"${expression.group(2)}", tuple(sorted(styles.items())))
             return
-        # OCCS normally stores these expressions escaped, so HTMLParser emits
-        # the entire tag as text instead of start/end tag callbacks.
-        token = re.fullmatch(r"<comms-data>(\$Data\{\s*\"Id\"\s*:\s*\"([^\"]+)\"\s*\})</comms-data>", data.strip())
-        if token:
-            styles["field"] = token.group(2)
-            self._append(f"${token.group(2)}", tuple(sorted(styles.items())))
-            return
-        self._append(data)
+        # OCCS normally stores tags escaped, so the parser receives them as
+        # literal text—often mixed into a much larger condition expression.
+        start = 0
+        for token in self.COMMS_DATA_TOKEN.finditer(data):
+            self._append(data[start:token.start()])
+            token_styles = {**styles, "comms": token.group(0)}
+            self._append(f"${token.group(2)}", tuple(sorted(token_styles.items())))
+            start = token.end()
+        self._append(data[start:])
 
 
 class AToolApp:
@@ -520,6 +531,12 @@ class AToolApp:
 
         config_menu = tk.Menu(menu_bar, tearoff=0)
         config_menu.add_command(label="Set...", command=self.set_active_occs_config)
+        config_menu.add_command(
+            label="Lock",
+            command=self.toggle_active_occs_config_lock,
+            state=tk.NORMAL if self._get_last_occs_config_id() else tk.DISABLED,
+        )
+        config_menu.add_command(label="Lockouts...", command=self.open_occs_config_lockouts_dialog)
         config_menu.add_separator()
         config_menu.add_command(label="Create...", command=self.create_occs_config)
         config_menu.add_command(label="List", command=self.list_occs_configs)
@@ -2440,6 +2457,8 @@ class AToolApp:
             font=self._content_editor_font(),
         )
         self.content_html_text.grid(row=1, column=0, sticky="nsew")
+        self.content_html_text.bind("<Motion>", self._show_content_html_tag_tooltip)
+        self.content_html_text.bind("<Leave>", lambda _event: self._hide_tooltip())
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
         html_scrollbar.grid(row=1, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
@@ -2552,7 +2571,7 @@ class AToolApp:
             options["background"] = self._content_html_tk_color(styles["background"])
         if styles.get("link"):
             options.update(foreground="#0067c8", underline=True)
-        if styles.get("field"):
+        if styles.get("field") or styles.get("comms"):
             options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
@@ -2575,7 +2594,7 @@ class AToolApp:
         elif key == "foreground": options["foreground"] = self._content_html_tk_color(value)
         elif key == "background": options["background"] = self._content_html_tk_color(value)
         elif key == "link": options.update(foreground="#0067c8", underline=True)
-        elif key == "field": options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
+        elif key in ("field", "comms"): options.update(foreground="#6d28d9", background="#f3e8ff", underline=True)
         self.content_html_text.tag_configure(tag_name, **options)
         return tag_name
 
@@ -2622,7 +2641,9 @@ class AToolApp:
             styles: dict[str, str] = {}
             for tag_name in active or ():
                 styles.update(self._content_html_tag_styles.get(tag_name, {}))
-            if styles.get("field"):
+            if styles.get("comms"):
+                value = styles.pop("comms")
+            elif styles.get("field"):
                 value = f'<comms-data>$Data{{"Id":"{html_escape(styles.pop("field"), quote=True)}"}}</comms-data>'
             else:
                 value = html_escape("".join(buffer), quote=False)
@@ -2656,6 +2677,21 @@ class AToolApp:
             return (self.content_html_text.index("sel.first"), self.content_html_text.index("sel.last"))
         except tk.TclError:
             return None
+
+    def _show_content_html_tag_tooltip(self, event: tk.Event) -> None:
+        if self.content_html_source_mode:
+            self._hide_tooltip()
+            return
+        index = self.content_html_text.index(f"@{event.x},{event.y}")
+        styles: dict[str, str] = {}
+        for tag_name in self.content_html_text.tag_names(index):
+            styles.update(self._content_html_tag_styles.get(tag_name, {}))
+        if styles.get("comms"):
+            self._show_tooltip(event, styles["comms"])
+        elif styles.get("field"):
+            self._show_tooltip(event, self._content_field_tag(styles["field"]))
+        else:
+            self._hide_tooltip()
 
     def _toggle_content_html_tag(self, style: str) -> None:
         if self.content_html_source_mode:
@@ -7468,6 +7504,231 @@ class AToolApp:
         if isinstance(section, dict):
             configured = str(section.get("shared_workspace_dir", "")).strip()
         return os.path.expanduser(configured or self._default_occs_shared_workspace_dir())
+
+    def _occs_config_lockout_path(self) -> Path:
+        """The shared, ATool-owned record of protected Config IDs and windows."""
+        return Path(self._get_occs_shared_workspace_dir()) / "config-lockouts.json"
+
+    def _read_occs_config_lockouts(self) -> dict[str, object]:
+        path = self._occs_config_lockout_path()
+        try:
+            with open(path, encoding="utf-8") as source:
+                raw = json.load(source)
+        except FileNotFoundError:
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        except (OSError, json.JSONDecodeError) as error:
+            messagebox.showerror(
+                "Config Lockouts",
+                f"Could not read the shared Config lockout file:\n{path}\n\nDetails: {error}",
+            )
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        if not isinstance(raw, dict):
+            return {"version": 1, "locked_config_ids": [], "lockout_windows": []}
+        locked_ids = raw.get("locked_config_ids")
+        windows = raw.get("lockout_windows")
+        return {
+            "version": 1,
+            "locked_config_ids": [str(value).strip() for value in locked_ids if str(value).strip()]
+            if isinstance(locked_ids, list) else [],
+            "lockout_windows": [entry for entry in windows if isinstance(entry, dict)]
+            if isinstance(windows, list) else [],
+        }
+
+    def _write_occs_config_lockouts(self, payload: dict[str, object], action: str) -> bool:
+        if not self._require_shared_folder_sync(action):
+            return False
+        path = self._occs_config_lockout_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = path.with_suffix(".json.tmp")
+            with open(temp_path, "w", encoding="utf-8") as target:
+                json.dump(payload, target, indent=2, sort_keys=True)
+                target.write("\n")
+            os.replace(temp_path, path)
+            return True
+        except OSError as error:
+            messagebox.showerror(
+                "Config Lockouts",
+                f"Could not write the shared Config lockout file:\n{path}\n\nDetails: {error}",
+            )
+            return False
+
+    @staticmethod
+    def _normalize_occs_config_id(config_id: str) -> str:
+        return str(config_id or "").strip().casefold()
+
+    def _active_occs_config_lockout_message(self, config_id: str) -> str:
+        """Return an explanation when an operation must not close or migrate."""
+        payload = self._read_occs_config_lockouts()
+        normalized_id = self._normalize_occs_config_id(config_id)
+        locked_ids = {
+            self._normalize_occs_config_id(value)
+            for value in payload["locked_config_ids"]
+            if isinstance(value, str)
+        }
+        if normalized_id and normalized_id in locked_ids:
+            return f"Config ID {config_id} is locked in the shared ATool lockout file."
+        now = datetime.now(timezone.utc)
+        for window in payload["lockout_windows"]:
+            if not isinstance(window, dict):
+                continue
+            try:
+                start = datetime.fromisoformat(str(window.get("start", "")).replace("Z", "+00:00"))
+                end = datetime.fromisoformat(str(window.get("end", "")).replace("Z", "+00:00"))
+                if start.tzinfo is None or end.tzinfo is None:
+                    continue
+            except ValueError:
+                continue
+            if start.astimezone(timezone.utc) <= now < end.astimezone(timezone.utc):
+                return (
+                    "A shared Config lockout window is active until "
+                    f"{end.astimezone().strftime('%Y-%m-%d %H:%M %Z')}."
+                )
+        return ""
+
+    def _prevent_occs_config_lifecycle_action(self, action: str, config_id: str) -> bool:
+        message = self._active_occs_config_lockout_message(config_id)
+        if not message:
+            return False
+        messagebox.showerror(
+            f"{action} Config",
+            f"{message}\n\nATool will not {action.lower()} this Config while the protection is active.",
+        )
+        return True
+
+    def toggle_active_occs_config_lock(self) -> None:
+        config_id = self._get_last_occs_config_id()
+        if not config_id:
+            messagebox.showinfo("Lock Config", "Choose Config > Set… before locking a Config ID.")
+            return
+        self._toggle_occs_config_lock(config_id)
+
+    def _toggle_occs_config_lock(self, config_id: str, parent: tk.Misc | None = None) -> None:
+        payload = self._read_occs_config_lockouts()
+        normalized_id = self._normalize_occs_config_id(config_id)
+        locked_ids = [value for value in payload["locked_config_ids"] if isinstance(value, str)]
+        existing = next((value for value in locked_ids if self._normalize_occs_config_id(value) == normalized_id), None)
+        if existing:
+            if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from Config ID {existing}?", parent=parent):
+                return
+            payload["locked_config_ids"] = [value for value in locked_ids if self._normalize_occs_config_id(value) != normalized_id]
+            action, status = "remove this shared Config lock", "unlocked"
+        else:
+            if not messagebox.askyesno("Lock Config", f"Lock Config ID {config_id}?\n\nATool will prevent closing or migrating it.", parent=parent):
+                return
+            locked_ids.append(config_id.strip())
+            payload["locked_config_ids"] = locked_ids
+            action, status = "create this shared Config lock", "locked"
+        if self._write_occs_config_lockouts(payload, action):
+            self._show_temporary_status(f"Config ID {config_id} {status}", duration_ms=5000)
+
+    def open_occs_config_lockouts_dialog(self) -> None:
+        dialog = self._create_toplevel(self.root)
+        dialog.title("Config Lockouts")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+        container = ttk.Frame(dialog, padding=14)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+        ttk.Label(container, text="Shared lockout windows block every Config close and migration while active.").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        columns = ("start", "end", "timezone", "duration")
+        tree = ttk.Treeview(container, columns=columns, show="headings", height=12)
+        for key, label, width in (("start", "Start", 210), ("end", "End", 210), ("timezone", "Timezone", 120), ("duration", "Duration", 110)):
+            tree.heading(key, text=label)
+            tree.column(key, width=width, stretch=key in {"start", "end"})
+        tree.tag_configure("past", foreground="#888888")
+        tree.grid(row=1, column=0, sticky="nsew")
+        item_windows: dict[str, dict[str, object]] = {}
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=2, column=0, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+
+        def _refresh() -> None:
+            for item in tree.get_children():
+                tree.delete(item)
+            item_windows.clear()
+            now = datetime.now(timezone.utc)
+            for window in self._read_occs_config_lockouts()["lockout_windows"]:
+                if not isinstance(window, dict):
+                    continue
+                try:
+                    start = datetime.fromisoformat(str(window.get("start", "")).replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(str(window.get("end", "")).replace("Z", "+00:00"))
+                    zone_name = str(window.get("timezone", "UTC"))
+                    zone = ZoneInfo(zone_name)
+                    duration = end - start
+                except (ValueError, ZoneInfoNotFoundError):
+                    continue
+                tags = ("past",) if end.astimezone(timezone.utc) <= now else ()
+                item = tree.insert("", tk.END, values=(start.astimezone(zone).strftime("%Y-%m-%d %H:%M"), end.astimezone(zone).strftime("%Y-%m-%d %H:%M"), zone_name, str(duration)), tags=tags)
+                item_windows[item] = window
+
+        def _add() -> None:
+            self._open_occs_config_lockout_add_dialog(dialog, _refresh)
+
+        def _remove() -> None:
+            selected = tree.selection()
+            if not selected:
+                return
+            window = item_windows.get(selected[0])
+            if window is None or not messagebox.askyesno("Remove Lockout", "Remove the selected shared lockout window?", parent=dialog):
+                return
+            payload = self._read_occs_config_lockouts()
+            payload["lockout_windows"] = [entry for entry in payload["lockout_windows"] if entry != window]
+            if self._write_occs_config_lockouts(payload, "remove this shared Config lockout"):
+                _refresh()
+
+        ttk.Button(buttons, text="Add...", command=_add).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Remove", command=_remove).grid(row=0, column=2)
+        _refresh()
+        dialog.geometry("700x390")
+
+    def _open_occs_config_lockout_add_dialog(self, parent: tk.Misc, on_complete: object) -> None:
+        dialog = self._create_toplevel(parent)
+        dialog.title("Add Config Lockout")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        start_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+        timezone_var = tk.StringVar(value="UTC")
+        duration_var = tk.StringVar(value="60")
+        for row, (label, variable, note) in enumerate((("Start:", start_var, "YYYY-MM-DD HH:MM"), ("Timezone:", timezone_var, "IANA name, e.g. America/New_York"), ("Duration (minutes):", duration_var, ""))):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+            ttk.Entry(frame, textvariable=variable, width=32).grid(row=row, column=1, sticky="ew", pady=(0, 8))
+            if note:
+                ttk.Label(frame, text=note).grid(row=row, column=2, sticky="w", padx=(8, 0), pady=(0, 8))
+
+        def _save() -> None:
+            try:
+                zone_name = timezone_var.get().strip()
+                zone = ZoneInfo(zone_name)
+                start = datetime.strptime(start_var.get().strip(), "%Y-%m-%d %H:%M").replace(tzinfo=zone)
+                duration_minutes = int(duration_var.get().strip())
+                if duration_minutes <= 0:
+                    raise ValueError("Duration must be greater than zero.")
+            except (ValueError, ZoneInfoNotFoundError) as error:
+                messagebox.showerror("Add Config Lockout", f"Enter a valid start, IANA timezone, and positive duration.\n\nDetails: {error}", parent=dialog)
+                return
+            payload = self._read_occs_config_lockouts()
+            windows = payload["lockout_windows"]
+            if not isinstance(windows, list):
+                windows = []
+            windows.append({"start": start.isoformat(), "end": (start + timedelta(minutes=duration_minutes)).isoformat(), "timezone": zone_name})
+            payload["lockout_windows"] = windows
+            if self._write_occs_config_lockouts(payload, "add this shared Config lockout"):
+                dialog.destroy()
+                if callable(on_complete):
+                    on_complete()
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=3, sticky="e", pady=(6, 0))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_frame, text="Add Lockout", command=_save).grid(row=0, column=1)
 
     def _get_occs_models_dir(self) -> str:
         section = self.user_settings.get("occs")
@@ -13743,15 +14004,28 @@ class AToolApp:
         buttons = ttk.Frame(container)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        lock_config_button = ttk.Button(buttons, text="Lock Config ID", state=tk.DISABLED)
+        lock_config_button.grid(row=0, column=1, padx=(0, 8))
         close_config_button = ttk.Button(buttons, text="Close Config ID", state=tk.DISABLED)
-        close_config_button.grid(row=0, column=1)
+        close_config_button.grid(row=0, column=2)
 
         def _selected_config() -> dict[str, str] | None:
             selected_items = tree.selection()
             return config_by_item.get(selected_items[0]) if selected_items else None
 
         def _update_close_button(*_args: object) -> None:
-            close_config_button.configure(state=tk.NORMAL if _selected_config() is not None else tk.DISABLED)
+            config = _selected_config()
+            close_config_button.configure(state=tk.NORMAL if config is not None else tk.DISABLED)
+            if config is None:
+                lock_config_button.configure(state=tk.DISABLED, text="Lock Config ID")
+                return
+            config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
+            locked_ids = self._read_occs_config_lockouts()["locked_config_ids"]
+            is_locked = any(
+                self._normalize_occs_config_id(str(value)) == self._normalize_occs_config_id(config_id)
+                for value in locked_ids
+            )
+            lock_config_button.configure(state=tk.NORMAL, text="Unlock Config ID" if is_locked else "Lock Config ID")
 
         def _config_sort_key(config: dict[str, str]) -> tuple[int, int | str]:
             config_id = config.get("id", "").strip()
@@ -13818,6 +14092,16 @@ class AToolApp:
             self._run_occs_config_close(session_alias, config_id)
 
         close_config_button.configure(command=_close_selected_config)
+        def _toggle_selected_lock() -> None:
+            config = _selected_config()
+            if config is None:
+                return
+            config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
+            if config_id:
+                self._toggle_occs_config_lock(config_id, dialog)
+                _update_close_button()
+
+        lock_config_button.configure(command=_toggle_selected_lock)
         tree.bind("<<TreeviewSelect>>", _update_close_button)
         filter_var.trace_add("write", _refresh_configs)
         _refresh_configs()
@@ -13919,6 +14203,8 @@ class AToolApp:
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
     def _run_occs_config_close(self, source_session: str, config_id: str) -> None:
+        if self._prevent_occs_config_lifecycle_action("Close", config_id):
+            return
         command = ["close-config"]
         if source_session:
             command.extend(["--session", source_session])
@@ -13956,6 +14242,9 @@ class AToolApp:
             return
         source_session = self._get_occs_config_source_session_alias()
         target_session = self._get_occs_config_target_session_alias()
+        config_id = self._get_last_occs_config_id()
+        if self._prevent_occs_config_lifecycle_action("Migrate", config_id):
+            return
         if confirm and not messagebox.askyesno(
             "Confirm Migrate Config",
             f"Run OCCS migrate?\n\nSource: {source_session}\nTarget: {target_session}",
@@ -13986,6 +14275,8 @@ class AToolApp:
                     f"Could not refresh OCCS session {failed_session}.\n\nDetails: {error}",
                 ),
             )
+            return
+        if self._prevent_occs_config_lifecycle_action("Migrate", self._get_last_occs_config_id()):
             return
         self._run_occs_command_async(
             [
