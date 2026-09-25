@@ -3301,7 +3301,7 @@ class AToolApp:
                 return
             fields = definition.get("fields", [])
             field_context = ", ".join(
-                f"{field['name']}{f' ({field['path']})' if field['path'] else ''}"
+                f"{field['name']} ({field['path']})" if field['path'] else str(field['name'])
                 for field in fields
                 if isinstance(field, dict)
             ) or "(no iteration fields)"

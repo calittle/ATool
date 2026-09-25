@@ -1,6 +1,6 @@
 # ATool Release Notes
 
-## v1.0.7
+## v1.0.8
 
 - Added `Data > Resolve...` to inspect how a cached document layout resolves against mapped data, including nested layouts, conditions, selected and suppressed content, and mapped fields.
 - Added effective-date and `PackagePageNum` controls, cached root-layout choices, text and JSON evidence export, and a companion resolver CLI.
