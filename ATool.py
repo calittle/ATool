@@ -7620,7 +7620,9 @@ class AToolApp:
             self.current_occs_bundle_dir
             and self.current_occs_manifest
             and self.current_data_payload is not None
-            and not self._occs_operation_in_progress
+            # Preview has a dedicated process slot, so it can run beside one
+            # regular OCCS command.  Only another preview conflicts with it.
+            and not self._occs_preview_in_progress
         )
 
     def _update_package_menu_states(self) -> None:
@@ -7865,10 +7867,13 @@ class AToolApp:
                 page_number = int(page_var.get().strip())
                 if page_number < 1:
                     raise ValueError("PackagePageNum must be a positive integer.")
+                grid_page_number = int(grid_page_var.get().strip())
+                if grid_page_number < 1:
+                    raise ValueError("GRIDPAGENUMBER must be a positive integer.")
                 layout_name = layout_var.get().strip()
                 if not layout_name:
                     raise ValueError("Choose a layout.")
-                resolver = _make_resolver(page_number)
+                resolver = _make_resolver(page_number, grid_page_number)
             except (OSError, ValueError) as error:
                 messagebox.showerror("Resolve Layout", str(error), parent=dialog)
                 return
@@ -13600,8 +13605,8 @@ class AToolApp:
         return f"{size:.1f} GB"
 
     def preview_occs_package(self) -> None:
-        if self._occs_operation_in_progress:
-            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+        if self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "A preview is already in progress.")
             return
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
             messagebox.showinfo("Preview Package", "Open a package version first.")
@@ -16146,14 +16151,16 @@ class AToolApp:
         on_success: object,
         on_failure: object | None = None,
     ) -> None:
-        if self._occs_operation_in_progress:
-            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+        if self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "A preview is already in progress.")
             return
-        self._occs_operation_in_progress = True
         self._occs_preview_in_progress = True
         self._occs_preview_cancel_requested = False
         self._update_package_menu_states()
-        self._start_occs_status_timer(status_message)
+        # Leave the regular command's progress display intact when both kinds
+        # of work are active.  Preview gets its own process/cancellation slot.
+        if not self._occs_operation_in_progress:
+            self._start_occs_status_timer(status_message)
 
         def _worker() -> None:
             try:
@@ -16174,12 +16181,29 @@ class AToolApp:
     def _on_occs_preview_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
-        self._on_occs_command_success(result, on_success)
+        self._update_package_menu_states()
+        if not self._occs_operation_in_progress:
+            self._stop_occs_status_timer()
+            self._restore_default_status_text()
+        if callable(on_success):
+            on_success(result)
 
     def _on_occs_preview_command_failure(self, error: Exception, stack: str, on_failure: object | None) -> None:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
-        self._on_occs_command_failure(error, stack, on_failure)
+        self._update_package_menu_states()
+        if not self._occs_operation_in_progress:
+            self._stop_occs_status_timer()
+            self._restore_default_status_text()
+        if isinstance(error, OccsCommandCancelled):
+            self._debug_log("OCCS preview canceled by user.")
+            self._show_temporary_status("Preview canceled", duration_ms=5000)
+            return
+        self._debug_log(f"OCCS preview failed:\n{stack}")
+        if callable(on_failure):
+            on_failure(error)
+            return
+        messagebox.showerror("Preview Package", str(error))
 
     def _run_occs_command_async(
         self,
@@ -16402,7 +16426,8 @@ class AToolApp:
             messagebox.showinfo("Preview Package", "No Preview is currently running.")
             return
         self._occs_preview_cancel_requested = True
-        self._set_occs_status_timer_message("Canceling Preview...")
+        if not self._occs_operation_in_progress:
+            self._set_occs_status_timer_message("Canceling Preview...")
         self._terminate_tracked_occs_process("_occs_preview_process")
 
     def _terminate_active_occs_process(self) -> None:
