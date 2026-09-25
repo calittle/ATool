@@ -1,0 +1,2 @@
+# Native WebKit editor window used by the unified Content editor on macOS.
+pywebview==6.2.1

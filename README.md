@@ -16,9 +16,14 @@ ATool (Assembly Template Tool) is a cross-platform Python desktop app for workin
 - Python 3.10+ (recommended)
 - `tkinter` (bundled with standard Python installers on macOS/Windows)
 - OCCS CLI access for OCCS package, preview, mapping, and conversion actions
+- The dependencies in `requirements.txt` for the unified browser Content Editor
 
-ATool currently uses only Python standard library modules. There is no `pip install`
-or virtual environment setup required for normal users.
+Set up the local runtime once from the ATool folder:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
 
 ## Installation
 
@@ -95,7 +100,7 @@ If the launchers are unavailable, run the app directly from the ATool folder:
 macOS:
 
 ```bash
-python3 ATool.py
+.venv/bin/python ATool.py
 ```
 
 Windows:
@@ -345,3 +350,39 @@ On save, ATool:
 - Check status bar (`Mapping: Running/Idle`).
 - Optional debug logging can be enabled in user settings.
 - User Settings can route XML conversion through a selected local XSD instead of the OCCS XML conversion API. Enable **Use local XSD for XML conversion** and choose the XSD file; the setting is used by both Convert XML and Convert and Map.
+
+## Inspect a Cached Layout Resolution
+
+With a package open, a data file mapped, and a document selected, choose
+`Data -> Resolve...`. The dialog uses the configured Comms Cache Directory from
+User Settings, or you can browse to another cache. Choose an effective date,
+set `PackagePageNum` (default `1`), and pick one of the cached document's root
+layouts. Click **Resolve** to see the selected and suppressed content and mapped
+field values. **Save...** exports the text trace or JSON evidence.
+
+The resolver uses the open Assembly Template, including unsaved field and
+document condition edits, plus active document and content versions from the
+cache for the effective date. It does not change Comms or the mapped data.
+
+The same resolver can be run without the UI for automation:
+
+```bash
+python3 tools/resolve_layout.py \
+  --cache /path/to/comms-cache \
+  --package CLP_bills \
+  --document BULK_BILL \
+  --layout 'header: address' \
+  --data /path/to/bill.json \
+  --effective-date 2026-09-25
+```
+
+`PackagePageNum` defaults to `1`. Override it with
+`--system-field PackagePageNum=2`. Use `--format json` for a structured evidence
+tree, and `--output /path/to/report.txt` to save the result. If the cache has
+multiple Assembly Template versions, select one with `--at-version`.
+
+This pass supports direct data fields, `concat` and `length` field paths,
+conditional text/content includes, and Comms' one-based `substring` transform.
+It marks loops, unsupported transforms, unknown fields, and uncertain
+relationship triggers in the report. The text is a content facsimile; page
+layout, fonts, and barcode drawing still require a Comms render.

@@ -1,3 +1,7 @@
 #!/bin/zsh
-cd "/Users/clittle/Documents/dev/ATool"
-python3 ATool.py
+cd -- "$(dirname -- "$0")"
+if [[ -x .venv/bin/python ]]; then
+  .venv/bin/python ATool.py
+else
+  python3 ATool.py
+fi
