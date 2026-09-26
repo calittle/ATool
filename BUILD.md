@@ -7,10 +7,13 @@ For automated builds.
 Share the ATool folder or a zip containing:
 
 - `ATool.py`
+- `atool_web_editor.py`
 - `atool_core/` (the application support package)
+- `tools/resolve_layout.py`
 - `Run_ATool.bat`
 - `Run_ATool.zsh`
 - `README.md`
+- `requirements.txt`
 - `NOTES.MD`
 
 Do not include local cache or generated folders such as `.venv`, `__pycache__`,
@@ -48,16 +51,8 @@ For an existing tag whose release needs an asset added later, open the
 **Publish release artifact** workflow in GitHub Actions, select **Run
 workflow**, and provide the tag name. The workflow packages that exact tag.
 
-### Build Manually
+## Local development
 
-Build locally from the latest committed snapshot:
-
-```bash
-python3 tools/build_artifact.py --source head
-```
-
-Build from the current working tree:
-
-```bash
-python3 tools/build_artifact.py --source worktree
-```
+Do not create release ZIPs locally. GitHub Actions is the only artifact build
+environment. Local development should run focused checks such as Python syntax
+validation and tests instead.

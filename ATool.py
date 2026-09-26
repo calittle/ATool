@@ -17,7 +17,7 @@ import time
 import traceback
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
 from html.parser import HTMLParser
 from pathlib import Path
 import tkinter as tk
@@ -26,6 +26,7 @@ from xml.etree import ElementTree
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.condition_evaluator import ConditionEvaluator
+from atool_core.layout_resolver import LayoutResolver, format_report
 
 
 class OccsCommandCancelled(RuntimeError):
@@ -35,17 +36,31 @@ class OccsCommandCancelled(RuntimeError):
 class ContentHtmlParser(HTMLParser):
     """Small, deliberately conservative HTML-to-Tk-text adapter for OCCS content."""
 
+    CHIP_PADDING = "\u2009"  # Thin spaces are display-only padding for rich-text chips.
+
     COMMS_DATA_TOKEN = re.compile(
-        r'<comms-data>\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
+        r'<comms-data>\s*(\$Data\s*\{\s*"Id"\s*:\s*"([^"\\]+)".*?\})\s*</comms-data>',
         re.IGNORECASE | re.DOTALL,
     )
     COMMS_DATA_EXPRESSION = re.compile(
-        r'^\s*(\$Data\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
+        r'^\s*(\$Data\s*\{\s*"Id"\s*:\s*"([^"\\]+)".*\})\s*$',
         re.DOTALL,
     )
     COMMS_STRUCTURE_TOKEN = re.compile(
         r'<comms-(cond|loop)>.*?</comms-\1>',
         re.IGNORECASE | re.DOTALL,
+    )
+    NESTED_COMMS_DATA_BODY = re.compile(
+        r'(<comms-data>\s*\$Data\s*\{)(.*?)(\}\s*</comms-data>)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    COMMS_DATA_PAYLOAD = re.compile(
+        r'<comms-data>\s*\$Data\s*(\{.*\})\s*</comms-data>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    TABLE_TOKEN = re.compile(r"<table\b", re.IGNORECASE)
+    TABLE_CELL_BODY = re.compile(
+        r"<(?:td|th)\b[^>]*>(.*?)</(?:td|th)\s*>", re.IGNORECASE | re.DOTALL
     )
 
     def __init__(self) -> None:
@@ -53,6 +68,14 @@ class ContentHtmlParser(HTMLParser):
         self.parts: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         self.stack: list[dict[str, str]] = []
         self.list_stack: list[tuple[str, int]] = []
+        self.table_depth = 0
+        self.table_row_open = False
+        self.table_cell_count = 0
+        self.table_cell_index = 0
+
+    @classmethod
+    def contains_table(cls, html: str) -> bool:
+        return bool(cls.TABLE_TOKEN.search(html))
 
     def _styles(self) -> tuple[tuple[str, str], ...]:
         merged: dict[str, str] = {}
@@ -88,6 +111,20 @@ class ContentHtmlParser(HTMLParser):
                 style["background"] = value
             elif key == "font-size" and value:
                 style["size"] = value
+        if tag == "table":
+            self.table_depth += 1
+        elif tag == "tr" and self.table_depth:
+            if self.parts and not self.parts[-1][0].endswith("\n"):
+                self._append("\n")
+            self.table_row_open = True
+            self.table_cell_count = 0
+        is_table_cell = tag in ("td", "th") and self.table_depth and self.table_row_open
+        if is_table_cell:
+            if self.table_cell_count:
+                self._append("\t")
+            self.table_cell_count += 1
+            style["table-cell"] = str(self.table_cell_index)
+            self.table_cell_index += 1
         if tag in ("p", "div", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
             self._append("\n")
         if tag in ("ul", "ol"):
@@ -103,8 +140,18 @@ class ContentHtmlParser(HTMLParser):
             self._append("\n")
             return
         self.stack.append(style)
+        if is_table_cell:
+            # Keep an empty cell addressable in the Tk editor.  This marker is
+            # stripped again when its cell is serialized to HTML.
+            self._append("\ufeff")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "tr" and self.table_depth and self.table_row_open:
+            if self.parts and not self.parts[-1][0].endswith("\n"):
+                self._append("\n")
+            self.table_row_open = False
+        elif tag == "table" and self.table_depth:
+            self.table_depth -= 1
         if tag in ("p", "div", "li", "figure") and self.parts and not self.parts[-1][0].endswith("\n"):
             self._append("\n")
         if tag in ("ul", "ol") and self.list_stack:
@@ -118,7 +165,7 @@ class ContentHtmlParser(HTMLParser):
         if expression and styles.get("comms-data"):
             styles.pop("comms-data", None)
             styles["comms"] = f"<comms-data>{expression.group(1)}</comms-data>"
-            self._append(f"${expression.group(2)}", tuple(sorted(styles.items())))
+            self._append(self.chip_label(f"${expression.group(2)}"), tuple(sorted(styles.items())))
             return
         # OCCS normally stores tags escaped, so the parser receives them as
         # literal text—often mixed into a much larger condition expression.
@@ -140,28 +187,75 @@ class ContentHtmlParser(HTMLParser):
         for token in self.COMMS_DATA_TOKEN.finditer(data):
             self._append(data[start:token.start()])
             token_styles = {**styles, "comms": token.group(0)}
-            self._append(f"${token.group(2)}", tuple(sorted(token_styles.items())))
+            self._append(self.chip_label(f"${token.group(2)}"), tuple(sorted(token_styles.items())))
             start = token.end()
         self._append(data[start:])
+
+    @classmethod
+    def chip_label(cls, label: str) -> str:
+        return f"{cls.CHIP_PADDING}{label}{cls.CHIP_PADDING}"
+
+    @staticmethod
+    def condition_payload(raw: str) -> dict[str, object] | None:
+        """Decode a condition, including OCCS's unescaped inline data form.
+
+        OCCS permits ``<comms-data>$Data{"Id":"name"}</comms-data>`` in a
+        condition's JSON ``Text`` value.  Its inner quotes are not escaped for
+        the surrounding JSON, so repair only those quotes for display parsing.
+        The original ``raw`` HTML is always retained for an untouched item.
+        """
+        expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
+        if not expression:
+            return None
+        encoded = expression.group(1)
+        try:
+            payload = json.loads(encoded)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            def escape_nested_data(match: re.Match[str]) -> str:
+                body = re.sub(r'(?<!\\)"', r'\\"', match.group(2))
+                return f"{match.group(1)}{body}{match.group(3)}"
+
+            repaired = ContentHtmlParser.NESTED_COMMS_DATA_BODY.sub(escape_nested_data, encoded)
+            if repaired == encoded:
+                return None
+            try:
+                payload = json.loads(repaired)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def data_payload(raw: str) -> dict[str, object] | None:
+        """Decode a simple, non-transformed ``comms-data`` chip."""
+        expression = ContentHtmlParser.COMMS_DATA_PAYLOAD.fullmatch(raw.strip())
+        if not expression:
+            return None
+        try:
+            payload = json.loads(expression.group(1))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     @staticmethod
     def _structure_label(kind: str, raw: str) -> str:
         if kind == "cond":
-            expression = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
-            if expression:
-                try:
-                    payload = json.loads(expression.group(1))
-                    condition = str(payload.get("Condition", "")).strip() or "(no condition)"
-                    target = str(payload.get("Text", payload.get("Content", ""))).strip()
-                    return f"◆ Condition: {condition}{f' — {target}' if target else ''}"
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    pass
-            return "◆ Condition"
-        return "↻ Loop (double-click to edit)"
+            payload = ContentHtmlParser.condition_payload(raw)
+            if payload:
+                target = str(payload.get("Text", payload.get("Content", ""))).strip()
+                target = ContentHtmlParser.COMMS_DATA_TOKEN.sub(lambda match: f"${match.group(2)}", target)
+                return ContentHtmlParser.chip_label(f"◆ {target}" if target else "◆")
+            return ContentHtmlParser.chip_label("◆")
+        return ContentHtmlParser.chip_label("↻ Loop")
 
 
 class AToolApp:
     APP_NAME = "Assembly Template Tool (ATool)"
+    CONTENT_TABLE_BLOCK = re.compile(r"<table\b[^>]*>.*?</table\s*>", re.IGNORECASE | re.DOTALL)
+    CONTENT_TABLE_ROW = re.compile(r"<tr\b[^>]*>.*?</tr\s*>", re.IGNORECASE | re.DOTALL)
+    CONTENT_TABLE_CELL = re.compile(
+        r"(?P<open><(?P<tag>td|th)\b[^>]*>)(?P<body>.*?)(?P<close></(?P=tag)\s*>)",
+        re.IGNORECASE | re.DOTALL,
+    )
     CONTACT_EMAIL = "andy.little@oracle.com"
     DEFAULT_WIDTH = 1000
     DEFAULT_HEIGHT = 640
@@ -318,6 +412,7 @@ class AToolApp:
         self._package_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self._resources_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self._model_menu_entries: list[tuple[tk.Menu, int, str]] = []
+        self._data_menu_entries: list[tuple[tk.Menu, int, str]] = []
         self.current_payload: dict | None = None
         self.current_data_payload: object | None = None
         self.current_data_file_path: str | None = None
@@ -559,6 +654,13 @@ class AToolApp:
             label="Generate Sample...",
             command=self.generate_sample_input_for_selected_document,
         )
+        data_menu.add_command(
+            label="Resolve...",
+            command=self.resolve_selected_layout,
+            state=tk.DISABLED,
+        )
+        self._data_menu_entries.append((data_menu, data_menu.index(tk.END), "resolve"))
+        data_menu.configure(postcommand=self._update_data_menu_states)
 
         settings_menu = tk.Menu(menu_bar, tearoff=0)
         settings_menu.add_command(label="User Settings...", command=self._open_user_settings_dialog)
@@ -2328,12 +2430,15 @@ class AToolApp:
         self.content_browser_filter_var = tk.StringVar(value="Filter by name or description")
         self.content_browser_type_var = tk.StringVar(value="All types")
         self.content_browser_status_var = tk.StringVar(value="Choose a list action.")
+        self.content_browser_title_var = tk.StringVar()
         self.content_metadata_var = tk.StringVar()
         self._content_browser_scope = "config"
         self._content_browser_records: dict[str, dict[str, object]] = {}
-        ttk.Label(browser, text="Contents", font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(browser, textvariable=self.content_browser_title_var, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        self._refresh_content_browser_title()
         list_row = ttk.Frame(browser)
         list_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.content_list_actions = list_row
         self.content_list_from_config_button = ttk.Button(list_row, text="List from Config", command=lambda: self._load_content_browser("config", bypass_filter=True))
         self.content_list_from_config_button.grid(row=0, column=0, sticky="w")
         self.content_list_from_config_button.bind(
@@ -2342,13 +2447,23 @@ class AToolApp:
             add="+",
         )
         self.content_list_from_config_button.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
-        list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
-        list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self._attach_tooltip(list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
-        list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
-        ttk.Button(list_row, text="New", command=self._new_content_in_manager).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        self.content_list_all_button = ttk.Button(list_row, text="List...", command=lambda: self._load_content_browser("all"))
+        self.content_list_all_button.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self._attach_tooltip(self.content_list_all_button, "Enter a filter to search all Contents. Hold Shift to list all.")
+        self.content_list_all_button.bind("<Shift-Button-1>", lambda event: self._load_all_content_browser(event, "all"), add="+")
+        self.content_new_button = ttk.Button(list_row, text="New", command=self._new_content_in_manager)
+        self.content_new_button.grid(row=0, column=2, sticky="w", padx=(6, 0))
         self.content_load_button = ttk.Button(list_row, text="Load", command=self._load_selected_content, state=tk.DISABLED)
         self.content_load_button.grid(row=0, column=3, sticky="w", padx=(6, 0))
+        self._content_list_action_buttons = (
+            self.content_list_from_config_button,
+            self.content_list_all_button,
+            self.content_new_button,
+            self.content_load_button,
+        )
+        self._content_list_actions_reflow_job: str | None = None
+        list_row.bind("<Configure>", self._schedule_content_list_actions_reflow, add="+")
+        self.content_window.after_idle(self._reflow_content_list_actions)
         filter_row = ttk.Frame(browser)
         filter_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         filter_row.columnconfigure(0, weight=1)
@@ -2442,6 +2557,9 @@ class AToolApp:
         self.content_html_source_mode = False
         self.content_html_raw_source = ""
         self.content_html_rich_dirty = False
+        self.content_html_contains_table = False
+        self._content_html_table_cell_spans: list[re.Match[str]] = []
+        self._content_html_table_cell_tags: dict[str, str] = {}
         self.content_html_toolbar = ttk.Frame(editor_frame)
         self.content_html_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
         self.content_html_toolbar.columnconfigure(15, weight=1)
@@ -2477,6 +2595,9 @@ class AToolApp:
         self._attach_tooltip(self.content_html_size_menu, "Set selected text size")
         self.content_open_html_button = ttk.Button(self.content_html_toolbar, text="Open HTML…", command=self._open_content_html_file)
         self.content_open_html_button.grid(row=0, column=15, sticky="e", padx=(0, 6))
+        self.content_web_editor_button = ttk.Button(self.content_html_toolbar, text="Web Editor…", command=self._open_content_web_editor)
+        self.content_web_editor_button.grid(row=0, column=14, sticky="e", padx=(0, 6))
+        self._attach_tooltip(self.content_web_editor_button, "Edit this Content in the unified browser editor")
         self.content_html_source_button = ttk.Button(self.content_html_toolbar, text="Source HTML", command=self._toggle_content_html_source)
         self.content_html_source_button.grid(row=0, column=16, sticky="e")
         self._attach_tooltip(self.content_html_source_button, "Switch between rich editing and exact HTML source")
@@ -2494,9 +2615,30 @@ class AToolApp:
         self.content_html_text.bind("<Motion>", self._show_content_html_tag_tooltip)
         self.content_html_text.bind("<Leave>", lambda _event: self._hide_tooltip())
         self.content_html_text.bind("<Double-Button-1>", self._edit_content_html_structure_at_cursor)
+        self.content_html_text.bind("<BackSpace>", self._delete_content_html_atom_on_backspace)
+        self.content_html_text.bind("<Delete>", self._delete_content_html_atom_on_delete)
         html_scrollbar = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=self.content_html_text.yview)
         html_scrollbar.grid(row=1, column=1, sticky="ns")
         self.content_html_text.configure(yscrollcommand=html_scrollbar.set)
+        # The legacy Tk text widget remains as an internal compatibility
+        # buffer during the Web Editor migration, but is no longer presented
+        # as an editing surface.
+        self.content_html_editor_frame = editor_frame
+        self.content_html_editor_frame.grid_remove()
+        web_editor_frame = ttk.LabelFrame(editor_pane, text="Content Editor", padding=18)
+        web_editor_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        web_editor_frame.columnconfigure(0, weight=1)
+        web_editor_frame.rowconfigure(0, weight=1)
+        ttk.Label(
+            web_editor_frame,
+            text="Content opens automatically in the unified Web Editor.\n"
+                 "Use the browser editor for text, Comms chips, and tables.",
+            justify=tk.CENTER,
+        ).grid(row=0, column=0, sticky="nsew")
+        self.content_reopen_web_editor_button = ttk.Button(
+            web_editor_frame, text="Reopen Web Editor", command=self._open_content_web_editor
+        )
+        self.content_reopen_web_editor_button.grid(row=1, column=0, pady=(14, 0))
 
         styles_frame.columnconfigure(0, weight=1)
         styles_frame.rowconfigure(0, weight=1)
@@ -2521,6 +2663,7 @@ class AToolApp:
         self.content_fields_tree.heading("scope", text="Scope")
         self.content_fields_tree.column("name", width=150, anchor=tk.W)
         self.content_fields_tree.column("scope", width=75, anchor=tk.W, stretch=False)
+        self.content_fields_tree.tag_configure("content_fields_hint", foreground="#777777")
         self.content_fields_tree.grid(row=1, column=0, sticky="nsew")
         content_fields_scrollbar = ttk.Scrollbar(fields_frame, orient=tk.VERTICAL, command=self.content_fields_tree.yview)
         content_fields_scrollbar.grid(row=1, column=1, sticky="ns")
@@ -2558,27 +2701,60 @@ class AToolApp:
 
     def _content_html_set(self, html: str) -> None:
         self.content_html_raw_source = html
+        self.content_html_contains_table = ContentHtmlParser.contains_table(html)
+        self._content_html_table_cell_spans = list(ContentHtmlParser.TABLE_CELL_BODY.finditer(html))
+        self._content_html_table_cell_tags: dict[str, str] = {}
         self.content_html_text.configure(state=tk.NORMAL)
         self.content_html_text.delete("1.0", tk.END)
         self._content_html_tag_styles: dict[str, dict[str, str]] = {}
         if self.content_html_source_mode:
             self.content_html_text.insert("1.0", html)
         else:
-            parser = ContentHtmlParser()
-            try:
-                parser.feed(html)
-                parser.close()
-            except Exception:
-                parser.parts = [(html, ())]
-            for text, styles in parser.parts:
-                start = self.content_html_text.index(tk.INSERT)
-                self.content_html_text.insert(tk.INSERT, text)
-                end = self.content_html_text.index(tk.INSERT)
-                if styles:
-                    tag_name = self._content_html_combined_style_tag(dict(styles))
-                    self.content_html_text.tag_add(tag_name, start, end)
+            if self.content_html_contains_table:
+                model = self._content_table_model(html, 0)
+                rows = model["rows"] if model else []
+                columns = max((len(row["cells"]) for row in rows), default=0)
+                self.content_html_text.insert(
+                    "1.0",
+                    f"Table — {len(rows)} rows × {columns} columns\n\n"
+                    "Choose Table… to edit cells, rows, columns, merges, and styles.",
+                )
+            else:
+                parser = ContentHtmlParser()
+                try:
+                    parser.feed(html)
+                    parser.close()
+                except Exception:
+                    parser.parts = [(html, ())]
+                for text, styles in parser.parts:
+                    start = self.content_html_text.index(tk.INSERT)
+                    self.content_html_text.insert(tk.INSERT, text)
+                    end = self.content_html_text.index(tk.INSERT)
+                    if styles:
+                        style_map = dict(styles)
+                        tag_name = self._content_html_combined_style_tag(style_map)
+                        self.content_html_text.tag_add(tag_name, start, end)
+                        cell_id = style_map.get("table-cell")
+                        if cell_id is not None:
+                            cell_tag = self._content_html_table_cell_tags.setdefault(
+                                cell_id, f"content_html_table_cell_{cell_id}"
+                            )
+                            self.content_html_text.tag_add(cell_tag, start, end)
         self.content_html_text.edit_modified(False)
         self.content_html_rich_dirty = False
+        self._update_content_html_editability()
+
+    def _update_content_html_editability(self) -> None:
+        """Synchronize toolbar state with the active editing mode."""
+        table_workspace = self.content_html_contains_table and not self.content_html_source_mode
+        for button in self.content_html_toolbar_buttons[:-1]:
+            is_table_button = button.cget("text") == "Table…"
+            button.configure(state=tk.NORMAL if not self.content_html_source_mode and (not table_workspace or is_table_button) else tk.DISABLED)
+        self.content_html_size_menu.configure(state=tk.DISABLED if self.content_html_source_mode or table_workspace else "readonly")
+        self.content_web_editor_button.configure(state=tk.NORMAL)
+        self.content_html_text.configure(state=tk.DISABLED if table_workspace else tk.NORMAL)
+        if table_workspace:
+            self.content_editor_status_var.set("Table workspace — choose Table… to edit the table.")
 
     def _content_html_combined_style_tag(self, styles: dict[str, str]) -> str:
         encoded = json.dumps(styles, sort_keys=True)
@@ -2656,6 +2832,8 @@ class AToolApp:
             self.content_html_rich_dirty = True
         if not self.content_html_rich_dirty:
             return self.content_html_raw_source
+        if self._content_html_table_cell_spans:
+            return self._content_html_get_with_table_cells()
         lines: list[str] = []
         for line_number in range(1, int(self.content_html_text.index("end-1c").split(".")[0]) + 1):
             start, end = f"{line_number}.0", f"{line_number}.end"
@@ -2668,6 +2846,31 @@ class AToolApp:
             elif content:
                 lines.append(f"<p>{content}</p>")
         return "".join(lines) or "<p></p>"
+
+    def _content_html_get_with_table_cells(self) -> str:
+        """Replace only table-cell bodies, retaining the source table markup.
+
+        A table's layout can include widths, padding, alignment, a figure
+        wrapper, and style bindings that Tk cannot faithfully recreate.  The
+        rich editor therefore owns cell contents while the original document
+        continues to own the table structure.
+        """
+        html = self.content_html_raw_source
+        replacements: list[tuple[int, int, str]] = []
+        for cell_id, match in enumerate(self._content_html_table_cell_spans):
+            tag_name = self._content_html_table_cell_tags.get(str(cell_id))
+            ranges = self.content_html_text.tag_ranges(tag_name) if tag_name else ()
+            if ranges:
+                start, end = str(ranges[0]), str(ranges[-1])
+                value = self._content_html_text_range_to_html(start, end)
+            else:
+                # Removing all content from a cell intentionally leaves it
+                # empty while preserving its td/th element and attributes.
+                value = ""
+            replacements.append((match.start(1), match.end(1), value))
+        for start, end, value in reversed(replacements):
+            html = f"{html[:start]}{value}{html[end:]}"
+        return html
 
     def _content_html_text_range_to_html(self, start: str, end: str) -> str:
         output: list[str] = []
@@ -2682,6 +2885,7 @@ class AToolApp:
             styles: dict[str, str] = {}
             for tag_name in active or ():
                 styles.update(self._content_html_tag_styles.get(tag_name, {}))
+            styles.pop("table-cell", None)
             if styles.get("comms"):
                 value = styles.pop("comms")
             elif styles.get("comms-cond"):
@@ -2691,7 +2895,7 @@ class AToolApp:
             elif styles.get("field"):
                 value = f'<comms-data>$Data{{"Id":"{html_escape(styles.pop("field"), quote=True)}"}}</comms-data>'
             else:
-                value = html_escape("".join(buffer), quote=False)
+                value = html_escape("".join(buffer).replace("\ufeff", ""), quote=False)
             if styles.get("link"):
                 value = f'<a target="_blank" rel="noopener noreferrer" href="{html_escape(styles.pop("link"), quote=True)}">{value}</a>'
             css = []
@@ -2723,6 +2927,73 @@ class AToolApp:
         except tk.TclError:
             return None
 
+    def _center_content_chip_dialog(self, dialog: tk.Toplevel) -> None:
+        """Position a modal chip editor over the visible content editor."""
+        dialog.update_idletasks()
+        editor = self.content_html_text
+        x_pos = editor.winfo_rootx() + max(0, (editor.winfo_width() - dialog.winfo_reqwidth()) // 2)
+        y_pos = editor.winfo_rooty() + max(0, (editor.winfo_height() - dialog.winfo_reqheight()) // 2)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
+        dialog.lift()
+
+    def _content_html_atomic_tag_range_at(self, index: str) -> tuple[str, str] | None:
+        """Return the rich-editor chip range containing an index, if any."""
+        for tag_name in self.content_html_text.tag_names(index):
+            styles = self._content_html_tag_styles.get(tag_name, {})
+            if any(styles.get(kind) for kind in ("comms", "field", "comms-cond", "comms-loop")):
+                text_range = self._content_html_tag_range_at(tag_name, index)
+                if text_range:
+                    return text_range
+        return None
+
+    def _content_html_expand_selection_to_atoms(self, start: str, end: str) -> tuple[str, str]:
+        """Extend a selection to cover every chip it touches."""
+        expanded_start, expanded_end = start, end
+        for tag_name, styles in self._content_html_tag_styles.items():
+            if not any(styles.get(kind) for kind in ("comms", "field", "comms-cond", "comms-loop")):
+                continue
+            ranges = self.content_html_text.tag_ranges(tag_name)
+            for atom_start, atom_end in zip(ranges[0::2], ranges[1::2]):
+                if self.content_html_text.compare(atom_start, "<", expanded_end) and self.content_html_text.compare(atom_end, ">", expanded_start):
+                    if self.content_html_text.compare(atom_start, "<", expanded_start):
+                        expanded_start = str(atom_start)
+                    if self.content_html_text.compare(atom_end, ">", expanded_end):
+                        expanded_end = str(atom_end)
+        return expanded_start, expanded_end
+
+    def _delete_content_html_atom(self, start: str, end: str) -> str:
+        self.content_html_text.delete(start, end)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+        return "break"
+
+    def _delete_content_html_atom_on_backspace(self, _event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        selection = self._content_html_selection()
+        if selection:
+            start, end = self._content_html_expand_selection_to_atoms(*selection)
+            if (start, end) != selection:
+                return self._delete_content_html_atom(start, end)
+            return None
+        cursor = self.content_html_text.index(tk.INSERT)
+        if cursor == "1.0":
+            return None
+        atom = self._content_html_atomic_tag_range_at(self.content_html_text.index(f"{cursor}-1c"))
+        return self._delete_content_html_atom(*atom) if atom else None
+
+    def _delete_content_html_atom_on_delete(self, _event: tk.Event) -> str | None:
+        if self.content_html_source_mode:
+            return None
+        selection = self._content_html_selection()
+        if selection:
+            start, end = self._content_html_expand_selection_to_atoms(*selection)
+            if (start, end) != selection:
+                return self._delete_content_html_atom(start, end)
+            return None
+        atom = self._content_html_atomic_tag_range_at(self.content_html_text.index(tk.INSERT))
+        return self._delete_content_html_atom(*atom) if atom else None
+
     def _show_content_html_tag_tooltip(self, event: tk.Event) -> None:
         if self.content_html_source_mode:
             self._hide_tooltip()
@@ -2753,6 +3024,12 @@ class AToolApp:
                 if raw:
                     self._edit_content_html_structure(kind, raw, tag_name, index)
                     return "break"
+            if styles.get("comms"):
+                self._edit_content_html_structure("comms", styles["comms"], tag_name, index)
+                return "break"
+            if styles.get("field"):
+                self._edit_content_html_structure("comms", self._content_field_tag(styles["field"]), tag_name, index)
+                return "break"
         return None
 
     def _content_html_tag_range_at(self, tag_name: str, index: str) -> tuple[str, str] | None:
@@ -2768,8 +3045,10 @@ class AToolApp:
             return
         if kind == "comms-cond":
             self._edit_content_condition(raw, tag_name, text_range)
-        else:
+        elif kind == "comms-loop":
             self._edit_content_loop(raw, tag_name, text_range)
+        else:
+            self._edit_content_data(raw, tag_name, text_range)
 
     def _replace_content_html_structure(self, old_tag: str, text_range: tuple[str, str], kind: str, raw: str, label: str) -> None:
         start, end = text_range
@@ -2782,14 +3061,9 @@ class AToolApp:
         self._on_content_editor_changed()
 
     def _edit_content_condition(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
-        match = re.search(r'\$Cond(\{.*\})\s*</comms-cond>', raw, re.IGNORECASE | re.DOTALL)
-        if not match:
+        payload = ContentHtmlParser.condition_payload(raw)
+        if payload is None:
             messagebox.showinfo("Condition", "This Condition has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
-            return
-        try:
-            payload = json.loads(match.group(1))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            messagebox.showinfo("Condition", "This Condition could not be parsed. Edit it in Source HTML.", parent=self.content_window)
             return
         dialog = self._create_toplevel(self.content_window)
         dialog.title("Edit Condition")
@@ -2799,12 +3073,171 @@ class AToolApp:
         frame.grid(sticky="nsew")
         frame.columnconfigure(1, weight=1)
         condition_var = tk.StringVar(value=str(payload.get("Condition", "")))
-        text_var = tk.StringVar(value=str(payload.get("Text", "")))
-        content_var = tk.StringVar(value=str(payload.get("Content", "")))
-        for row, (label, variable) in enumerate((("Condition:", condition_var), ("Text:", text_var), ("Content:", content_var))):
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=(0 if row == 0 else 8, 0))
-            ttk.Entry(frame, textvariable=variable, width=58).grid(row=row, column=1, sticky="ew", pady=(0 if row == 0 else 8, 0))
-        ttk.Label(frame, text="Use Text for inline content or Content to reference another Content item.", wraplength=440).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        target_type_var = tk.StringVar(value="Text" if "Text" in payload else "Content")
+        target_values = {
+            "Text": str(payload.get("Text", "")),
+            "Content": str(payload.get("Content", "")),
+        }
+        target_var = tk.StringVar(value=target_values[target_type_var.get()])
+        target_label_var = tk.StringVar(value=f"{target_type_var.get()}:")
+        iteration_field_choices = [
+            (field["name"], f"{field['name']}  —  iteration: {definition['name']}")
+            for definition in self._content_iteration_definitions(self.content_short_name_var.get().strip())
+            for field in definition.get("fields", [])
+            if isinstance(field, dict) and field.get("name")
+        ]
+        at_field_choices = [
+            (field["name"], f"{field['name']}  —  AT field")
+            for field in self._content_available_fields()
+            if field.get("name")
+        ]
+        field_choices: list[tuple[str, str]] = []
+        seen_field_names: set[str] = set()
+        for name, label in iteration_field_choices + at_field_choices:
+            if name not in seen_field_names:
+                field_choices.append((name, label))
+                seen_field_names.add(name)
+        content_choices = sorted({
+            str(record.get("shortName", "")).strip()
+            for record in getattr(self, "_content_browser_records", {}).values()
+            if str(record.get("shortName", "")).strip()
+        })
+        text_chip_tags: dict[str, str] = {}
+        autocomplete_popup: tk.Toplevel | None = None
+        ttk.Label(frame, text="Condition:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Entry(frame, textvariable=condition_var, width=58).grid(row=0, column=1, sticky="ew")
+        ttk.Label(frame, text="Target type:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        target_type = ttk.Combobox(frame, textvariable=target_type_var, values=("Text", "Content"), state="readonly", width=14)
+        target_type.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=target_label_var).grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        text_target = tk.Text(frame, width=58, height=3, wrap=tk.WORD)
+        text_target.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+        content_target = ttk.Combobox(frame, textvariable=target_var, values=content_choices, width=56)
+
+        def set_text_target(value: str) -> None:
+            text_target.delete("1.0", tk.END)
+            text_chip_tags.clear()
+            start = 0
+            for token in ContentHtmlParser.COMMS_DATA_TOKEN.finditer(value):
+                text_target.insert(tk.END, value[start:token.start()])
+                tag = f"condition_text_chip_{len(text_chip_tags)}"
+                text_chip_tags[tag] = token.group(0)
+                chip_start = text_target.index(tk.INSERT)
+                text_target.insert(tk.END, ContentHtmlParser.chip_label(f"${token.group(2)}"))
+                text_target.tag_add(tag, chip_start, tk.INSERT)
+                text_target.tag_configure(tag, foreground="#6d28d9", background="#f3e8ff", underline=True)
+                start = token.end()
+            text_target.insert(tk.END, value[start:])
+
+        def text_target_value() -> str:
+            output: list[str] = []
+            index, end = "1.0", "end-1c"
+            active: str | None = None
+            buffer: list[str] = []
+            def flush() -> None:
+                nonlocal buffer
+                if buffer:
+                    output.append(text_chip_tags.get(active or "", "".join(buffer)))
+                    buffer = []
+            while text_target.compare(index, "<", end):
+                chip_tags = [tag for tag in text_target.tag_names(index) if tag in text_chip_tags]
+                next_active = chip_tags[0] if chip_tags else None
+                if next_active != active:
+                    flush()
+                    active = next_active
+                buffer.append(text_target.get(index))
+                index = text_target.index(f"{index}+1c")
+            flush()
+            return "".join(output)
+
+        def hide_autocomplete(_event: tk.Event | None = None) -> None:
+            nonlocal autocomplete_popup
+            if autocomplete_popup is not None:
+                autocomplete_popup.destroy()
+                autocomplete_popup = None
+
+        def offer_fields(_event: tk.Event | None = None) -> None:
+            nonlocal autocomplete_popup
+            cursor = text_target.index(tk.INSERT)
+            before = text_target.get(f"{cursor} linestart", cursor)
+            match = re.search(r"\$([A-Za-z0-9_]*)$", before)
+            if not match:
+                hide_autocomplete()
+                return
+            candidates = [
+                (name, label)
+                for name, label in field_choices
+                if name.casefold().startswith(match.group(1).casefold())
+            ]
+            if not candidates:
+                hide_autocomplete()
+                return
+            hide_autocomplete()
+            autocomplete_popup = self._create_toplevel(dialog)
+            autocomplete_popup.overrideredirect(True)
+            list_width = min(80, max(40, max(len(label) for _name, label in candidates) + 2))
+            suggestions = tk.Listbox(autocomplete_popup, height=min(len(candidates), 8), width=list_width)
+            suggestions.pack()
+            for _name, label in candidates:
+                suggestions.insert(tk.END, label)
+            suggestions.selection_set(0)
+            bbox = text_target.bbox(tk.INSERT)
+            if bbox:
+                autocomplete_popup.update_idletasks()
+                x_pos = min(
+                    text_target.winfo_rootx() + bbox[0],
+                    text_target.winfo_screenwidth() - autocomplete_popup.winfo_reqwidth() - 8,
+                )
+                y_pos = text_target.winfo_rooty() + bbox[1] + bbox[3]
+                autocomplete_popup.geometry(f"+{max(0, x_pos)}+{y_pos}")
+
+            def insert_field(_selection_event: tk.Event | None = None) -> str:
+                chosen = candidates[suggestions.curselection()[0]][0] if suggestions.curselection() else ""
+                if not chosen:
+                    return "break"
+                insert_at = text_target.index(tk.INSERT)
+                start = text_target.index(f"{insert_at}-{len(match.group(0))}c")
+                text_target.delete(start, insert_at)
+                tag = f"condition_text_chip_{len(text_chip_tags)}"
+                text_chip_tags[tag] = self._content_field_tag(chosen)
+                label = ContentHtmlParser.chip_label(f"${chosen}")
+                text_target.insert(start, label)
+                text_target.tag_add(tag, start, text_target.index(f"{start}+{len(label)}c"))
+                text_target.tag_configure(tag, foreground="#6d28d9", background="#f3e8ff", underline=True)
+                text_target.mark_set(tk.INSERT, text_target.index(f"{start}+{len(label)}c"))
+                hide_autocomplete()
+                return "break"
+
+            suggestions.bind("<ButtonRelease-1>", insert_field)
+            suggestions.bind("<Return>", insert_field)
+            suggestions.bind("<Escape>", hide_autocomplete)
+
+        text_target.bind("<KeyRelease>", offer_fields)
+        text_target.bind("<Escape>", hide_autocomplete)
+
+        def change_target_type(_event: tk.Event | None = None) -> None:
+            previous = target_label_var.get().rstrip(":")
+            target_values[previous] = text_target_value() if previous == "Text" else target_var.get()
+            selected = target_type_var.get()
+            target_label_var.set(f"{selected}:")
+            if selected == "Text":
+                content_target.grid_remove()
+                text_target.grid()
+                set_text_target(target_values[selected])
+                text_target.focus_set()
+            else:
+                text_target.grid_remove()
+                target_var.set(target_values[selected])
+                content_target.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+                content_target.focus_set()
+
+        target_type.bind("<<ComboboxSelected>>", change_target_type)
+        if target_type_var.get() == "Text":
+            set_text_target(target_values["Text"])
+        else:
+            text_target.grid_remove()
+            content_target.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+        ttk.Label(frame, text="Type $ in Text to choose an AT field. Content choices come from the current Content list; you may also enter a name.", wraplength=500).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
         buttons = ttk.Frame(frame)
         buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
@@ -2815,20 +3248,19 @@ class AToolApp:
                 messagebox.showerror("Condition", "Condition is required.", parent=dialog)
                 return
             payload["Condition"] = condition
-            if text_var.get().strip():
-                payload["Text"] = text_var.get()
-                payload.pop("Content", None)
-            elif content_var.get().strip():
-                payload["Content"] = content_var.get().strip()
-                payload.pop("Text", None)
-            else:
-                messagebox.showerror("Condition", "Enter Text or Content.", parent=dialog)
+            target_type_name = target_type_var.get()
+            target_value = text_target_value() if target_type_name == "Text" else target_var.get()
+            if not target_value.strip():
+                messagebox.showerror("Condition", f"{target_type_name} is required.", parent=dialog)
                 return
+            payload[target_type_name] = target_value if target_type_name == "Text" else target_value.strip()
+            payload.pop("Content" if target_type_name == "Text" else "Text", None)
             updated = f'<comms-cond>$Cond{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-cond>'
             self._replace_content_html_structure(tag_name, text_range, "comms-cond", updated, ContentHtmlParser._structure_label("cond", updated))
             dialog.destroy()
 
         ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+        self._center_content_chip_dialog(dialog)
 
     def _edit_content_loop(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
         dialog = self._create_toplevel(self.content_window)
@@ -2838,24 +3270,182 @@ class AToolApp:
         frame = ttk.Frame(dialog, padding=12)
         frame.grid(sticky="nsew")
         frame.columnconfigure(0, weight=1)
-        ttk.Label(frame, text="Loop source", anchor=tk.W).grid(row=0, column=0, sticky="ew")
-        source = tk.Text(frame, width=76, height=12, wrap=tk.WORD)
+        definitions = self._content_iteration_definitions(self.content_short_name_var.get().strip())
+        marker = next(ContentHtmlParser.COMMS_DATA_TOKEN.finditer(raw), None)
+        marker_payload = ContentHtmlParser.data_payload(marker.group(0)) if marker else None
+        definitions_by_name = {str(definition["name"]): definition for definition in definitions}
+        selected_name = str(marker_payload.get("Id", "")) if marker_payload else ""
+        if selected_name not in definitions_by_name and definitions:
+            selected_name = str(definitions[0]["name"])
+        picker_visible = bool(definitions and marker_payload)
+        picker_frame = ttk.Frame(frame)
+        picker_frame.grid(row=0, column=0, sticky="ew")
+        picker_frame.columnconfigure(1, weight=1)
+        ttk.Label(picker_frame, text="AT loop:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        loop_var = tk.StringVar(value=selected_name)
+        loop_picker = ttk.Combobox(
+            picker_frame,
+            textvariable=loop_var,
+            values=tuple(definitions_by_name),
+            state="readonly",
+            width=44,
+        )
+        loop_picker.grid(row=0, column=1, sticky="ew")
+        context_var = tk.StringVar()
+        ttk.Label(picker_frame, textvariable=context_var, justify=tk.LEFT, wraplength=540).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        def show_definition_context(_event: tk.Event | None = None) -> None:
+            definition = definitions_by_name.get(loop_var.get())
+            if not definition:
+                context_var.set("")
+                return
+            fields = definition.get("fields", [])
+            field_context = ", ".join(
+                f"{field['name']} ({field['path']})" if field['path'] else str(field['name'])
+                for field in fields
+                if isinstance(field, dict)
+            ) or "(no iteration fields)"
+            details = [f"Path: {definition.get('path') or '(not set)'}", f"Fields: {field_context}"]
+            if definition.get("condition"):
+                details.append(f"Condition: {definition['condition']}")
+            context_var.set("\n".join(details))
+
+        loop_picker.bind("<<ComboboxSelected>>", show_definition_context)
+        show_definition_context()
+        source_frame = ttk.Frame(frame)
+        source_frame.columnconfigure(0, weight=1)
+        ttk.Label(source_frame, text="Loop source", anchor=tk.W).grid(row=0, column=0, sticky="ew")
+        source = tk.Text(source_frame, width=76, height=12, wrap=tk.WORD)
         source.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         source.insert("1.0", raw)
-        ttk.Label(frame, text="Loop structures vary and may nest content; this preserves the complete tag while allowing precise editing.", wraplength=540).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(source_frame, text="Use source editing for transforms or another unsupported loop form.", wraplength=540).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        source_visible = not picker_visible
+        if source_visible:
+            picker_frame.grid_remove()
+            source_frame.grid(row=0, column=0, sticky="nsew")
+        else:
+            source_frame.grid_remove()
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
+        buttons.grid(row=1, column=0, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
 
+        def toggle_source() -> None:
+            nonlocal source_visible
+            source_visible = not source_visible
+            if source_visible:
+                picker_frame.grid_remove()
+                source_frame.grid(row=0, column=0, sticky="nsew")
+                source.focus_set()
+                source_button.configure(text="Use AT Picker")
+            else:
+                source_frame.grid_remove()
+                picker_frame.grid(row=0, column=0, sticky="ew")
+                loop_picker.focus_set()
+                source_button.configure(text="Edit Source HTML…")
+            self._center_content_chip_dialog(dialog)
+
+        source_button = ttk.Button(
+            buttons,
+            text="Use AT Picker" if source_visible and picker_visible else "Edit Source HTML…",
+            command=toggle_source,
+            state=tk.NORMAL if picker_visible else tk.DISABLED,
+        )
+        source_button.grid(row=0, column=1, padx=(0, 6))
+
         def save() -> None:
-            updated = source.get("1.0", "end-1c").strip()
+            if source_visible:
+                updated = source.get("1.0", "end-1c").strip()
+            else:
+                selected = definitions_by_name.get(loop_var.get())
+                if not selected or not marker:
+                    messagebox.showerror("Loop", "Choose an Assembly Template loop or use Source HTML.", parent=dialog)
+                    return
+                payload = ContentHtmlParser.data_payload(marker.group(0))
+                if payload is None:
+                    messagebox.showerror("Loop", "This loop marker must be edited in Source HTML.", parent=dialog)
+                    return
+                payload["Id"] = selected["name"]
+                updated_marker = f'<comms-data>$Data{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-data>'
+                updated = f"{raw[:marker.start()]}{updated_marker}{raw[marker.end():]}"
             if not re.fullmatch(r"<comms-loop>.*</comms-loop>", updated, re.IGNORECASE | re.DOTALL):
                 messagebox.showerror("Loop", "Loop source must be wrapped in <comms-loop> and </comms-loop>.", parent=dialog)
                 return
             self._replace_content_html_structure(tag_name, text_range, "comms-loop", updated, ContentHtmlParser._structure_label("loop", updated))
             dialog.destroy()
 
+        ttk.Button(buttons, text="Save", command=save).grid(row=0, column=2)
+        self._center_content_chip_dialog(dialog)
+
+    def _edit_content_data(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
+        payload = ContentHtmlParser.data_payload(raw)
+        if payload is None:
+            messagebox.showinfo("Data field", "This data tag has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
+            return
+        dialog = self._create_toplevel(self.content_window)
+        dialog.title("Edit Data Field")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+        field_var = tk.StringVar(value=str(payload.get("Id", "")))
+        type_options = ("(none)", "String", "Decimal", "Date", "DateTime", "Image", "PDF")
+        selected_type = str(payload.get("Type", "")) or "(none)"
+        type_var = tk.StringVar(value=selected_type)
+        format_var = tk.StringVar(value=str(payload.get("Format", "")))
+        format_presets = {
+            "(none)": (),
+            "String": (),
+            "Decimal": ("$#,##0.00", "#,##0.00", "($#,##0.00)", "#,##0.00;(#,##0.00);0.00"),
+            "Date": ("MM-dd-yyyy", "MM/dd/yyyy", "MMM dd, yyyy", "yyyy-MM-dd"),
+            "DateTime": ("yyyy-MM-dd-'T'-HH-mm-ss-SSS z",),
+            "Image": (),
+            "PDF": (),
+        }
+        ttk.Label(frame, text="Field:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        field_entry = ttk.Entry(frame, textvariable=field_var, width=58)
+        field_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(frame, text="Type:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        type_menu = ttk.Combobox(frame, textvariable=type_var, values=type_options, state="readonly", width=14)
+        type_menu.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(frame, text="Format:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        format_menu = ttk.Combobox(frame, textvariable=format_var, values=format_presets.get(selected_type, ()), width=42)
+        format_menu.grid(row=2, column=1, sticky="ew", pady=(8, 0))
+
+        def update_format_options(_event: tk.Event | None = None) -> None:
+            format_menu.configure(values=format_presets.get(type_var.get(), ()))
+
+        type_menu.bind("<<ComboboxSelected>>", update_format_options)
+        ttk.Label(
+            frame,
+            text="Format suggestions follow Communication Service documentation. You can type a different valid format.",
+            wraplength=460,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 6))
+
+        def save() -> None:
+            field_name = field_var.get().strip()
+            if not field_name:
+                messagebox.showerror("Data field", "Field is required.", parent=dialog)
+                return
+            payload["Id"] = field_name
+            if type_var.get() == "(none)":
+                payload.pop("Type", None)
+            else:
+                payload["Type"] = type_var.get()
+            if format_var.get().strip():
+                payload["Format"] = format_var.get()
+            else:
+                payload.pop("Format", None)
+            updated = f'<comms-data>$Data{json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}</comms-data>'
+            self._replace_content_html_structure(tag_name, text_range, "comms", updated, ContentHtmlParser.chip_label(f"${field_name}"))
+            dialog.destroy()
+
         ttk.Button(buttons, text="Save", command=save).grid(row=0, column=1)
+        self._center_content_chip_dialog(dialog)
+        field_entry.focus_set()
 
     def _toggle_content_html_tag(self, style: str) -> None:
         if self.content_html_source_mode:
@@ -2921,14 +3511,320 @@ class AToolApp:
         self._on_content_editor_changed()
 
     def _insert_content_html_table(self) -> None:
+        if not self.content_html_source_mode and self.content_html_contains_table:
+            self._open_content_table_editor()
+            return
         if self.content_html_source_mode:
             self.content_html_text.insert(tk.INSERT, "<table><tbody><tr><td>Cell</td><td>Cell</td></tr></tbody></table>")
         else:
-            self.content_html_text.insert(tk.INSERT, "\nTable: Cell 1 | Cell 2\n")
-            self.content_editor_status_var.set("For editable table structure or sizing, use Source HTML.")
-        if not self.content_html_source_mode:
-            self.content_html_rich_dirty = True
+            # Creating a table changes document structure, so insert the
+            # minimal markup in source once; returning to Rich Text makes its
+            # cells directly editable like any loaded table.
+            self._toggle_content_html_source()
+            self.content_html_text.insert(tk.INSERT, "<table><tbody><tr><td>Cell</td><td>Cell</td></tr></tbody></table>")
+            self.content_editor_status_var.set("Table added. Choose Rich Text to edit its cells.")
         self._on_content_editor_changed()
+
+    def _open_content_web_editor(self) -> None:
+        """Open the unified WebKit editor in a separate native process."""
+        html = self._content_html_get()
+        editor_script = Path(__file__).with_name("atool_web_editor.py")
+        python = Path(__file__).with_name(".venv") / "bin" / "python"
+        if not editor_script.is_file() or not python.is_file():
+            messagebox.showerror("Web Editor", "The Web Editor runtime is not installed. Run: .venv/bin/python -m pip install -r requirements.txt", parent=self.content_window)
+            return
+        workspace = Path(tempfile.mkdtemp(prefix="atool-web-editor-"))
+        input_path, output_path = workspace / "input.json", workspace / "output.json"
+        input_path.write_text(json.dumps({
+            "title": f"Edit Content — {self.content_short_name_var.get().strip() or 'new'}",
+            "html": html,
+            "fields": self._content_available_fields(),
+            "iterations": self._content_iteration_definitions(self.content_short_name_var.get().strip()),
+        }, ensure_ascii=False), encoding="utf-8")
+        self.content_web_editor_button.configure(state=tk.DISABLED)
+        self.content_editor_status_var.set("Web Editor is open…")
+
+        def worker() -> None:
+            result_html: str | None = None
+            try:
+                subprocess.run([str(python), str(editor_script), "--input", str(input_path), "--output", str(output_path)], check=False)
+                if output_path.is_file():
+                    result = json.loads(output_path.read_text(encoding="utf-8"))
+                    if result.get("saved") and isinstance(result.get("html"), str):
+                        result_html = result["html"]
+            except (OSError, ValueError, json.JSONDecodeError):
+                result_html = None
+            finally:
+                shutil.rmtree(workspace, ignore_errors=True)
+            self.root.after(0, lambda: self._on_content_web_editor_closed(result_html))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_content_web_editor_closed(self, html: str | None) -> None:
+        self.content_web_editor_button.configure(state=tk.NORMAL)
+        if html is None:
+            self.content_editor_status_var.set("Web Editor closed without changes.")
+            return
+        self.content_html_source_mode = False
+        self.content_html_source_button.configure(text="Source HTML")
+        self._content_html_set(html)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+        self.content_editor_status_var.set("Web Editor changes are ready to save.")
+
+    @staticmethod
+    def _content_table_style_values(open_tag: str) -> dict[str, str]:
+        match = re.search(r"\sstyle\s*=\s*(['\"])(.*?)\1", open_tag, re.IGNORECASE | re.DOTALL)
+        if not match:
+            return {}
+        values: dict[str, str] = {}
+        for rule in match.group(2).split(";"):
+            key, _, value = rule.partition(":")
+            if key.strip() and value.strip():
+                values[key.strip().lower()] = value.strip()
+        return values
+
+    @classmethod
+    def _content_table_set_styles(cls, open_tag: str, updates: dict[str, str | None]) -> str:
+        styles = cls._content_table_style_values(open_tag)
+        for key, value in updates.items():
+            key = key.lower()
+            if value is None or not str(value).strip():
+                styles.pop(key, None)
+            else:
+                styles[key] = str(value).strip()
+        style_text = ";".join(f"{key}:{value}" for key, value in styles.items())
+        style_match = re.search(r"\sstyle\s*=\s*(['\"])(.*?)\1", open_tag, re.IGNORECASE | re.DOTALL)
+        if style_match:
+            if style_text:
+                return f"{open_tag[:style_match.start()]} style=\"{html_escape(style_text, quote=True)}\"{open_tag[style_match.end():]}"
+            return f"{open_tag[:style_match.start()]}{open_tag[style_match.end():]}"
+        return f"{open_tag[:-1]} style=\"{html_escape(style_text, quote=True)}\">" if style_text else open_tag
+
+    @staticmethod
+    def _content_table_set_span(open_tag: str, attribute: str, value: int) -> str:
+        pattern = re.compile(rf"\s{attribute}\s*=\s*(['\"])?\d+\1?", re.IGNORECASE)
+        open_tag = pattern.sub("", open_tag)
+        return open_tag if value <= 1 else f"{open_tag[:-1]} {attribute}=\"{value}\">"
+
+    def _content_table_model(self, html: str, table_index: int) -> dict[str, object] | None:
+        blocks = list(self.CONTENT_TABLE_BLOCK.finditer(html))
+        if table_index < 0 or table_index >= len(blocks):
+            return None
+        block = blocks[table_index]
+        table_html = block.group(0)
+        opening = re.match(r"<table\b[^>]*>", table_html, re.IGNORECASE)
+        if not opening:
+            return None
+        closing = re.search(r"</table\s*>$", table_html, re.IGNORECASE)
+        if not closing:
+            return None
+        inner = table_html[opening.end():closing.start()]
+        tbody_open = re.search(r"<tbody\b[^>]*>", inner, re.IGNORECASE)
+        tbody_close = re.search(r"</tbody\s*>", inner, re.IGNORECASE)
+        rows_source = inner[tbody_open.end():tbody_close.start()] if tbody_open and tbody_close else inner
+        rows: list[dict[str, object]] = []
+        for row_match in self.CONTENT_TABLE_ROW.finditer(rows_source):
+            row_html = row_match.group(0)
+            row_open = re.match(r"<tr\b[^>]*>", row_html, re.IGNORECASE)
+            row_close = re.search(r"</tr\s*>$", row_html, re.IGNORECASE)
+            if not row_open or not row_close:
+                continue
+            cells: list[dict[str, str]] = []
+            for cell_match in self.CONTENT_TABLE_CELL.finditer(row_html[row_open.end():row_close.start()]):
+                cells.append({"open": cell_match.group("open"), "body": cell_match.group("body"), "close": cell_match.group("close")})
+            rows.append({"open": row_open.group(0), "close": row_close.group(0), "cells": cells})
+        if not rows:
+            return None
+        return {
+            "document_html": html,
+            "block_start": block.start(),
+            "block_end": block.end(),
+            "table_open": opening.group(0),
+            "table_close": closing.group(0),
+            "tbody_open": tbody_open.group(0) if tbody_open else "<tbody>",
+            "tbody_close": tbody_close.group(0) if tbody_close else "</tbody>",
+            "rows": rows,
+        }
+
+    @staticmethod
+    def _content_table_cell_label(cell: dict[str, str]) -> str:
+        value = re.sub(r"<[^>]+>", "", cell["body"])
+        value = html_unescape(value).replace("\ufeff", "").strip()
+        return value[:24] + ("…" if len(value) > 24 else "") or "(empty)"
+
+    def _content_table_to_html(self, model: dict[str, object]) -> str:
+        rows_html: list[str] = []
+        for row in model["rows"]:  # type: ignore[index]
+            cells_html = "".join(f"{cell['open']}{cell['body']}{cell['close']}" for cell in row["cells"])
+            rows_html.append(f"{row['open']}{cells_html}{row['close']}")
+        table_html = f"{model['table_open']}{model['tbody_open']}{''.join(rows_html)}{model['tbody_close']}{model['table_close']}"
+        document = str(model["document_html"])
+        return f"{document[:model['block_start']]}{table_html}{document[model['block_end']:]}"
+
+    def _content_table_apply_model(self, model: dict[str, object]) -> None:
+        html = self._content_table_to_html(model)
+        self._content_html_set(html)
+        self.content_html_rich_dirty = True
+        self._on_content_editor_changed()
+
+    def _content_table_index_at_cursor(self) -> tuple[int, int] | None:
+        index = self.content_html_text.index(tk.INSERT)
+        cell_id: int | None = None
+        for tag_name in self.content_html_text.tag_names(index):
+            styles = self._content_html_tag_styles.get(tag_name, {})
+            if styles.get("table-cell") is not None:
+                cell_id = int(styles["table-cell"])
+                break
+        if cell_id is None:
+            cell_id = 0
+        html = self._content_html_get()
+        cursor = 0
+        for table_index, block in enumerate(self.CONTENT_TABLE_BLOCK.finditer(html)):
+            count = len(self.CONTENT_TABLE_CELL.findall(block.group(0)))
+            if cursor <= cell_id < cursor + count:
+                return table_index, cell_id - cursor
+            cursor += count
+        return None
+
+    def _open_content_table_editor(self) -> None:
+        context = self._content_table_index_at_cursor()
+        if context is None:
+            self.content_editor_status_var.set("Place the cursor in a table cell, then choose Table…")
+            return
+        table_index, selected_cell = context
+        model = self._content_table_model(self._content_html_get(), table_index)
+        if model is None:
+            self.content_editor_status_var.set("This table could not be opened for structural editing. Use Source HTML for this markup.")
+            return
+        selected_row = selected_column = 0
+        remaining = selected_cell
+        for row_index, row in enumerate(model["rows"]):
+            cells = row["cells"]
+            if remaining < len(cells):
+                selected_row, selected_column = row_index, remaining
+                break
+            remaining -= len(cells)
+
+        dialog = tk.Toplevel(self.content_window)
+        dialog.title("Edit Table")
+        dialog.transient(self.content_window)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=12)
+        frame.grid(sticky="nsew")
+        selected_var = tk.StringVar(value=f"Selected cell: row {selected_row + 1}, column {selected_column + 1}")
+        ttk.Label(frame, textvariable=selected_var).grid(row=0, column=0, columnspan=8, sticky="w", pady=(0, 8))
+
+        def selected() -> tuple[dict[str, object], list[dict[str, str]], dict[str, str]]:
+            row = model["rows"][selected_row]
+            cells = row["cells"]
+            return row, cells, cells[selected_column]
+
+        def reopen() -> None:
+            dialog.destroy()
+            self._open_content_table_editor()
+
+        def apply_and_reopen() -> None:
+            self._content_table_apply_model(model)
+            reopen()
+
+        def add_column(after: bool) -> None:
+            insert_at = selected_column + (1 if after else 0)
+            for row in model["rows"]:
+                row["cells"].insert(min(insert_at, len(row["cells"])), {"open": '<td style="padding:0px;">', "body": "", "close": "</td>"})
+            apply_and_reopen()
+
+        def add_row(after: bool) -> None:
+            source_cells = model["rows"][selected_row]["cells"]
+            new_row = {"open": "<tr>", "close": "</tr>", "cells": [{"open": '<td style="padding:0px;">', "body": "", "close": "</td>"} for _ in source_cells]}
+            model["rows"].insert(selected_row + (1 if after else 0), new_row)
+            apply_and_reopen()
+
+        def split(horizontal: bool) -> None:
+            if horizontal:
+                add_column(True)
+            else:
+                add_row(True)
+
+        def merge(direction: str) -> None:
+            row, cells, cell = selected()
+            if direction in ("left", "right"):
+                other_index = selected_column - 1 if direction == "left" else selected_column + 1
+                if not 0 <= other_index < len(cells):
+                    return
+                first_index, second_index = sorted((selected_column, other_index))
+                first, second = cells[first_index], cells[second_index]
+                first["body"] = f"{first['body']}<br>{second['body']}" if second["body"] else first["body"]
+                colspan = int(re.search(r"\bcolspan=[\"']?(\d+)", first["open"], re.IGNORECASE).group(1)) if re.search(r"\bcolspan=[\"']?(\d+)", first["open"], re.IGNORECASE) else 1
+                first["open"] = self._content_table_set_span(first["open"], "colspan", colspan + 1)
+                cells.pop(second_index)
+            else:
+                other_row_index = selected_row - 1 if direction == "up" else selected_row + 1
+                if not 0 <= other_row_index < len(model["rows"]):
+                    return
+                other_cells = model["rows"][other_row_index]["cells"]
+                if selected_column >= len(other_cells):
+                    return
+                first, second = (other_cells[selected_column], cell) if direction == "up" else (cell, other_cells[selected_column])
+                first["body"] = f"{first['body']}<br>{second['body']}" if second["body"] else first["body"]
+                rowspan = int(re.search(r"\browspan=[\"']?(\d+)", first["open"], re.IGNORECASE).group(1)) if re.search(r"\browspan=[\"']?(\d+)", first["open"], re.IGNORECASE) else 1
+                first["open"] = self._content_table_set_span(first["open"], "rowspan", rowspan + 1)
+                other_cells.pop(selected_column)
+            apply_and_reopen()
+
+        def properties(cell_level: bool) -> None:
+            target = selected()[2] if cell_level else model
+            open_key = "open" if cell_level else "table_open"
+            current = self._content_table_style_values(target[open_key])
+            prop = tk.Toplevel(dialog)
+            prop.title("Cell properties" if cell_level else "Table properties")
+            prop.transient(dialog)
+            prop.grab_set()
+            body = ttk.Frame(prop, padding=12)
+            body.grid(sticky="nsew")
+            variables = {key: tk.StringVar(value=current.get(key, "")) for key in ("width", "height", "padding", "background-color", "border-top", "text-align", "vertical-align")}
+            labels = (("Width", "width"), ("Height", "height"), ("Padding", "padding"), ("Background", "background-color"), ("Top border", "border-top"), ("Horizontal align", "text-align"), ("Vertical align", "vertical-align"))
+            for row_index, (label, key) in enumerate(labels):
+                ttk.Label(body, text=f"{label}:").grid(row=row_index, column=0, sticky="w", padx=(0, 8), pady=(0, 6))
+                values = ("left", "center", "right") if key == "text-align" else ("top", "middle", "bottom") if key == "vertical-align" else ()
+                widget = ttk.Combobox(body, textvariable=variables[key], values=values, width=36) if values else ttk.Entry(body, textvariable=variables[key], width=38)
+                widget.grid(row=row_index, column=1, sticky="ew", pady=(0, 6))
+            ttk.Label(body, text="Use CSS values, e.g. 100px, #fff, or 1px solid #000.", wraplength=360).grid(row=len(labels), column=0, columnspan=2, sticky="w", pady=(4, 10))
+            buttons = ttk.Frame(body)
+            buttons.grid(row=len(labels) + 1, column=0, columnspan=2, sticky="e")
+            ttk.Button(buttons, text="Cancel", command=prop.destroy).grid(row=0, column=0, padx=(0, 6))
+
+            def save_properties() -> None:
+                updates = {key: var.get() for key, var in variables.items()}
+                target[open_key] = self._content_table_set_styles(target[open_key], updates)
+                prop.destroy()
+                apply_and_reopen()
+
+            ttk.Button(buttons, text="Save", command=save_properties).grid(row=0, column=1)
+            self._center_content_chip_dialog(prop)
+
+        controls = (
+            ("Row Above", lambda: add_row(False)), ("Row Below", lambda: add_row(True)),
+            ("Column Left", lambda: add_column(False)), ("Column Right", lambda: add_column(True)),
+            ("Split Horizontal", lambda: split(True)), ("Split Vertical", lambda: split(False)),
+            ("Merge Left", lambda: merge("left")), ("Merge Right", lambda: merge("right")),
+            ("Merge Up", lambda: merge("up")), ("Merge Down", lambda: merge("down")),
+            ("Table Properties…", lambda: properties(False)), ("Cell Properties…", lambda: properties(True)),
+        )
+        for index, (label, command) in enumerate(controls):
+            ttk.Button(frame, text=label, command=command).grid(row=1 + index // 4, column=index % 4, sticky="ew", padx=(0, 6), pady=(0, 6))
+
+        grid = ttk.LabelFrame(frame, text="Table cells", padding=6)
+        grid.grid(row=5, column=0, columnspan=8, sticky="nsew", pady=(8, 0))
+        for row_index, row in enumerate(model["rows"]):
+            for column_index, cell in enumerate(row["cells"]):
+                def choose(row_value: int = row_index, column_value: int = column_index) -> None:
+                    nonlocal selected_row, selected_column
+                    selected_row, selected_column = row_value, column_value
+                    selected_var.set(f"Selected cell: row {selected_row + 1}, column {selected_column + 1}")
+                ttk.Button(grid, text=self._content_table_cell_label(cell), command=choose, width=18).grid(row=row_index, column=column_index, padx=2, pady=2, sticky="ew")
+        ttk.Button(frame, text="Close", command=dialog.destroy).grid(row=6, column=7, sticky="e", pady=(10, 0))
+        self._center_content_chip_dialog(dialog)
 
     def _show_content_style_classes_placeholder(self) -> None:
         self.content_editor_status_var.set("Style Classes are reserved for the forthcoming style-class workflow.")
@@ -2947,9 +3843,6 @@ class AToolApp:
         self.content_html_source_mode = not self.content_html_source_mode
         self.content_html_source_button.configure(text="Rich Text" if self.content_html_source_mode else "Source HTML")
         self._content_html_set(html)
-        for button in self.content_html_toolbar_buttons[:-1]:
-            button.configure(state=tk.DISABLED if self.content_html_source_mode else tk.NORMAL)
-        self.content_html_size_menu.configure(state=tk.DISABLED if self.content_html_source_mode else "readonly")
         self._on_content_editor_changed()
 
     def _refresh_content_editor_mode(self) -> None:
@@ -2964,6 +3857,30 @@ class AToolApp:
         if self.content_browser_filter_var.get() == "Filter by name or description":
             self.content_browser_filter_var.set("")
             self.content_filter_entry.configure(foreground="#000000")
+
+    def _schedule_content_list_actions_reflow(self, _event: tk.Event | None = None) -> None:
+        if self._content_list_actions_reflow_job is not None:
+            self.content_window.after_cancel(self._content_list_actions_reflow_job)
+        self._content_list_actions_reflow_job = self.content_window.after_idle(self._reflow_content_list_actions)
+
+    def _reflow_content_list_actions(self) -> None:
+        """Wrap Content browser actions instead of clipping them in a narrow pane."""
+        self._content_list_actions_reflow_job = None
+        available_width = self.content_list_actions.winfo_width()
+        if available_width <= 1:
+            return
+        row = column = used_width = 0
+        gap = 6
+        for button in self._content_list_action_buttons:
+            button_width = button.winfo_reqwidth()
+            needed_width = button_width if column == 0 else gap + button_width
+            if column and used_width + needed_width > available_width:
+                row += 1
+                column = used_width = 0
+                needed_width = button_width
+            button.grid_configure(row=row, column=column, padx=(0 if column == 0 else gap, 0), pady=(0, 4 if row else 0))
+            used_width += needed_width
+            column += 1
 
     def _restore_content_filter_placeholder(self, _event: tk.Event | None = None) -> None:
         if not self.content_browser_filter_var.get().strip():
@@ -3098,11 +4015,31 @@ class AToolApp:
             "Loading content browser...",
             self._on_content_browser_loaded,
             on_failure=self._on_content_browser_load_failed,
+            allow_parallel_read=True,
         )
 
     def _on_content_browser_loaded(self, result: dict[str, object]) -> None:
         if self.content_window is None or not self.content_window.winfo_exists():
             return
+        # The list response resolves the Config ID authoritatively. Refresh a
+        # stale saved label so the manager never says one Config while querying
+        # another.
+        resolved_config = result.get("configId")
+        if self._content_browser_scope == "config" and isinstance(resolved_config, dict):
+            active_id = self._get_last_occs_config_id()
+            resolved_id = str(resolved_config.get("id", resolved_config.get("resolved", ""))).strip()
+            resolved_label = str(resolved_config.get("shortName", resolved_config.get("name", ""))).strip()
+            if (
+                active_id
+                and resolved_id
+                and self._normalize_occs_config_id(active_id) == self._normalize_occs_config_id(resolved_id)
+                and resolved_label
+                and resolved_label != self._active_occs_config_display_name()
+            ):
+                section = self._occs_settings_section()
+                section["active_config_label"] = resolved_label
+                self._save_user_settings()
+                self._refresh_app_menus()
         contents = result.get("contents")
         values = [item for item in contents if isinstance(item, dict)] if isinstance(contents, list) else []
         for item_id in self.content_browser_tree.get_children():
@@ -3174,6 +4111,7 @@ class AToolApp:
             f"Loading {short_name} versions...",
             self._on_content_inspected,
             on_failure=lambda error: self._on_content_inspect_failed(error, short_name),
+            allow_parallel_read=True,
         )
 
     def _on_content_inspected(self, result: dict[str, object]) -> None:
@@ -3225,6 +4163,7 @@ class AToolApp:
             f"Loading {short_name} version {version}...",
             self._on_content_version_loaded,
             on_failure=lambda error: self._on_content_version_load_failed(error, short_name, version),
+            allow_parallel_read=True,
         )
 
     def _load_content_styles(self, short_name: str, version: str) -> None:
@@ -3283,21 +4222,34 @@ class AToolApp:
 
     def _content_iteration_fields(self, content_name: str) -> list[dict[str, str]]:
         """Find iteration fields only for AT Content nodes matching this content name."""
+        return [field for definition in self._content_iteration_definitions(content_name) for field in definition["fields"]]
+
+    def _content_iteration_definitions(self, content_name: str) -> list[dict[str, object]]:
+        """Return AT iterator definitions attached to the named Content node."""
         payload = getattr(self, "current_payload", None)
         if not isinstance(payload, dict) or not content_name:
             return []
-        fields: list[dict[str, str]] = []
+        definitions: list[dict[str, object]] = []
 
         def walk(value: object) -> None:
             if isinstance(value, dict):
                 owner_name = str(value.get("Name") or value.get("$$Id") or value.get("Id") or "").strip()
                 iteration = self._extract_iteration(value)
-                iteration_name = str(iteration.get("Name") or iteration.get("$$Id") or iteration.get("Id") or "").strip() if isinstance(iteration, dict) else ""
-                if (owner_name == content_name or iteration_name == content_name) and isinstance(iteration, dict):
+                if owner_name == content_name and isinstance(iteration, dict):
+                    iteration_name = str(iteration.get("Name") or iteration.get("$$Id") or iteration.get("Id") or "").strip()
+                    fields: list[dict[str, str]] = []
                     for field in self._extract_iteration_fields(iteration):
                         name = self._content_field_name(field)
                         if name:
                             fields.append({"name": name, "scope": "Iteration", "path": str(field.get("Path", "")).strip()})
+                    if iteration_name:
+                        definitions.append({
+                            "name": iteration_name,
+                            "path": str(iteration.get("Path", "")).strip(),
+                            "condition": str(iteration.get("Condition", "")).strip(),
+                            "type": str(iteration.get("Type", "")).strip(),
+                            "fields": fields,
+                        })
                 for child in value.values():
                     walk(child)
             elif isinstance(value, list):
@@ -3305,7 +4257,10 @@ class AToolApp:
                     walk(child)
 
         walk(payload)
-        return fields
+        unique: dict[str, dict[str, object]] = {}
+        for definition in definitions:
+            unique.setdefault(str(definition["name"]), definition)
+        return list(unique.values())
 
     def _content_available_fields(self) -> list[dict[str, str]]:
         fields: list[dict[str, str]] = []
@@ -3335,10 +4290,27 @@ class AToolApp:
             filter_text = ""
         self.content_fields_tree.delete(*self.content_fields_tree.get_children())
         self._content_field_records = {}
+        if self.current_payload is None:
+            self.content_fields_tree.insert(
+                "", tk.END,
+                values=("Open a package to load fields", ""),
+                tags=("content_fields_hint",),
+            )
+            self.content_insert_field_button.configure(state=tk.DISABLED)
+            return
+        visible_fields = []
         for field in self._content_available_fields():
             searchable = " ".join(field.values()).casefold()
             if filter_text and filter_text not in searchable:
                 continue
+            visible_fields.append(field)
+        if not visible_fields:
+            self.content_fields_tree.insert(
+                "", tk.END,
+                values=(("No fields match the filter" if filter_text else "No fields found in this package"), ""),
+                tags=("content_fields_hint",),
+            )
+        for field in visible_fields:
             item_id = self.content_fields_tree.insert("", tk.END, values=(field["name"], field["scope"]))
             self._content_field_records[item_id] = field
         self.content_insert_field_button.configure(state=tk.DISABLED)
@@ -3371,7 +4343,7 @@ class AToolApp:
             self.content_html_text.insert(tk.INSERT, self._content_field_tag(name))
         else:
             start = self.content_html_text.index(tk.INSERT)
-            self.content_html_text.insert(tk.INSERT, f"${name}")
+            self.content_html_text.insert(tk.INSERT, ContentHtmlParser.chip_label(f"${name}"))
             self.content_html_text.tag_add(self._content_html_style_tag("field", name), start, tk.INSERT)
             self.content_html_rich_dirty = True
         self.content_html_text.focus_set()
@@ -3387,6 +4359,8 @@ class AToolApp:
     def _set_content_html_controls_enabled(self, enabled: bool) -> None:
         self.content_html_text.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         self.content_open_html_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self.content_web_editor_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self.content_reopen_web_editor_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         if hasattr(self, "content_insert_field_button"):
             self.content_insert_field_button.configure(state=tk.DISABLED)
         for button in self.content_html_toolbar_buttons:
@@ -3423,6 +4397,7 @@ class AToolApp:
         if not self.content_html_source_mode:
             self.content_editor_status_var.set(f"Loaded version {version.get('shortName', '')}.")
         self._capture_content_save_baseline()
+        self.content_window.after(100, self._open_content_web_editor)
 
     def _on_content_version_load_failed(self, error: Exception, short_name: str, version: str) -> None:
         self._set_content_html_controls_enabled(True)
@@ -3484,7 +4459,7 @@ class AToolApp:
         else:
             args = ["content", "save", short_name, version, "--config-id", config_id, "--html", temporary_html.name,
                     "--short-name", short_name, "--name", self.content_name_var.get().strip(),
-                    "--desc", self.content_description_var.get().strip(), "--new-version", version,
+                    "--desc", self.content_description_var.get().strip(),
                     "--version-desc", self.content_version_description_var.get().strip()]
         if mode == "create":
             args.extend(["--effective-date", effective_date])
@@ -6605,6 +7580,7 @@ class AToolApp:
         self._update_field_mapping_filter_button()
         self._update_send_email_menu_state()
         self._update_package_menu_states()
+        self._update_data_menu_states()
         if hasattr(self, "clear_mapping_button"):
             if self._mapping_dialog_in_progress:
                 self.clear_mapping_button.config(text="Opening...", command=self.map_data_file, state=tk.DISABLED)
@@ -6644,7 +7620,9 @@ class AToolApp:
             self.current_occs_bundle_dir
             and self.current_occs_manifest
             and self.current_data_payload is not None
-            and not self._occs_operation_in_progress
+            # Preview has a dedicated process slot, so it can run beside one
+            # regular OCCS command.  Only another preview conflicts with it.
+            and not self._occs_preview_in_progress
         )
 
     def _update_package_menu_states(self) -> None:
@@ -6725,6 +7703,242 @@ class AToolApp:
         if hasattr(self, "view_model_button"):
             self.view_model_button.config(state=selected_state)
         self._update_model_menu_states(selected_doc)
+        self._update_data_menu_states()
+
+    def _can_resolve_selected_layout(self) -> bool:
+        return bool(
+            isinstance(self.current_payload, dict)
+            and self.current_package_name != "(none)"
+            and self.current_data_payload is not None
+            and not self._mapping_in_progress
+            and self._get_selected_document_ref() is not None
+        )
+
+    def _update_data_menu_states(self) -> None:
+        active_entries: list[tuple[tk.Menu, int, str]] = []
+        for menu, index, action in self._data_menu_entries:
+            try:
+                if action == "resolve":
+                    state = tk.NORMAL if self._can_resolve_selected_layout() else tk.DISABLED
+                    menu.entryconfig(index, state=state)
+                active_entries.append((menu, index, action))
+            except tk.TclError:
+                continue
+        self._data_menu_entries = active_entries
+
+    def resolve_selected_layout(self) -> None:
+        """Inspect one cached Comms layout using the open package and mapped data."""
+        if not self._can_resolve_selected_layout():
+            messagebox.showinfo("Resolve Layout", "Open a package, map data, and select a document first.")
+            return
+        selected_doc = self._get_selected_document_ref()
+        if selected_doc is None or not isinstance(self.current_payload, dict):
+            return
+        package_name = str(self.current_package_name)
+        document_name = str(selected_doc.get("name", ""))
+        mapped_payload = self.current_data_payload
+        assembly_template = self.current_payload
+
+        dialog = self._create_toplevel(self.root)
+        dialog.title(f"Resolve Layout - {document_name}")
+        dialog.transient(self.root)
+        dialog.minsize(720, 480)
+        dialog.geometry("930x680")
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(7, weight=1)
+
+        cache_var = tk.StringVar(value=self._get_occs_comms_cache_dir())
+        date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        page_var = tk.StringVar(value="1")
+        grid_page_var = tk.StringVar(value="1")
+        layout_var = tk.StringVar(value="")
+        status_var = tk.StringVar(value="")
+        result_holder: dict[str, object] = {}
+
+        ttk.Label(frame, text=f"Package: {package_name}    Document: {document_name}").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
+        )
+        ttk.Label(frame, text="Comms cache:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        cache_entry = ttk.Entry(frame, textvariable=cache_var)
+        cache_entry.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+
+        def _browse_cache() -> None:
+            selected = self._run_file_dialog(
+                filedialog.askdirectory,
+                owner=dialog,
+                title="Choose Comms Cache Directory",
+                initialdir=cache_var.get().strip() or None,
+            )
+            if selected:
+                cache_var.set(selected)
+
+        ttk.Button(frame, text="Browse...", command=_browse_cache).grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
+        ttk.Label(frame, text="Effective date:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        date_row = ttk.Frame(frame)
+        date_row.grid(row=2, column=1, columnspan=2, sticky="w", pady=(0, 8))
+        date_entry = ttk.Entry(date_row, textvariable=date_var, width=16)
+        date_entry.pack(side=tk.LEFT)
+        ttk.Button(
+            date_row,
+            text="Choose...",
+            command=lambda: self._open_occs_config_lockout_date_picker(dialog, date_var, title="Choose Effective Date"),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(frame, text="PackagePageNum:").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=page_var, width=8).grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="GRIDPAGENUMBER:").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=grid_page_var, width=8).grid(row=4, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Layout:").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        layout_combo = ttk.Combobox(frame, textvariable=layout_var, state="normal")
+        layout_combo.grid(row=5, column=1, sticky="ew", pady=(0, 8))
+
+        def _validated_date() -> str:
+            value = date_var.get().strip()
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+            if parsed.strftime("%Y-%m-%d") != value:
+                raise ValueError("Effective date must be YYYY-MM-DD.")
+            return value
+
+        def _make_resolver(page_number: int, grid_page_number: int) -> LayoutResolver:
+            cache_path = Path(cache_var.get().strip()).expanduser()
+            if not cache_var.get().strip() or not cache_path.is_dir():
+                raise ValueError("Choose a valid Comms cache directory.")
+            return LayoutResolver(
+                cache_path,
+                package_name,
+                document_name,
+                mapped_payload,
+                effective_date=_validated_date(),
+                system_fields={
+                    "PackagePageNum": page_number,
+                    "GRIDPAGENUMBER": grid_page_number,
+                },
+                assembly_template=assembly_template,
+            )
+
+        def _refresh_layouts(_event: tk.Event | None = None) -> None:
+            try:
+                version, names = _make_resolver(1, 1).available_layouts()
+            except (OSError, ValueError, StopIteration) as error:
+                layout_combo.configure(values=(), state="normal")
+                status_var.set(f"Layout choices unavailable: {error}")
+                return
+            previous = layout_var.get().strip()
+            layout_combo.configure(values=names, state="readonly" if names else "normal")
+            layout_var.set(previous if previous in names else names[0] if names else "")
+            status_var.set(f"{len(names)} layout(s) from cached {document_name} version {version}.")
+
+        ttk.Button(frame, text="Refresh", command=_refresh_layouts).grid(row=5, column=2, padx=(8, 0), pady=(0, 8))
+        date_entry.bind("<FocusOut>", _refresh_layouts)
+        date_entry.bind("<Return>", _refresh_layouts)
+        cache_entry.bind("<FocusOut>", _refresh_layouts)
+        ttk.Label(frame, textvariable=status_var, wraplength=850).grid(
+            row=6, column=0, columnspan=3, sticky="w", pady=(0, 8)
+        )
+        result_frame = ttk.Frame(frame)
+        result_frame.grid(row=7, column=0, columnspan=3, sticky="nsew")
+        result_frame.rowconfigure(0, weight=1)
+        result_frame.columnconfigure(0, weight=1)
+        result_text = tk.Text(result_frame, wrap=tk.NONE, font="TkFixedFont", state=tk.DISABLED)
+        result_text.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=result_text.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(result_frame, orient=tk.HORIZONTAL, command=result_text.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        result_text.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=8, column=0, columnspan=3, sticky="e", pady=(12, 0))
+
+        def _show_result(result: dict[str, object] | None, report: str, error: str) -> None:
+            if not dialog.winfo_exists():
+                return
+            resolve_button.configure(state=tk.NORMAL)
+            if error:
+                status_var.set(error)
+                return
+            result_holder["result"] = result
+            result_holder["report"] = report
+            result_text.configure(state=tk.NORMAL)
+            result_text.delete("1.0", tk.END)
+            result_text.insert("1.0", report)
+            result_text.configure(state=tk.DISABLED)
+            result_text.see("1.0")
+            save_button.configure(state=tk.NORMAL)
+            status_var.set(f"Resolved {layout_var.get().strip()}; {len(result.get('warnings', []))} warning(s)." if result else "Resolved.")
+
+        def _resolve() -> None:
+            try:
+                page_number = int(page_var.get().strip())
+                if page_number < 1:
+                    raise ValueError("PackagePageNum must be a positive integer.")
+                grid_page_number = int(grid_page_var.get().strip())
+                if grid_page_number < 1:
+                    raise ValueError("GRIDPAGENUMBER must be a positive integer.")
+                layout_name = layout_var.get().strip()
+                if not layout_name:
+                    raise ValueError("Choose a layout.")
+                resolver = _make_resolver(page_number, grid_page_number)
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Resolve Layout", str(error), parent=dialog)
+                return
+            resolve_button.configure(state=tk.DISABLED)
+            save_button.configure(state=tk.DISABLED)
+            result_holder.clear()
+            result_text.configure(state=tk.NORMAL)
+            result_text.delete("1.0", tk.END)
+            result_text.configure(state=tk.DISABLED)
+            status_var.set(f"Resolving {layout_name}...")
+
+            def _worker() -> None:
+                try:
+                    result = resolver.resolve(layout_name)
+                    report = format_report(result)
+                    self.root.after(0, lambda: _show_result(result, report, ""))
+                except Exception as error:  # Keep the dialog responsive if a cache record is malformed.
+                    self.root.after(0, lambda detail=str(error): _show_result(None, "", detail))
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        def _save() -> None:
+            result = result_holder.get("result")
+            if not isinstance(result, dict):
+                return
+            path_text = self._run_file_dialog(
+                filedialog.asksaveasfilename,
+                owner=dialog,
+                title="Save Layout Resolution",
+                defaultextension=".txt",
+                filetypes=[("Text report", "*.txt"), ("JSON evidence", "*.json"), ("All files", "*.*")],
+            )
+            if not path_text:
+                return
+            path = Path(path_text)
+            output = json.dumps(result, ensure_ascii=False, indent=2) + "\n" if path.suffix.lower() == ".json" else str(result_holder["report"])
+            try:
+                path.write_text(output, encoding="utf-8")
+            except OSError as error:
+                messagebox.showerror("Save Layout Resolution", str(error), parent=dialog)
+                return
+            status_var.set(f"Saved {path.name}.")
+
+        resolve_button = ttk.Button(button_row, text="Resolve", command=_resolve)
+        resolve_button.grid(row=0, column=0, padx=(0, 8))
+        save_button = ttk.Button(button_row, text="Save...", command=_save, state=tk.DISABLED)
+        save_button.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_row, text="Close", command=dialog.destroy).grid(row=0, column=2)
+        _refresh_layouts()
+        refresh_job: dict[str, str | None] = {"id": None}
+
+        def _schedule_refresh(*_args: object) -> None:
+            if refresh_job["id"] is not None:
+                dialog.after_cancel(refresh_job["id"])
+            refresh_job["id"] = dialog.after(350, _refresh_layouts)
+
+        date_var.trace_add("write", _schedule_refresh)
+        cache_var.trace_add("write", _schedule_refresh)
+        layout_combo.focus_set()
 
     def _update_model_menu_states(self, selected_doc: dict[str, object] | None) -> None:
         document_name = str(selected_doc.get("name", "")).strip() if selected_doc else ""
@@ -7466,7 +8680,14 @@ class AToolApp:
 
     def _set_last_occs_config_id(self, config_id: str) -> None:
         section = self._occs_settings_section()
-        section["last_config_id"] = str(config_id or "").strip()
+        previous_id = str(section.get("last_config_id", "")).strip()
+        updated_id = str(config_id or "").strip()
+        section["last_config_id"] = updated_id
+        # This helper is sometimes called with only an ID (for example after a
+        # publish retry). Do not leave the previous config's friendly name
+        # displayed beside a different ID.
+        if self._normalize_occs_config_id(previous_id) != self._normalize_occs_config_id(updated_id):
+            section["active_config_label"] = ""
         self._save_user_settings()
 
     def _active_occs_config_display_name(self) -> str:
@@ -7496,6 +8717,12 @@ class AToolApp:
             self._update_content_save_availability()
         self._show_temporary_status(f"Active Config set to {self._active_occs_config_display_name()}", duration_ms=5000)
 
+    def _refresh_content_browser_title(self) -> None:
+        if not hasattr(self, "content_browser_title_var"):
+            return
+        config_name = self._active_occs_config_display_name() or "(not set)"
+        self.content_browser_title_var.set(f"Contents [{config_name}]")
+
     def _refresh_app_menus(self) -> None:
         for window in (
             self.root,
@@ -7507,6 +8734,7 @@ class AToolApp:
         ):
             if window is not None and window.winfo_exists():
                 self._attach_app_menu(window)
+        self._refresh_content_browser_title()
 
     def _require_active_occs_config_id(self, parent: tk.Misc | None = None) -> str:
         config_id = self._get_last_occs_config_id()
@@ -7782,7 +9010,7 @@ class AToolApp:
         config_id: str,
         parent: tk.Misc | None = None,
         display_name: str = "",
-    ) -> None:
+    ) -> bool:
         config_name = display_name or self._occs_config_display_name(config_id)
         payload = self._read_occs_config_lockouts()
         normalized_id = self._normalize_occs_config_id(config_id)
@@ -7790,17 +9018,19 @@ class AToolApp:
         existing = next((value for value in locked_ids if self._normalize_occs_config_id(value) == normalized_id), None)
         if existing:
             if not messagebox.askyesno("Unlock Config", f"Remove the shared lock from {config_name}?", parent=parent):
-                return
+                return False
             payload["locked_config_ids"] = [value for value in locked_ids if self._normalize_occs_config_id(value) != normalized_id]
             action, status = "remove this shared Config lock", "unlocked"
         else:
             if not messagebox.askyesno("Lock Config", f"Lock {config_name}?\n\nATool will prevent closing or migrating it.", parent=parent):
-                return
+                return False
             locked_ids.append(config_id.strip())
             payload["locked_config_ids"] = locked_ids
             action, status = "create this shared Config lock", "locked"
         if self._write_occs_config_lockouts(payload, action):
             self._show_temporary_status(f"{config_name} {status}", duration_ms=5000)
+            return True
+        return False
 
     def open_occs_config_lockouts_dialog(self) -> None:
         dialog = self._create_toplevel(self.root)
@@ -7968,7 +9198,9 @@ class AToolApp:
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(button_frame, text="Add Lockout", command=_save).grid(row=0, column=1)
 
-    def _open_occs_config_lockout_date_picker(self, parent: tk.Misc, date_var: tk.StringVar) -> None:
+    def _open_occs_config_lockout_date_picker(
+        self, parent: tk.Misc, date_var: tk.StringVar, title: str = "Choose Lockout Date"
+    ) -> None:
         """Small dependency-free calendar picker for a lockout start date."""
         try:
             selected = datetime.strptime(date_var.get().strip(), "%Y-%m-%d")
@@ -7976,7 +9208,7 @@ class AToolApp:
             selected = datetime.now()
         visible_year, visible_month = selected.year, selected.month
         dialog = self._create_toplevel(parent)
-        dialog.title("Choose Lockout Date")
+        dialog.title(title)
         dialog.transient(parent)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -12379,8 +13611,8 @@ class AToolApp:
         return f"{size:.1f} GB"
 
     def preview_occs_package(self) -> None:
-        if self._occs_operation_in_progress:
-            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+        if self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "A preview is already in progress.")
             return
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
             messagebox.showinfo("Preview Package", "Open a package version first.")
@@ -13908,7 +15140,7 @@ class AToolApp:
             if not config_id:
                 messagebox.showerror("Publish Package to Comms", "Choose a configuration.", parent=dialog)
                 return
-            self._set_last_occs_config_id(config_id)
+            self._set_active_occs_config(config_by_label[raw_value])
             dialog.destroy()
             self._run_occs_save_dry_run(config_id)
 
@@ -14181,7 +15413,7 @@ class AToolApp:
         short_name = str(config_data.get("shortName", "")).strip()
         config_id = str(config_data.get("id", "")).strip()
         label = self._format_occs_config_label({"shortName": short_name, "id": config_id})
-        self._set_last_occs_config_id(config_id or short_name)
+        self._set_active_occs_config({"id": config_id, "shortName": short_name})
         self._show_temporary_status("Config created", duration_ms=5000)
         messagebox.showinfo(
             "Create Config",
@@ -14246,6 +15478,10 @@ class AToolApp:
 
         ttk.Button(buttons, text="Set Config", command=_apply).grid(row=0, column=1)
         combo.focus_set()
+        dialog.update_idletasks()
+        x_pos = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y_pos = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x_pos}+{y_pos}")
 
     def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
         dialog = self._create_toplevel(self.root)
@@ -14394,8 +15630,16 @@ class AToolApp:
             if config is None:
                 return
             config_id = config.get("id", "").strip() or config.get("shortName", "").strip()
-            if config_id:
-                self._toggle_occs_config_lock(config_id, dialog, self._format_occs_config_label(config))
+            if config_id and self._toggle_occs_config_lock(
+                config_id, dialog, self._format_occs_config_label(config)
+            ):
+                selected_items = tree.selection()
+                if selected_items:
+                    item_id = selected_items[0]
+                    values = list(tree.item(item_id, "values"))
+                    if values:
+                        values[0] = "🔒" if lock_config_button.cget("text") == "Lock Configuration" else ""
+                        tree.item(item_id, values=values)
                 _update_close_button()
 
         lock_config_button.configure(command=_toggle_selected_lock)
@@ -14913,14 +16157,16 @@ class AToolApp:
         on_success: object,
         on_failure: object | None = None,
     ) -> None:
-        if self._occs_operation_in_progress:
-            messagebox.showinfo("Preview Package", "An OCCS operation is already in progress.")
+        if self._occs_preview_in_progress:
+            messagebox.showinfo("Preview Package", "A preview is already in progress.")
             return
-        self._occs_operation_in_progress = True
         self._occs_preview_in_progress = True
         self._occs_preview_cancel_requested = False
         self._update_package_menu_states()
-        self._start_occs_status_timer(status_message)
+        # Leave the regular command's progress display intact when both kinds
+        # of work are active.  Preview gets its own process/cancellation slot.
+        if not self._occs_operation_in_progress:
+            self._start_occs_status_timer(status_message)
 
         def _worker() -> None:
             try:
@@ -14941,12 +16187,29 @@ class AToolApp:
     def _on_occs_preview_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
-        self._on_occs_command_success(result, on_success)
+        self._update_package_menu_states()
+        if not self._occs_operation_in_progress:
+            self._stop_occs_status_timer()
+            self._restore_default_status_text()
+        if callable(on_success):
+            on_success(result)
 
     def _on_occs_preview_command_failure(self, error: Exception, stack: str, on_failure: object | None) -> None:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
-        self._on_occs_command_failure(error, stack, on_failure)
+        self._update_package_menu_states()
+        if not self._occs_operation_in_progress:
+            self._stop_occs_status_timer()
+            self._restore_default_status_text()
+        if isinstance(error, OccsCommandCancelled):
+            self._debug_log("OCCS preview canceled by user.")
+            self._show_temporary_status("Preview canceled", duration_ms=5000)
+            return
+        self._debug_log(f"OCCS preview failed:\n{stack}")
+        if callable(on_failure):
+            on_failure(error)
+            return
+        messagebox.showerror("Preview Package", str(error))
 
     def _run_occs_command_async(
         self,
@@ -15098,7 +16361,16 @@ class AToolApp:
         def _worker() -> None:
             try:
                 with self._occs_parallel_read_semaphore:
-                    result = self._run_occs_json_command(args, track_active_process=False)
+                    try:
+                        result = self._run_occs_json_command(args, track_active_process=False)
+                    except RuntimeError as error:
+                        if not self._is_transient_occs_network_error(error):
+                            raise
+                        self._debug_log(
+                            "Parallel OCCS read hit a transient network error; retrying once in 2 seconds."
+                        )
+                        time.sleep(2)
+                        result = self._run_occs_json_command(args, track_active_process=False)
                 if callable(on_success):
                     self.root.after(0, lambda result=result: on_success(result))
             except Exception as error:  # pragma: no cover - defensive runtime safety
@@ -15114,6 +16386,13 @@ class AToolApp:
                 self.root.after(0, _report_failure)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _is_transient_occs_network_error(error: Exception) -> bool:
+        message = str(error).casefold()
+        return any(marker in message for marker in (
+            "etimedout", "econnreset", "econnrefused", "eai_again", "socket hang up",
+        ))
 
     def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_operation_in_progress = False
@@ -15153,7 +16432,8 @@ class AToolApp:
             messagebox.showinfo("Preview Package", "No Preview is currently running.")
             return
         self._occs_preview_cancel_requested = True
-        self._set_occs_status_timer_message("Canceling Preview...")
+        if not self._occs_operation_in_progress:
+            self._set_occs_status_timer_message("Canceling Preview...")
         self._terminate_tracked_occs_process("_occs_preview_process")
 
     def _terminate_active_occs_process(self) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a distributable ATool zip and optionally copy it to a local destination."""
+"""Build the distributable ATool ZIP in GitHub Actions."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import py_compile
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,14 +17,16 @@ from pathlib import Path
 
 PACKAGE_FILES = (
     "ATool.py",
+    "atool_web_editor.py",
     "Run_ATool.bat",
     "Run_ATool.zsh",
     "README.md",
+    "requirements.txt",
+    "tools/resolve_layout.py",
 )
 PACKAGE_DIRECTORIES = (
     "atool_core",
 )
-LOCAL_CONFIG_FILE = ".atool-build.local.json"
 
 
 def run_git(repo_root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -61,25 +62,6 @@ def git_output(repo_root: Path, *args: str, default: str = "") -> str:
     if result.returncode != 0:
         return default
     return result.stdout.rstrip() or default
-
-
-def load_local_config(repo_root: Path) -> dict[str, object]:
-    config_path = repo_root / LOCAL_CONFIG_FILE
-    if not config_path.exists():
-        return {}
-    with config_path.open("r", encoding="utf-8") as source:
-        config = json.load(source)
-    if not isinstance(config, dict):
-        raise ValueError(f"{LOCAL_CONFIG_FILE} must contain a JSON object.")
-    return config
-
-
-def resolve_destination(args: argparse.Namespace, config: dict[str, object]) -> Path | None:
-    configured = args.dest or os.environ.get("ATOOL_ARTIFACT_DIR") or config.get("sharepoint_dir")
-    if configured is None:
-        return None
-    destination = Path(str(configured)).expanduser()
-    return destination.resolve()
 
 
 def compile_app(repo_root: Path, source: str) -> None:
@@ -274,17 +256,6 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     return artifact_path
 
 
-def copy_to_destination(artifact_path: Path, destination: Path, latest_name: str | None) -> list[Path]:
-    destination.mkdir(parents=True, exist_ok=True)
-    copied_paths = [destination / artifact_path.name]
-    shutil.copy2(artifact_path, copied_paths[0])
-    if latest_name:
-        latest_path = destination / latest_name
-        shutil.copy2(artifact_path, latest_path)
-        copied_paths.append(latest_path)
-    return copied_paths
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -294,48 +265,21 @@ def parse_args() -> argparse.Namespace:
         help="Build from the committed HEAD snapshot or the current worktree.",
     )
     parser.add_argument(
-        "--dest",
-        help="Directory to copy the artifact to. Defaults to ATOOL_ARTIFACT_DIR or .atool-build.local.json.",
-    )
-    parser.add_argument(
         "--dist-dir",
         help="Local artifact output directory. Defaults to <repo>/dist.",
-    )
-    parser.add_argument(
-        "--latest-name",
-        default="ATool-latest.zip",
-        help="Optional stable filename to update in the destination directory.",
-    )
-    parser.add_argument(
-        "--no-latest",
-        action="store_true",
-        help="Do not write a stable latest artifact filename in the destination directory.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("Release artifacts are built only by GitHub Actions.")
     args = parse_args()
     repo_root = find_repo_root()
-    config = load_local_config(repo_root)
     dist_dir = Path(args.dist_dir).expanduser().resolve() if args.dist_dir else repo_root / "dist"
-    latest_name = None if args.no_latest else args.latest_name
-
     compile_app(repo_root, args.source)
     artifact_path = build_zip(repo_root, dist_dir, args.source)
     print(f"Built {artifact_path}")
-
-    destination = resolve_destination(args, config)
-    if destination is None:
-        print(
-            "No SharePoint destination configured. Set ATOOL_ARTIFACT_DIR "
-            f"or {LOCAL_CONFIG_FILE} to enable copying."
-        )
-        return 0
-
-    copied_paths = copy_to_destination(artifact_path, destination, latest_name)
-    for copied_path in copied_paths:
-        print(f"Copied {copied_path}")
     return 0
 
 

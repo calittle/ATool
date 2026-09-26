@@ -1,5 +1,13 @@
 # ATool Release Notes
 
+## v1.0.8
+
+- Added `Data > Resolve...` to inspect how a cached document layout resolves against mapped data, including nested layouts, conditions, selected and suppressed content, and mapped fields.
+- Added effective-date and `PackagePageNum` controls, cached root-layout choices, text and JSON evidence export, and a companion resolver CLI.
+- Added a unified browser Content Editor and updated launchers and package dependencies to support it.
+
+## Earlier Changes
+
 This release focuses on shared package edit flow, Comms publish behavior, Comms authentication resilience, document/layout editing ergonomics, mapping review, conversion workflow, preview ergonomics, macOS window readability, menu cleanup, Comms-compatible condition handling, and release-package transparency.
 
 ## Comms Authentication
