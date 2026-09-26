@@ -59,7 +59,11 @@ class LayoutResolver:
         self.document = document
         self.payload = payload
         self.effective_date = effective_date or date.today().isoformat()
-        self.system_fields = {"PackagePageNum": 1, **(system_fields or {})}
+        self.system_fields = {
+            "PackagePageNum": 1,
+            "GRIDPAGENUMBER": 1,
+            **(system_fields or {}),
+        }
         self.evaluator = ConditionEvaluator()
         self.warnings: list[str] = []
         self._field_cache: dict[str, dict[str, Any]] = {}
@@ -85,6 +89,11 @@ class LayoutResolver:
             for field in template.get("Fields", [])
             if isinstance(field, dict) and field.get("Name")
         }
+        self._relationship_conditions: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {
+            "layout": {},
+            "content": {},
+        }
+        self._index_relationship_conditions(template)
         matches = [
             item for item in template.get("Documents", [])
             if isinstance(item, dict) and str(item.get("$$Id", "")).casefold() == document.casefold()
@@ -93,6 +102,47 @@ class LayoutResolver:
             raise ValueError(f"Expected one document named {document!r} in {self.template_path}; found {len(matches)}")
         self.at_document = matches[0]
         self.document_name = str(self.at_document["$$Id"])
+
+    def _index_relationship_conditions(self, template: dict[str, Any]) -> None:
+        """Index AT relationship conditions across the entire package.
+
+        Comms cache relationship records only expose the ``AlwaysTriggerInd``
+        flag.  The corresponding expressions live in the Assembly Template,
+        and may be filed under a different AT document than the cached
+        document whose layout graph is being inspected.
+        """
+
+        def add(kind: str, parent: str, child: dict[str, Any], document: str) -> None:
+            child_name = str(child.get("$$Id", "")).strip()
+            if not parent or not child_name:
+                return
+            key = (parent.casefold(), child_name.casefold())
+            self._relationship_conditions[kind].setdefault(key, []).append({
+                "condition": str(child.get("Condition") or "").strip(),
+                "document": document,
+                "layout": parent,
+                "child": child_name,
+                "iteration": child.get("Iteration") if isinstance(child.get("Iteration"), dict) else None,
+            })
+
+        def walk_layout(layout: dict[str, Any], document: str) -> None:
+            layout_name = str(layout.get("$$Id", "")).strip()
+            for content in layout.get("Contents", []):
+                if isinstance(content, dict):
+                    add("content", layout_name, content, document)
+            for child_layout in layout.get("Layouts", []):
+                if not isinstance(child_layout, dict):
+                    continue
+                add("layout", layout_name, child_layout, document)
+                walk_layout(child_layout, document)
+
+        for document in template.get("Documents", []):
+            if not isinstance(document, dict):
+                continue
+            document_name = str(document.get("$$Id", "")).strip()
+            for layout in document.get("Layouts", []):
+                if isinstance(layout, dict):
+                    walk_layout(layout, document_name)
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
@@ -203,9 +253,80 @@ class LayoutResolver:
         self._field_cache[name] = result
         return result
 
+    def _iteration_field(self, name: str, context: dict[str, Any] | None) -> dict[str, Any] | None:
+        if context is None:
+            return None
+        definition = context["definition"]
+        for field in definition.get("Fields", []):
+            if not isinstance(field, dict) or str(field.get("Name", "")).casefold() != name.casefold():
+                continue
+            path = str(field.get("Path", ""))
+            values = self.evaluator._extract_values_by_path(context["item"], path) if path else []
+            return {
+                "name": str(field.get("Name", name)),
+                "path": path or "(iteration field without path)",
+                "values": values,
+                "iteration": str(definition.get("$$Id", "")),
+                "iteration_index": context["index"],
+            }
+        return None
+
     def _warn(self, message: str) -> None:
         if message not in self.warnings:
             self.warnings.append(message)
+
+    def _relationship_entries(self, kind: str, parent: str, child: str) -> list[dict[str, Any]]:
+        entries = self._relationship_conditions[kind].get((parent.casefold(), child.casefold()), [])
+        selected_document_entries = [
+            entry for entry in entries
+            if entry["document"].casefold() == self.document_name.casefold()
+        ]
+        return selected_document_entries or entries
+
+    def _relationship_condition(self, kind: str, parent: str, child: str) -> tuple[dict[str, Any] | None, str]:
+        entries = self._relationship_entries(kind, parent, child)
+        label = f"{parent} -> {child}"
+        if not entries:
+            return None, f"No Assembly Template {kind} condition found for {label}"
+
+        conditions = {entry["condition"] for entry in entries}
+        if len(conditions) != 1:
+            sources = ", ".join(sorted({entry["document"] for entry in entries}))
+            return None, f"Conflicting Assembly Template {kind} conditions for {label} ({sources})"
+
+        condition = next(iter(conditions))
+        if not condition:
+            return None, f"Assembly Template {kind} condition is empty for {label}"
+
+        expression = self.evaluator._extract_condition_body(condition)
+        check = self._condition(expression)
+        evaluation_warnings: list[str] = []
+        check["passed"] = self.evaluator._evaluate_document_condition(
+            condition,
+            self.payload,
+            warnings=evaluation_warnings,
+        )
+        for warning in evaluation_warnings:
+            self._warn(warning)
+        check.update({
+            "kind": "condition",
+            "relationship": kind,
+            "condition": condition,
+            "sources": sorted({entry["document"] for entry in entries}),
+        })
+        return check, ""
+
+    def _relationship_iteration(self, parent: str, child: str) -> dict[str, Any] | None:
+        entries = self._relationship_entries("content", parent, child)
+        iterations = [entry["iteration"] for entry in entries if isinstance(entry.get("iteration"), dict)]
+        if not iterations:
+            return None
+        unique = {json.dumps(iteration, sort_keys=True) for iteration in iterations}
+        if len(unique) != 1:
+            sources = ", ".join(sorted({entry["document"] for entry in entries}))
+            self._warn(f"Conflicting Assembly Template iterations for {parent} -> {child} ({sources})")
+            return None
+        return iterations[0]
 
     def _operand(self, token: str) -> tuple[list[Any], dict[str, Any] | None, bool]:
         token = token.strip()
@@ -234,7 +355,16 @@ class LayoutResolver:
         if negated is not None:
             child = self._condition(negated)
             return {"expression": expression, "passed": None if child["passed"] is None else not child["passed"], "parts": [child]}
+        not_empty = re.fullmatch(r"(.+?)\s+not\s+empty", expr, re.IGNORECASE | re.DOTALL)
         empty = re.fullmatch(r"(.+?)\s+empty\s+(true|false)", expr, re.IGNORECASE | re.DOTALL)
+        if not_empty:
+            values, field, unknown = self._operand(not_empty.group(1))
+            is_empty = not any(value is not None and value != "" and value != [] and value != {} for value in values)
+            return {
+                "expression": expression,
+                "passed": None if unknown else not is_empty,
+                "operands": [field] if field else [],
+            }
         if empty:
             values, field, unknown = self._operand(empty.group(1))
             is_empty = not any(value is not None and value != "" and value != [] and value != {} for value in values)
@@ -277,7 +407,11 @@ class LayoutResolver:
                 return match.start(), match.end()
         raise ValueError(f"Unclosed comms-{kind} tag")
 
-    def _markup(self, markup: str) -> tuple[list[dict[str, Any]], str]:
+    def _markup(
+        self,
+        markup: str,
+        iteration_context: dict[str, Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], str]:
         children: list[dict[str, Any]] = []
         output: list[str] = []
         cursor = 0
@@ -287,9 +421,18 @@ class LayoutResolver:
             inner_end, tag_end = self._tag_end(markup, kind, match.start())
             inner = markup[match.end():inner_end]
             if kind == "loop":
-                self._warn("Content loop requires iteration context and is not resolved in this first cut")
-                children.append({"kind": "loop", "passed": None, "warning": "Iteration context not implemented"})
-                output.append("[unresolved loop]")
+                data_match = re.search(r"\$Data(\{[^}]*\})", inner, re.DOTALL)
+                try:
+                    data = json.loads(data_match.group(1)) if data_match else {}
+                except json.JSONDecodeError:
+                    data = {}
+                loop_name = str(data.get("Id", ""))
+                expected = str(iteration_context["definition"].get("$$Id", "")) if iteration_context else ""
+                if iteration_context is None or (loop_name and expected and loop_name.casefold() != expected.casefold()):
+                    warning = "Iteration context not found" if iteration_context is None else f"Iteration marker {loop_name!r} does not match {expected!r}"
+                    self._warn(warning)
+                    children.append({"kind": "loop", "name": loop_name, "passed": None, "warning": warning})
+                    output.append("[unresolved loop]")
             elif kind == "data":
                 data_match = re.search(r"\$Data(\{[^}]*\})", inner, re.DOTALL)
                 try:
@@ -297,7 +440,9 @@ class LayoutResolver:
                 except json.JSONDecodeError:
                     data = {}
                 field_name = str(data.get("Id", ""))
-                field = self._field(field_name) if field_name else {"name": "", "path": "(invalid)", "values": [], "unknown": True}
+                field = self._iteration_field(field_name, iteration_context)
+                if field is None:
+                    field = self._field(field_name) if field_name else {"name": "", "path": "(invalid)", "values": [], "unknown": True}
                 value = _display(field["values"])
                 if data.get("BarcodeType"):
                     value = f"[{data['BarcodeType']} barcode: {value}]" if value else "[barcode: no mapped value]"
@@ -334,14 +479,14 @@ class LayoutResolver:
                             if branch["rendered"]:
                                 output.append("\n" + branch["rendered"] + "\n")
                     elif check["passed"] is True:
-                        branch["children"], branch["rendered"] = self._markup(target)
+                        branch["children"], branch["rendered"] = self._markup(target, iteration_context)
                         output.append(branch["rendered"])
                     children.append(branch)
             cursor = tag_end
         output.append(self._plain(markup[cursor:]))
         return children, "".join(output)
 
-    def _content(self, name: str) -> dict[str, Any]:
+    def _content(self, name: str, iteration: dict[str, Any] | None = None) -> dict[str, Any]:
         node: dict[str, Any] = {"kind": "content", "name": name, "passed": True, "children": [], "rendered": ""}
         if name in self._content_stack:
             node["passed"] = None
@@ -354,15 +499,44 @@ class LayoutResolver:
             master = self._read_json(master_path)
             version = self._active_version(master, "CommunicationContentMasterVersions", "CommunicationContentVersionConfigRec", self.effective_date)
             version_name = str(version.get("CommunicationContentVersionConfigInfo", {}).get("ShortName", ""))
-            node.update({"version": version_name, "source": str(master_path)})
+            content_type = str(
+                master.get("CommunicationContentConfigRec", {})
+                .get("CommunicationContentConfigInfo", {})
+                .get("ContentType", "")
+            )
+            node.update({"version": version_name, "source": str(master_path), "content_type": content_type})
             version_folder = folder / "versions" / version_name
+            version_items = (
+                version.get("CommunicationContentVersionConfigInfo", {})
+                .get("CommunicationContentVersionConfigData", {})
+                .get("Items", [])
+            )
             blob_ids = [
                 str(item.get("ContentData", {}).get("FileId", ""))
-                for item in version.get("CommunicationContentVersionConfigInfo", {}).get("CommunicationContentVersionConfigData", {}).get("Items", [])
+                for item in version_items
             ]
             blobs = [version_folder / f"{blob_id}.blob" for blob_id in blob_ids if blob_id]
             if not blobs:
                 blobs = sorted(version_folder.glob("*.blob"))
+            if content_type.casefold() == "image":
+                assets = []
+                for item_index, item in enumerate(version_items):
+                    content_data = item.get("ContentData", {}) if isinstance(item, dict) else {}
+                    image_data = item.get("CommunicationContentVersionConfigImageData", {}) if isinstance(item, dict) else {}
+                    file_name = str(content_data.get("FileName", ""))
+                    blob_path = blobs[item_index] if item_index < len(blobs) else None
+                    assets.append({
+                        "file_name": file_name,
+                        "blob": str(blob_path) if blob_path and blob_path.is_file() else "",
+                        "format": str(image_data.get("ImageFormat", "")),
+                        "resolution_dpi": image_data.get("ResolutionDPI"),
+                        "width_2400dpi": image_data.get("Width2400DPI"),
+                        "height_2400dpi": image_data.get("Height2400DPI"),
+                    })
+                node["assets"] = assets
+                labels = [asset["file_name"] for asset in assets if asset["file_name"]]
+                node["rendered"] = "\n".join(f"[image: {label}]" for label in labels) or f"[image: {name}]"
+                return node
             self._content_stack.append(name)
             try:
                 for blob_path in blobs:
@@ -370,8 +544,35 @@ class LayoutResolver:
                     unsupported = sorted(set(re.findall(r"<comms-(?!cond\b|data\b|loop\b|transform\b)([\w-]+)", markup, flags=re.IGNORECASE)))
                     for tag in unsupported:
                         self._warn(f"Unsupported comms-{tag} markup in {name}")
-                    branches, rendered = self._markup(markup)
-                    node["children"].extend(branches)
+                    if iteration is None:
+                        branches, rendered = self._markup(markup)
+                        node["children"].extend(branches)
+                    else:
+                        iteration_path = str(iteration.get("Path", ""))
+                        items = self.evaluator._extract_values_by_path(self.payload, iteration_path) if iteration_path else []
+                        loop_node: dict[str, Any] = {
+                            "kind": "loop",
+                            "name": str(iteration.get("$$Id", "")),
+                            "path": iteration_path,
+                            "passed": bool(items),
+                            "count": len(items),
+                            "children": [],
+                        }
+                        rendered_rows: list[str] = []
+                        for item_index, item in enumerate(items, start=1):
+                            context = {"definition": iteration, "item": item, "index": item_index}
+                            branches, row_rendered = self._markup(markup, context)
+                            loop_node["children"].append({
+                                "kind": "iteration",
+                                "name": f"row {item_index}",
+                                "passed": True,
+                                "children": branches,
+                                "rendered": _clean_text(row_rendered),
+                            })
+                            if row_rendered:
+                                rendered_rows.append(row_rendered)
+                        node["children"].append(loop_node)
+                        rendered = "\n".join(rendered_rows)
                     node["rendered"] = _clean_text("\n".join(filter(None, [node["rendered"], rendered])))
                     node.setdefault("blobs", []).append(str(blob_path))
             finally:
@@ -408,12 +609,29 @@ class LayoutResolver:
             rel = item.get("CommunicationLayoutConfigCommunicationContentConfigRelRec", {}).get("CommunicationLayoutConfigCommunicationContentConfigRelInfo", {})
             relationships.append((int(rel.get("ContentRelIndex") or 0), {"kind": "content", "name": _label(item), "area": str(rel.get("StyleAreaName", "")), "always": rel.get("ContentAlwaysTriggerInd")}))
         for index, child in sorted(relationships, key=lambda pair: pair[0]):
+            iteration = self._relationship_iteration(name, child["name"]) if child["kind"] == "content" else None
             if child["always"] is False:
-                self._warn(f"{name} -> {child['name']} has an unmodeled relationship trigger")
-                node["children"].append({**child, "index": index, "passed": None, "warning": "Relationship trigger not modeled"})
-                continue
-            resolved = self._layout(child["name"], child["uuid"], (*trail, uuid)) if child["kind"] == "layout" else self._content(child["name"])
+                trigger, warning = self._relationship_condition(child["kind"], name, child["name"])
+                if trigger is None:
+                    self._warn(warning)
+                    node["children"].append({**child, "index": index, "passed": None, "warning": warning})
+                    continue
+                if trigger["passed"] is not True:
+                    node["children"].append({
+                        **child,
+                        "index": index,
+                        "passed": trigger["passed"],
+                        "children": [trigger],
+                    })
+                    continue
+            resolved = (
+                self._layout(child["name"], child["uuid"], (*trail, uuid))
+                if child["kind"] == "layout"
+                else self._content(child["name"], iteration=iteration)
+            )
             resolved.update({"index": index, "area": child["area"]})
+            if child["always"] is False:
+                resolved["children"].insert(0, trigger)
             node["children"].append(resolved)
         return node
 

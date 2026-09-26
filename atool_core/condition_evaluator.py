@@ -104,7 +104,20 @@ class ConditionEvaluator:
                     warnings=warnings,
                 )
 
+            not_empty_match = re.match(r"^(.*?)\s+not\s+empty\s*$", expr, flags=re.IGNORECASE)
             empty_match = re.match(r"^(.*?)\s+empty\s+(true|false)\s*$", expr, flags=re.IGNORECASE)
+            if not_empty_match:
+                path = not_empty_match.group(1).strip()
+                parse_issue = self._condition_path_comms_filter_literal_parse_issue(path)
+                if parse_issue and warnings is not None:
+                    self._append_condition_warning(warnings, parse_issue)
+                return self._evaluate_empty_check(
+                    data_payload,
+                    path,
+                    False,
+                    comms_compatible=comms_compatible,
+                    warnings=warnings,
+                )
             if empty_match:
                 path = empty_match.group(1).strip()
                 expect_empty = empty_match.group(2).lower() == "true"

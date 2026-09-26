@@ -24,7 +24,13 @@ def main() -> int:
     parser.add_argument("--data", type=Path, required=True, help="Input JSON")
     parser.add_argument("--effective-date", help="YYYY-MM-DD, default today")
     parser.add_argument("--at-version", help="Assembly Template version folder, required if ambiguous")
-    parser.add_argument("--system-field", action="append", default=[], metavar="NAME=VALUE", help="Override a generated field, e.g. PackagePageNum=2")
+    parser.add_argument(
+        "--system-field",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Override a generated field, e.g. PackagePageNum=2 or GRIDPAGENUMBER=2",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--output", type=Path, help="Write the report to a file")
     args = parser.parse_args()

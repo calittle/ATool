@@ -356,9 +356,10 @@ On save, ATool:
 With a package open, a data file mapped, and a document selected, choose
 `Data -> Resolve...`. The dialog uses the configured Comms Cache Directory from
 User Settings, or you can browse to another cache. Choose an effective date,
-set `PackagePageNum` (default `1`), and pick one of the cached document's root
-layouts. Click **Resolve** to see the selected and suppressed content and mapped
-field values. **Save...** exports the text trace or JSON evidence.
+set `PackagePageNum` and `GRIDPAGENUMBER` (both default to `1`), and pick one of
+the cached document's root layouts. Click **Resolve** to see the selected and
+suppressed content and mapped field values. **Save...** exports the text trace
+or JSON evidence.
 
 The resolver uses the open Assembly Template, including unsaved field and
 document condition edits, plus active document and content versions from the
@@ -376,13 +377,17 @@ python3 tools/resolve_layout.py \
   --effective-date 2026-09-25
 ```
 
-`PackagePageNum` defaults to `1`. Override it with
-`--system-field PackagePageNum=2`. Use `--format json` for a structured evidence
-tree, and `--output /path/to/report.txt` to save the result. If the cache has
-multiple Assembly Template versions, select one with `--at-version`.
+`PackagePageNum` and `GRIDPAGENUMBER` default to `1`. Override them with
+`--system-field PackagePageNum=2` and `--system-field GRIDPAGENUMBER=2`. Use
+`--format json` for a structured evidence tree, and
+`--output /path/to/report.txt` to save the result. If the cache has multiple
+Assembly Template versions, select one with `--at-version`.
 
 This pass supports direct data fields, `concat` and `length` field paths,
-conditional text/content includes, and Comms' one-based `substring` transform.
-It marks loops, unsupported transforms, unknown fields, and uncertain
-relationship triggers in the report. The text is a content facsimile; page
-layout, fonts, and barcode drawing still require a Comms render.
+conditional text/content includes, package-wide Assembly Template conditions
+for non-always layout/content relationships, iterator paths and their row fields,
+`empty false`/`not empty` conditions, and Comms' one-based `substring` transform.
+It marks unsupported transforms, unknown fields, unresolved iterator markers,
+and cached relationships with missing or conflicting Assembly Template
+conditions in the report. The text is a content facsimile; page layout, fonts,
+and barcode drawing still require a Comms render.

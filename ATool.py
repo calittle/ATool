@@ -7748,11 +7748,12 @@ class AToolApp:
         frame = ttk.Frame(dialog, padding=14)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(6, weight=1)
+        frame.rowconfigure(7, weight=1)
 
         cache_var = tk.StringVar(value=self._get_occs_comms_cache_dir())
         date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
         page_var = tk.StringVar(value="1")
+        grid_page_var = tk.StringVar(value="1")
         layout_var = tk.StringVar(value="")
         status_var = tk.StringVar(value="")
         result_holder: dict[str, object] = {}
@@ -7787,9 +7788,11 @@ class AToolApp:
         ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(frame, text="PackagePageNum:").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         ttk.Entry(frame, textvariable=page_var, width=8).grid(row=3, column=1, sticky="w", pady=(0, 8))
-        ttk.Label(frame, text="Layout:").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frame, text="GRIDPAGENUMBER:").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frame, textvariable=grid_page_var, width=8).grid(row=4, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text="Layout:").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         layout_combo = ttk.Combobox(frame, textvariable=layout_var, state="normal")
-        layout_combo.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        layout_combo.grid(row=5, column=1, sticky="ew", pady=(0, 8))
 
         def _validated_date() -> str:
             value = date_var.get().strip()
@@ -7798,7 +7801,7 @@ class AToolApp:
                 raise ValueError("Effective date must be YYYY-MM-DD.")
             return value
 
-        def _make_resolver(page_number: int) -> LayoutResolver:
+        def _make_resolver(page_number: int, grid_page_number: int) -> LayoutResolver:
             cache_path = Path(cache_var.get().strip()).expanduser()
             if not cache_var.get().strip() or not cache_path.is_dir():
                 raise ValueError("Choose a valid Comms cache directory.")
@@ -7808,13 +7811,16 @@ class AToolApp:
                 document_name,
                 mapped_payload,
                 effective_date=_validated_date(),
-                system_fields={"PackagePageNum": page_number},
+                system_fields={
+                    "PackagePageNum": page_number,
+                    "GRIDPAGENUMBER": grid_page_number,
+                },
                 assembly_template=assembly_template,
             )
 
         def _refresh_layouts(_event: tk.Event | None = None) -> None:
             try:
-                version, names = _make_resolver(1).available_layouts()
+                version, names = _make_resolver(1, 1).available_layouts()
             except (OSError, ValueError, StopIteration) as error:
                 layout_combo.configure(values=(), state="normal")
                 status_var.set(f"Layout choices unavailable: {error}")
@@ -7824,15 +7830,15 @@ class AToolApp:
             layout_var.set(previous if previous in names else names[0] if names else "")
             status_var.set(f"{len(names)} layout(s) from cached {document_name} version {version}.")
 
-        ttk.Button(frame, text="Refresh", command=_refresh_layouts).grid(row=4, column=2, padx=(8, 0), pady=(0, 8))
+        ttk.Button(frame, text="Refresh", command=_refresh_layouts).grid(row=5, column=2, padx=(8, 0), pady=(0, 8))
         date_entry.bind("<FocusOut>", _refresh_layouts)
         date_entry.bind("<Return>", _refresh_layouts)
         cache_entry.bind("<FocusOut>", _refresh_layouts)
         ttk.Label(frame, textvariable=status_var, wraplength=850).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(0, 8)
+            row=6, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
         result_frame = ttk.Frame(frame)
-        result_frame.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        result_frame.grid(row=7, column=0, columnspan=3, sticky="nsew")
         result_frame.rowconfigure(0, weight=1)
         result_frame.columnconfigure(0, weight=1)
         result_text = tk.Text(result_frame, wrap=tk.NONE, font="TkFixedFont", state=tk.DISABLED)
@@ -7843,7 +7849,7 @@ class AToolApp:
         x_scroll.grid(row=1, column=0, sticky="ew")
         result_text.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
         button_row = ttk.Frame(frame)
-        button_row.grid(row=7, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        button_row.grid(row=8, column=0, columnspan=3, sticky="e", pady=(12, 0))
 
         def _show_result(result: dict[str, object] | None, report: str, error: str) -> None:
             if not dialog.winfo_exists():
