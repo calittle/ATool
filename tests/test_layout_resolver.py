@@ -94,6 +94,7 @@ class LayoutResolverTests(unittest.TestCase):
             '"}</comms-cond></p>'
             '<p><comms-cond>$Cond{"Condition":"Address empty false","Content":"address-content"}</comms-cond></p>'
             '<p><comms-cond>$Cond{"Condition":"PackagePageNum == 1","Text":"page one"}</comms-cond></p>'
+            '<p><comms-cond>$Cond{"Condition":"PackagePageCount == 1","Text":"one page total"}</comms-cond></p>'
             '<p><comms-cond>$Cond{"Condition":"GRIDPAGENUMBER == 1","Text":"grid page one"}</comms-cond></p>'
             '<p><comms-cond>$Cond{"Condition":"Name not empty","Text":"name present"}</comms-cond></p>'
         )
@@ -113,6 +114,7 @@ class LayoutResolverTests(unittest.TestCase):
         self.assertIn("ABC\n", report)
         self.assertIn("Main St", report)
         self.assertIn("page one", report)
+        self.assertIn("one page total", report)
         self.assertIn("grid page one", report)
         self.assertIn("name present", report)
         self.assertEqual([], result["warnings"])
@@ -124,13 +126,14 @@ class LayoutResolverTests(unittest.TestCase):
             "Doc",
             {"show": True, "name": "ABCDE"},
             effective_date="2026-09-25",
-            system_fields={"PackagePageNum": 2, "GRIDPAGENUMBER": 2},
+            system_fields={"PackagePageCount": 2, "PackagePageNum": 2, "GRIDPAGENUMBER": 2},
         ).resolve("header")
         content = result["layout"]["children"][0]
         self.assertEqual("ABC\nname present", content["rendered"])
         self.assertFalse(content["children"][1]["passed"])
         self.assertFalse(content["children"][2]["passed"])
         self.assertFalse(content["children"][3]["passed"])
+        self.assertFalse(content["children"][4]["passed"])
 
     def test_document_gate_suppresses_layout(self) -> None:
         result = LayoutResolver(self.cache, "Pkg", "Doc", {"show": False}, effective_date="2026-09-25").resolve("header")
@@ -350,7 +353,7 @@ class LayoutResolverTests(unittest.TestCase):
         )
         self.assertEqual(("1.0", ["header"]), resolver.available_layouts())
         self.assertEqual(
-            "ABC\npage one\ngrid page one\nname present",
+            "ABC\npage one\none page total\ngrid page one\nname present",
             resolver.resolve("header")["layout"]["children"][0]["rendered"],
         )
 

@@ -1051,20 +1051,31 @@ class AToolApp:
 
         self.documents_view_toggle_button = ttk.Button(
             controls,
-            text="View",
+            text="📋",
+            width=3,
             command=self._toggle_document_view_mode,
         )
-        self._attach_tooltip(self.documents_view_toggle_button, "Toggle document view mode (Flat/Hierarchy).")
+        self._attach_tooltip(self.documents_view_toggle_button, "Switch between hierarchy and flat document views.")
 
         self.view_model_button = ttk.Button(
             controls,
-            text="View Model",
+            text="Model",
             command=self._view_selected_document_model,
         )
         self.view_model_button.bind("<Shift-Button-1>", self._regenerate_and_view_selected_document_model)
         self._attach_tooltip(
             self.view_model_button,
             "Open the selected document's generated Comms model in your default browser. Shift-click to regenerate first.",
+        )
+
+        self.resolve_document_button = ttk.Button(
+            controls,
+            text="Resolve",
+            command=self.resolve_selected_layout,
+        )
+        self._attach_tooltip(
+            self.resolve_document_button,
+            "Resolve a layout for the selected document using mapped data and the cached Comms resources.",
         )
 
         self.clear_mapping_button = ttk.Button(
@@ -1087,14 +1098,14 @@ class AToolApp:
 
         self.add_document_button = ttk.Button(
             controls,
-            text="+Document",
+            text="➕ 📄",
             command=self.add_document,
         )
         self._attach_tooltip(self.add_document_button, "Add a document to the assembly template.")
 
         self.remove_document_button = ttk.Button(
             controls,
-            text="-Document",
+            text="➖ 📄",
             command=self.remove_selected_document,
         )
         self._attach_tooltip(
@@ -1105,6 +1116,7 @@ class AToolApp:
         self._document_toolbar_buttons = [
             self.documents_view_toggle_button,
             self.view_model_button,
+            self.resolve_document_button,
             self.clear_mapping_button,
             self.document_mapping_filter_button,
             self.add_document_button,
@@ -1154,50 +1166,60 @@ class AToolApp:
         controls.grid(row=0, column=1, sticky="e")
         self.add_layout_button = ttk.Button(
             controls,
-            text="+Layout",
+            text="➕ 🧩",
             command=self.add_layout_to_selected_document,
         )
         self.add_layout_button.grid(row=0, column=0, padx=(0, 2))
         self._attach_tooltip(self.add_layout_button, "Add a layout to the selected document.")
         self.add_content_button = ttk.Button(
             controls,
-            text="+Content",
+            text="➕ 📝",
             command=self.add_content_to_selected_layout,
         )
         self.add_content_button.grid(row=0, column=1, padx=(0, 2))
+        self._attach_tooltip(self.add_content_button, "Add content to the selected layout.")
         self.move_layout_up_button = ttk.Button(
             controls,
-            text="Up",
+            text="⬆️",
+            width=3,
             command=lambda: self.move_selected_layout_item(-1),
         )
         self.move_layout_up_button.grid(row=0, column=2, padx=(0, 2))
+        self._attach_tooltip(self.move_layout_up_button, "Move the selected layout or content item up.")
         self.move_layout_down_button = ttk.Button(
             controls,
-            text="Down",
+            text="⬇️",
+            width=3,
             command=lambda: self.move_selected_layout_item(1),
         )
         self.move_layout_down_button.grid(row=0, column=3, padx=(0, 2))
+        self._attach_tooltip(self.move_layout_down_button, "Move the selected layout or content item down.")
         self.add_iteration_button = ttk.Button(
             controls,
-            text="+Iteration",
+            text="➕ 🔁",
             command=self.add_iteration_to_selected_content,
         )
         self.add_iteration_button.grid(row=0, column=4, padx=(0, 2))
+        self._attach_tooltip(self.add_iteration_button, "Add an iteration to the selected content.")
         self.add_iteration_field_button = ttk.Button(
             controls,
-            text="+Field",
+            text="➕ 🏷️",
             command=self.add_field_to_selected_iteration,
         )
         self.add_iteration_field_button.grid(row=0, column=5, padx=(0, 2))
+        self._attach_tooltip(self.add_iteration_field_button, "Add a field to the selected iteration.")
         self.remove_layout_item_button = ttk.Button(
             controls,
-            text="Remove",
+            text="➖",
+            width=3,
             command=self.remove_selected_layout_item,
         )
         self.remove_layout_item_button.grid(row=0, column=6, padx=(0, 2))
+        self._attach_tooltip(self.remove_layout_item_button, "Remove the selected layout item.")
         self.toggle_layout_tree_button = ttk.Button(
             controls,
-            text="Expand",
+            text="📂",
+            width=3,
             command=self.toggle_layout_tree_expansion,
         )
         self.toggle_layout_tree_button.grid(row=0, column=7)
@@ -7490,8 +7512,8 @@ class AToolApp:
 
     def _update_document_view_buttons(self) -> None:
         if hasattr(self, "documents_view_toggle_button"):
-            next_mode = "Flat" if self.document_view_mode == "hierarchy" else "Hierarchy"
-            self.documents_view_toggle_button.config(text=f"View ({next_mode})")
+            next_icon = "📋" if self.document_view_mode == "hierarchy" else "🌳"
+            self.documents_view_toggle_button.config(text=next_icon)
         self._schedule_documents_controls_layout()
 
     def _on_documents_controls_configure(self, _event: tk.Event) -> None:
@@ -7711,6 +7733,8 @@ class AToolApp:
             self.add_layout_button.config(state=selected_state)
         if hasattr(self, "view_model_button"):
             self.view_model_button.config(state=selected_state)
+        if hasattr(self, "resolve_document_button"):
+            self.resolve_document_button.config(state=selected_state)
         self._update_model_menu_states(selected_doc)
         self._update_data_menu_states()
 
@@ -8058,7 +8082,7 @@ class AToolApp:
             try:
                 self._open_model_inspector(inspector_path)
             except OSError as error:
-                messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+                messagebox.showerror("Model", f"Could not open the inspector file.\n\nDetails: {error}")
             return
 
         comms_cache_text = self._get_occs_comms_cache_dir()
@@ -8101,7 +8125,7 @@ class AToolApp:
                 try:
                     self._open_model_inspector(inspector_path)
                 except OSError as error:
-                    messagebox.showerror("View Model", f"Could not open the inspector file.\n\nDetails: {error}")
+                    messagebox.showerror("Model", f"Could not open the inspector file.\n\nDetails: {error}")
             else:
                 self._show_temporary_status(f"Generated model for {document_name}", duration_ms=5000)
 
@@ -8134,10 +8158,17 @@ class AToolApp:
         if self._active_layout_node_id:
             details = self._layout_node_details.get(self._active_layout_node_id, {})
             node_kind = str(details.get("node_kind", ""))
-        add_content_state = tk.NORMAL if node_kind == "layout" else tk.DISABLED
+        layout_target = self._find_layout_ancestor_details("layout")
+        content_target = self._find_layout_ancestor_details("content")
+        iteration_target = self._find_layout_ancestor_details("iteration")
+        content_ref = content_target.get("source_ref") if content_target else None
+        content_accepts_iteration = (
+            isinstance(content_ref, dict) and self._extract_iteration(content_ref) is None
+        )
+        add_content_state = tk.NORMAL if layout_target is not None else tk.DISABLED
         move_state = tk.NORMAL if node_kind in {"layout", "content"} else tk.DISABLED
-        add_iteration_state = tk.NORMAL if node_kind == "content" else tk.DISABLED
-        add_field_state = tk.NORMAL if node_kind == "iteration" else tk.DISABLED
+        add_iteration_state = tk.NORMAL if content_accepts_iteration else tk.DISABLED
+        add_field_state = tk.NORMAL if iteration_target is not None else tk.DISABLED
         remove_state = tk.NORMAL if node_kind in {"layout", "content", "iteration", "field", "condition"} else tk.DISABLED
         if hasattr(self, "add_content_button"):
             self.add_content_button.config(state=add_content_state)
@@ -8153,7 +8184,7 @@ class AToolApp:
             self.remove_layout_item_button.config(state=remove_state)
         if hasattr(self, "toggle_layout_tree_button"):
             has_expandable_nodes = self._layout_tree_has_expandable_nodes()
-            toggle_text = "Expand" if self._layout_tree_has_collapsed_nodes() else "Collapse"
+            toggle_text = "📂" if self._layout_tree_has_collapsed_nodes() else "📁"
             toggle_state = tk.NORMAL if has_expandable_nodes else tk.DISABLED
             self.toggle_layout_tree_button.config(text=toggle_text, state=toggle_state)
         if hasattr(self, "layout_condition_tool_button"):
@@ -10329,9 +10360,18 @@ class AToolApp:
         return self._find_iteration_details_for_node(node_id) if isinstance(node_id, str) else None
 
     def _find_iteration_details_for_node(self, node_id: str) -> dict[str, object] | None:
+        return self._find_layout_ancestor_details("iteration", node_id)
+
+    def _find_layout_ancestor_details(
+        self,
+        target_kind: str,
+        node_id: str | None = None,
+    ) -> dict[str, object] | None:
+        """Find the nearest selected-tree ancestor that owns an item type."""
+        node_id = node_id or self._active_layout_node_id
         while node_id:
             details = self._layout_node_details.get(node_id)
-            if isinstance(details, dict) and str(details.get("node_kind", "")) == "iteration":
+            if isinstance(details, dict) and str(details.get("node_kind", "")) == target_kind:
                 return details
             node_id = self.layouts_tree.parent(node_id)
         return None
@@ -11765,8 +11805,8 @@ class AToolApp:
         return index
 
     def add_content_to_selected_layout(self) -> None:
-        details = self._layout_node_details.get(self._active_layout_node_id or "")
-        if not details or str(details.get("node_kind", "")) != "layout":
+        details = self._find_layout_ancestor_details("layout")
+        if details is None:
             return
         layout = details.get("source_ref")
         if not isinstance(layout, dict):
@@ -11977,31 +12017,32 @@ class AToolApp:
         self.move_selected_layout_item(direction)
 
     def add_iteration_to_selected_content(self) -> None:
-        details = self._layout_node_details.get(self._active_layout_node_id or "")
-        if not details or str(details.get("node_kind", "")) != "content":
+        details = self._find_layout_ancestor_details("content")
+        if details is None:
             return
         content = details.get("source_ref")
         if not isinstance(content, dict):
             return
-        iteration = content.get("Iteration")
-        if not isinstance(iteration, dict):
-            iteration = {
-                "$$Id": "NewIteration1",
-                "Descr": "",
-                "Condition": "",
-                "Path": "$",
-                "Type": "Array",
-                "Fields": [],
-            }
-            content["Iteration"] = iteration
+        iteration = self._extract_iteration(content)
+        if iteration is not None:
+            return
+        iteration = {
+            "$$Id": "NewIteration1",
+            "Descr": "",
+            "Condition": "",
+            "Path": "$",
+            "Type": "Array",
+            "Fields": [],
+        }
+        content["Iteration"] = iteration
         self._touch_selected_document_updated()
         self._set_dirty(True)
         self._refresh_layouts_for_active_document()
         self._select_layout_node_for_source(iteration, preferred_kind="iteration")
 
     def add_field_to_selected_iteration(self) -> None:
-        details = self._layout_node_details.get(self._active_layout_node_id or "")
-        if not details or str(details.get("node_kind", "")) != "iteration":
+        details = self._find_layout_ancestor_details("iteration")
+        if details is None:
             return
         iteration = details.get("source_ref")
         if not isinstance(iteration, dict):

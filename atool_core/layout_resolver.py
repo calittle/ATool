@@ -60,6 +60,7 @@ class LayoutResolver:
         self.payload = payload
         self.effective_date = effective_date or date.today().isoformat()
         self.system_fields = {
+            "PackagePageCount": 1,
             "PackagePageNum": 1,
             "GRIDPAGENUMBER": 1,
             **(system_fields or {}),
