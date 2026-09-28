@@ -424,6 +424,10 @@ class AToolApp:
         self._mapping_job_id = 0
         self.is_dirty = False
         self.package_bundle_dirty = False
+        self._undo_command: dict[str, object] | None = None
+        self._redo_command: dict[str, object] | None = None
+        self._field_edit_undo_before: list[dict[str, object]] | None = None
+        self._field_edit_undo_dirty_before = False
         self._updating_field_form = False
         self._active_field_node_id: str | None = None
         self._updating_document_form = False
@@ -627,6 +631,12 @@ class AToolApp:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
+        edit_menu = tk.Menu(menu_bar, tearoff=0)
+        undo_accelerator = "Cmd+Z" if self._is_macos() else "Ctrl+Z"
+        redo_accelerator = "Shift+Cmd+Z" if self._is_macos() else "Ctrl+Shift+Z"
+        edit_menu.add_command(label="Undo", accelerator=undo_accelerator, command=self.undo_last_change)
+        edit_menu.add_command(label="Redo", accelerator=redo_accelerator, command=self.redo_last_change)
+
         data_menu = tk.Menu(menu_bar, tearoff=0)
         map_accelerator = "Cmd+M" if self._is_macos() else "Alt+M"
         remap_accelerator = "Alt+Cmd+M" if self._is_macos() else "Alt+Ctrl+M"
@@ -805,6 +815,7 @@ class AToolApp:
         window_menu.add_command(label="Arrange", command=self._arrange_main_windows)
 
         menu_bar.add_cascade(label="File", menu=file_menu)
+        menu_bar.add_cascade(label="Edit", menu=edit_menu)
         menu_bar.add_cascade(label="Package", menu=package_menu)
         menu_bar.add_cascade(label="Resources", menu=resources_menu)
         menu_bar.add_cascade(label="Model", menu=model_menu)
@@ -12135,6 +12146,8 @@ class AToolApp:
         self._update_field_context_buttons()
 
     def _set_field_details(self, field: dict[str, object]) -> None:
+        self._field_edit_undo_before = None
+        self._capture_field_undo_baseline()
         self._updating_field_form = True
         self.field_name_text.set(str(field.get("name", "-")))
         self.edit_field_name_var.set(str(field.get("name", "")))
@@ -12159,6 +12172,7 @@ class AToolApp:
         self._updating_field_form = False
 
     def _clear_field_details(self) -> None:
+        self._field_edit_undo_before = None
         self._updating_field_form = True
         self.field_name_text.set("(no field selected)")
         self.field_mandatory_text.set("-")
@@ -12740,7 +12754,12 @@ class AToolApp:
             )
         self._sync_field_to_payload(field)
         self._set_dirty(True)
+        self._record_field_undo("field edit")
+        undo_baseline = self._field_edit_undo_before
+        undo_dirty_before = self._field_edit_undo_dirty_before
         self._render_fields_tree(selected_field=field)
+        self._field_edit_undo_before = undo_baseline
+        self._field_edit_undo_dirty_before = undo_dirty_before
         return True
 
     def _sync_field_to_payload(self, field: dict[str, object]) -> None:
@@ -12876,6 +12895,9 @@ class AToolApp:
             self.root.bind_all("<Command-Shift-O>", self._open_session_event)
             self.root.bind_all("<Command-s>", self._save_event)
             self.root.bind_all("<Command-S>", self._save_event)
+            self.root.bind_all("<Command-z>", self._undo_event)
+            self.root.bind_all("<Command-Z>", self._undo_event)
+            self.root.bind_all("<Command-Shift-Z>", self._redo_event)
             self.root.bind_all("<Command-m>", self._map_event)
             self.root.bind_all("<Command-M>", self._map_event)
             self.root.bind_all("<Command-Option-m>", self._remap_event)
@@ -12897,6 +12919,9 @@ class AToolApp:
             self.root.bind_all("<Control-Shift-O>", self._open_session_event)
             self.root.bind_all("<Alt-s>", self._save_event)
             self.root.bind_all("<Alt-S>", self._save_event)
+            self.root.bind_all("<Control-z>", self._undo_event)
+            self.root.bind_all("<Control-Z>", self._undo_event)
+            self.root.bind_all("<Control-Shift-Z>", self._redo_event)
             self.root.bind_all("<Alt-m>", self._map_event)
             self.root.bind_all("<Alt-M>", self._map_event)
             self.root.bind_all("<Control-Alt-m>", self._remap_event)
@@ -12957,6 +12982,14 @@ class AToolApp:
 
     def _save_event(self, event: tk.Event) -> str:
         self.save_assembly_template()
+        return "break"
+
+    def _undo_event(self, _event: tk.Event) -> str:
+        self.undo_last_change()
+        return "break"
+
+    def _redo_event(self, _event: tk.Event) -> str:
+        self.redo_last_change()
         return "break"
 
     def _map_event(self, event: tk.Event) -> str:
@@ -13177,6 +13210,9 @@ class AToolApp:
         self._loaded_documents = []
         self._saved_document_snapshots = {}
         self._loaded_fields = []
+        self._undo_command = None
+        self._redo_command = None
+        self._field_edit_undo_before = None
         self._saved_field_snapshots = {}
         self._condition_library_entries = []
         self._active_condition_library_index = None
@@ -13870,7 +13906,7 @@ class AToolApp:
             dialog.destroy()
             self._run_occs_preview_command_async(
                 args,
-                f"Previewing package {package_name}...",
+                "Previewing...",
                 lambda result, selected_render_types=render_types, should_open=open_after_var.get(): self._on_occs_preview_complete(
                     result,
                     selected_render_types,
@@ -20594,6 +20630,9 @@ class AToolApp:
         self._loaded_documents = documents
         self._capture_saved_document_snapshots()
         self._loaded_fields = fields
+        self._undo_command = None
+        self._redo_command = None
+        self._field_edit_undo_before = None
         self._capture_saved_field_snapshots()
 
         self._render_documents_tree()
@@ -21528,7 +21567,7 @@ class AToolApp:
     def _format_occs_timed_status(self) -> str:
         started_at = self._occs_status_started_at
         elapsed_seconds = 0 if started_at is None else int(time.monotonic() - started_at)
-        return f"[{elapsed_seconds}s] {self._occs_status_message}"
+        return f"⏱️ {elapsed_seconds}s {self._occs_status_message}"
 
     def _refresh_occs_status_timer(self) -> None:
         if self._occs_status_started_at is None:
@@ -21776,6 +21815,86 @@ class AToolApp:
         if selected_field is not None:
             self._select_field_node_for_field(selected_field)
 
+    def _capture_field_undo_baseline(self) -> None:
+        if self._field_edit_undo_before is not None or not isinstance(self.current_payload, dict):
+            return
+        fields = self.current_payload.get("Fields")
+        if isinstance(fields, list):
+            self._field_edit_undo_before = copy.deepcopy(fields)
+            self._field_edit_undo_dirty_before = self.is_dirty
+
+    def _record_field_undo(self, label: str) -> None:
+        if self._field_edit_undo_before is None or not isinstance(self.current_payload, dict):
+            return
+        fields = self.current_payload.get("Fields")
+        if not isinstance(fields, list):
+            return
+        self._undo_command = {
+            "label": label,
+            "before": copy.deepcopy(self._field_edit_undo_before),
+            "after": copy.deepcopy(fields),
+            "dirty_before": self._field_edit_undo_dirty_before,
+        }
+        self._redo_command = None
+
+    def _restore_fields_undo_snapshot(self, fields: list[dict[str, object]], dirty: bool) -> None:
+        if not isinstance(self.current_payload, dict):
+            return
+        current_fields = self.current_payload.get("Fields")
+        if not isinstance(current_fields, list):
+            current_fields = []
+            self.current_payload["Fields"] = current_fields
+
+        # Preserve source-dict identity for fields that remain at the same
+        # position. _saved_field_snapshots is keyed by that identity, so
+        # replacing the whole list would incorrectly mark every field dirty.
+        for index, snapshot in enumerate(fields):
+            if index < len(current_fields) and isinstance(current_fields[index], dict):
+                current_fields[index].clear()
+                current_fields[index].update(copy.deepcopy(snapshot))
+            else:
+                current_fields.insert(index, copy.deepcopy(snapshot))
+        del current_fields[len(fields):]
+        self._loaded_fields = self._hydrate_fields_with_cached_paths(
+            self.current_package_name,
+            self._extract_fields(self.current_payload),
+        )
+        self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
+        self._field_edit_undo_before = None
+        self._set_dirty(dirty)
+        self._render_fields_tree()
+
+    def undo_last_change(self) -> None:
+        command = self._undo_command
+        if not isinstance(command, dict) or not isinstance(command.get("before"), list):
+            return
+        current_fields = self.current_payload.get("Fields") if isinstance(self.current_payload, dict) else None
+        if not isinstance(current_fields, list):
+            return
+        self._redo_command = {
+            "label": command.get("label", "Change"),
+            "before": copy.deepcopy(command["before"]),
+            "after": copy.deepcopy(current_fields),
+            "dirty_before": command.get("dirty_before", False),
+        }
+        self._restore_fields_undo_snapshot(command["before"], bool(command.get("dirty_before", False)))
+        self._undo_command = None
+        self._show_temporary_status(f"Undid {command.get('label', 'change')}")
+
+    def redo_last_change(self) -> None:
+        command = self._redo_command
+        if not isinstance(command, dict) or not isinstance(command.get("after"), list):
+            return
+        self._undo_command = {
+            "label": command.get("label", "Change"),
+            "before": copy.deepcopy(command.get("before", [])),
+            "after": copy.deepcopy(command["after"]),
+            "dirty_before": command.get("dirty_before", False),
+        }
+        self._restore_fields_undo_snapshot(command["after"], True)
+        self._redo_command = None
+        self._show_temporary_status(f"Redid {command.get('label', 'change')}")
+
     def _toggle_field_view(self) -> None:
         self.field_view_mode = "name" if self.field_view_mode == "path" else "path"
         self._render_fields_tree()
@@ -21784,6 +21903,8 @@ class AToolApp:
         if self.current_payload is None:
             messagebox.showinfo("Add Field", "Open an assembly template first.")
             return
+        self._field_edit_undo_before = None
+        self._capture_field_undo_baseline()
         top_fields = self.current_payload.get("Fields")
         if not isinstance(top_fields, list):
             top_fields = []
@@ -21826,6 +21947,7 @@ class AToolApp:
         self._loaded_fields.append(new_field)
         self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
         self._set_dirty(True)
+        self._record_field_undo("add field")
         self._show_mapped_fields_only = False
         if self.fields_filter_var.get():
             self.fields_filter_var.set("")
@@ -21851,6 +21973,9 @@ class AToolApp:
         ):
             return
 
+        self._field_edit_undo_before = None
+        self._capture_field_undo_baseline()
+
         source_index = next(
             (index for index, candidate in enumerate(source_fields) if candidate is source_field),
             -1,
@@ -21868,6 +21993,7 @@ class AToolApp:
 
         self.field_count_text.set(f"Fields: {len(self._loaded_fields)}")
         self._set_dirty(True)
+        self._record_field_undo("remove field")
         self._render_fields_tree(selected_field=next_field)
 
     def _update_view_toggle_label(self) -> None:

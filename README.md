@@ -205,6 +205,13 @@ Before closing, releasing a lock, quitting, or switching packages, ATool warns
 when the active edit copy differs from shared storage. This includes direct file
 edits that ATool did not make itself.
 
+## Undo And Redo
+
+`Edit -> Undo` (`Cmd+Z` on macOS; `Ctrl+Z` elsewhere) and `Redo`
+(`Shift+Cmd+Z` / `Ctrl+Shift+Z`) provide one-step, instant undo for field edits,
+field additions, and field removals. Undo operates only on the affected Fields
+list; it does not reload the package from disk.
+
 Use `Package -> Publish Package to Comms...` only from a shared `edit` session.
 Publishing pushes that edited package to Comms and retains the edit lock. It is
 an action, not a separate package mode.

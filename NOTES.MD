@@ -89,7 +89,7 @@ This release focuses on shared package edit flow, Comms publish behavior, Comms 
 - After selecting a Comms package, ATool now loads available package versions, sorts them newest/highest first, and preselects the top version before download.
 - Package menu shortcuts were added for Preview (`Cmd/Ctrl+P`), Update Shared Package (`Cmd/Ctrl+U`), and Publish Package to Comms (`Shift+Cmd/Ctrl+U`).
 - `File > Open Session` now reopens the last package and remaps the last JSON data file with `Shift+Cmd/Ctrl+O`.
-- Comms/OCCS requests now show a running elapsed timer in a dedicated status-bar operation segment, such as `[2s] Previewing package clp_bills...`, without hiding the open file/package summary.
+- Comms/OCCS requests now show a running elapsed timer in a dedicated status-bar operation segment, such as `⏱️ 2s Previewing...`, without hiding the open file/package summary.
 
 ## Documents And Layouts Panels
 
