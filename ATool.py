@@ -12162,6 +12162,14 @@ class AToolApp:
         mapped_values = field.get("mapped_values")
         if isinstance(mapped_values, list) and mapped_values:
             self.field_mapped_value_text.set(self._format_field_mapped_value(field, mapped_values))
+        elif (
+            self.current_data_payload is not None
+            and isinstance(mapped_values, list)
+            and self._field_uses_length_or_count(field)
+        ):
+            # A count/length expression with no matching values evaluates to
+            # zero, not an unmapped value.
+            self.field_mapped_value_text.set("0")
         else:
             self.field_mapped_value_text.set("-")
         segments = field.get("path_segments")
