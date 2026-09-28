@@ -13112,13 +13112,18 @@ class AToolApp:
         if self.current_occs_shared_mode == "edit" and not self._current_local_copy_matches_shared():
             choice = messagebox.askyesnocancel(
                 "Close Package",
-                "This shared package edit has not been updated to the shared package folder.\n\n"
-                "Update the shared package before closing?",
+                "This local edit copy differs from shared storage. This includes changes made "
+                "outside ATool.\n\nUpdate the shared package before closing?",
             )
             if choice is None:
                 return False
             if choice:
                 return self._update_shared_from_current(release_lock_after=None, show_message=True)
+            if not self._confirm_leave_unshared_edit_copy(
+                "Close Package",
+                "Closing this package and releasing its lock",
+            ):
+                return False
 
         return self._prompt_release_owned_shared_lock_on_close()
 
@@ -14262,6 +14267,16 @@ class AToolApp:
                 "Release it anyway?",
             ):
                 return
+        if (
+            self.current_occs_shared_mode == "edit"
+            and self.current_occs_shared_package_dir == context["package_dir"]
+            and not self._current_local_copy_matches_shared()
+            and not self._confirm_leave_unshared_edit_copy(
+                "Release Shared Package Lock",
+                "Releasing this lock",
+            )
+        ):
+            return
         if not self._require_shared_folder_sync("release this shared package lock"):
             return
         try:
@@ -14356,7 +14371,7 @@ class AToolApp:
         if self._occs_operation_in_progress:
             messagebox.showinfo("Publish Package to Comms", "A package operation is already in progress.")
             return
-        if not self._prompt_save_if_dirty():
+        if not self._prompt_save_if_dirty(warn_on_unshared_edit=False):
             return
 
         if self.current_occs_shared_package_dir is None or self.current_occs_shared_mode != "edit":
@@ -14488,6 +14503,28 @@ class AToolApp:
         except ValueError:
             return False
         return self._shared_hashes_match(local_hashes, shared_hashes)
+
+    def _has_unshared_current_edit_copy(self) -> bool:
+        return (
+            self.current_occs_shared_mode == "edit"
+            and self.current_occs_bundle_dir is not None
+            and self.current_occs_shared_package_dir is not None
+            and not self._current_local_copy_matches_shared()
+        )
+
+    def _confirm_leave_unshared_edit_copy(self, title: str, action: str) -> bool:
+        """Require acknowledgement before an action can hide an unshared edit copy."""
+        if not self._has_unshared_current_edit_copy():
+            return True
+        return messagebox.askokcancel(
+            title,
+            f"This package's local edit copy differs from shared storage. {action} without "
+            "updating shared storage can make these changes easy to miss when you next open "
+            "the package.\n\n"
+            f"The changes remain in this local copy:\n{self.current_occs_bundle_dir}\n\n"
+            "Choose Cancel, then use Update Shared Package to keep the changes in the normal "
+            "package workflow. Choose OK only to leave the changes in local storage.",
+        )
 
     def _refresh_current_shared_lock_baseline(self) -> str:
         context = self._current_occs_shared_context(show_errors=False)
@@ -15072,7 +15109,7 @@ class AToolApp:
             json.dump(payload, target, indent=2)
 
     def _publish_shared_entry_to_comms(self, entry: dict[str, object]) -> None:
-        if not self._prompt_save_if_dirty():
+        if not self._prompt_save_if_dirty(warn_on_unshared_edit=False):
             return
         published_dir = entry.get("published_dir")
         package_dir = entry.get("package_dir")
@@ -21380,9 +21417,9 @@ class AToolApp:
         )
 
     def _default_status_text(self) -> str:
-        lock_icon = "🔒" if self._current_shared_lock_is_owned() else "🔓"
         if not self._current_package_version_label():
-            return f"{lock_icon} 👁 Mode: (none)"
+            return "Mode: (none)"
+        lock_icon = "🔒" if self._current_shared_lock_is_owned() else "🔓"
         editable = self.current_occs_shared_mode in {"local", "edit"}
         access_icon = "✏️" if editable else "👁"
         changes = ["🟡" if self.is_dirty else "", "⬆️" if self.package_bundle_dirty else ""]
@@ -21565,17 +21602,21 @@ class AToolApp:
         self.cancel_occs_download_all()
         self.root.destroy()
 
-    def _prompt_save_if_dirty(self) -> bool:
-        if not self.is_dirty:
-            return True
-        choice = messagebox.askyesnocancel(
-            "Unsaved Changes",
-            "You have unsaved changes. Save before continuing?",
-        )
-        if choice is None:
+    def _prompt_save_if_dirty(self, warn_on_unshared_edit: bool = True) -> bool:
+        if self.is_dirty:
+            choice = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                "You have unsaved changes. Save before continuing?",
+            )
+            if choice is None:
+                return False
+            if choice and not self.save_assembly_template():
+                return False
+        if warn_on_unshared_edit and not self._confirm_leave_unshared_edit_copy(
+            "Unshared Local Package Changes",
+            "Continuing",
+        ):
             return False
-        if choice:
-            return self.save_assembly_template()
         return True
 
     @staticmethod

@@ -9,6 +9,9 @@
   `⬆️` unpublished package associations), plus package sync state: `➡️` for a
   local copy that needs updating to shared storage and `☁️` for a shared package
   that needs publishing. Its tooltip describes only the current indicators.
+- Closing, releasing a shared edit lock, quitting, or opening another package
+  now requires an acknowledgement when the active edit copy differs from shared
+  storage, including edits made directly in package files.
 - Publishing to Comms is now an action from a locked shared edit session; it
   retains that edit lock and no longer creates a separate publish mode.
 - Test packages cannot be saved. Local-package, raw-AT, and local-cleanup

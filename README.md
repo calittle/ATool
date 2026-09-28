@@ -201,6 +201,9 @@ state:
 - `➡️☁️`: update shared storage, then publish to Comms.
 
 The mode tooltip describes only the indicators currently shown.
+Before closing, releasing a lock, quitting, or switching packages, ATool warns
+when the active edit copy differs from shared storage. This includes direct file
+edits that ATool did not make itself.
 
 Use `Package -> Publish Package to Comms...` only from a shared `edit` session.
 Publishing pushes that edited package to Comms and retains the edit lock. It is
