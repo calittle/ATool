@@ -177,8 +177,9 @@ include:
 
 - `Package -> Get Packages from Comms...`
 - `Package -> Open Shared Package...`
-- `Package -> Open Local Package...`
-- `Package -> Open Raw AT...`
+- `Package -> Advanced -> Open Local Package...`
+- `Package -> Advanced -> Open Raw AT...`
+- `Package -> Advanced -> Clean Local Packages...`
 - `Package -> Preview...`
 - `Data -> Convert and Map...`
 - `Config -> Lock`
@@ -312,24 +313,37 @@ Comms ultimately receives raw condition text in the AT wrapper format.
 
 ## Shared Package Editing
 
-ATool supports local and shared package workflows. Shared packages can have edit
-locks so two people do not unknowingly publish over each other.
+Comms and the shared package workspace are the authoritative package sources.
+ATool creates local working copies for edit and test sessions, but they are
+workspace/cache implementation details rather than a normal package source.
+Shared packages use edit locks so two people do not unknowingly publish over
+each other.
 
 Useful concepts:
 
-- Get to Local: download a Comms package for local inspection/editing.
 - Get to Shared/Edit: use a shared package area and acquire/resume an edit lock.
 - Update Shared Package: save local edits back to the shared package area.
-- Publish Package to Comms: publish the package back into Comms.
+- Publish Package to Comms: push an open, locked shared edit session into Comms;
+  it retains the edit lock and is not a separate package mode.
 - Manual Unlock Shared Package: explicit override for stale locks.
+
+The main status panel communicates package access:
+
+- `🔒 ✏️`: current user owns the shared package lock and can edit.
+- `🔓 ✏️`: editable local package with no shared lock.
+- `🔓 👁`: test/view package; preview and mapping are allowed, while
+  saves are blocked.
+- `🟡`: unsaved assembly-template changes; `⬆️`: unpublished package-association
+  changes.
 
 When troubleshooting shared package issues, confirm:
 
 - Which package/version folder is open.
 - Whether the current user owns the edit lock.
-- Whether the package is local, shared/edit, or shared/published.
-- Whether unsaved AT edits (`*`) or unpublished package association changes (`!`)
-  are present in the window title/status.
+- Whether the user is in editable (`✏️`) or test/view (`👁`) access and holds
+  the shared lock (`🔒`).
+- Whether unsaved AT edits (`🟡`) or unpublished package association changes (`⬆️`)
+  are present in the bottom-left status indicators.
 
 ## Package Documents Manager
 

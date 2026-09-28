@@ -1,5 +1,17 @@
 # ATool Release Notes
 
+## Unreleased
+
+- The main heading is now **ATool for OCCS**, and the window title now shows
+  the open package and version rather than the assembly-template filename.
+- The bottom-left status panel now shows shared-lock ownership (`🔒`/`🔓`),
+  access (`✏️` edit or `👁` test/view), and change indicators (`🟡` unsaved AT,
+  `⬆️` unpublished package associations); its tooltip provides the legend.
+- Publishing to Comms is now an action from a locked shared edit session; it
+  retains that edit lock and no longer creates a separate publish mode.
+- Test packages cannot be saved. Local-package, raw-AT, and local-cleanup
+  actions are now grouped under `Package > Advanced`.
+
 ## v1.0.8
 
 - Added `Data > Resolve...` to inspect how a cached document layout resolves against mapped data, including nested layouts, conditions, selected and suppressed content, and mapped fields.

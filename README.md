@@ -161,10 +161,8 @@ sudo dnf install python3-tkinter
 
 ## Core Workflow
 
-1. Open an OCCS package, local package, or raw assembly template:
+1. Open the authoritative shared package workflow:
    - `Package -> Open Shared Package...`
-   - `Package -> Open Local Package...`
-   - `Package -> Open Raw AT...`
    - `Package -> Get Packages from Comms...`
    - macOS: `Cmd+O`
    - Windows/Linux: `Alt+O`
@@ -180,6 +178,33 @@ sudo dnf install python3-tkinter
    - `Data -> Map...`
    - macOS: `Cmd+M`
    - Windows/Linux: `Alt+M`
+
+### Package Access And Publishing
+
+Comms and the shared package workspace are the authoritative package sources.
+ATool may create local working copies for edit and test sessions, but these are
+implementation storage rather than a normal package source.
+
+The bottom-left status panel consolidates lock ownership, access, and change
+state:
+
+- `🔒 ✏️`: you hold the shared package lock and can edit it.
+- `🔓 ✏️`: a local package is editable but has no shared lock.
+- `🔓 👁`: a test/view session. You can preview, map, and test, but
+  cannot save changes.
+- `🟡`: unsaved AT changes.
+- `⬆️`: unpublished package-association changes.
+
+The main window title shows only the open package and version. Hover over the
+status indicators for their legend.
+
+Use `Package -> Publish Package to Comms...` only from a shared `edit` session.
+Publishing pushes that edited package to Comms and retains the edit lock. It is
+an action, not a separate package mode.
+
+Rare recovery and maintenance actions remain available under `Package ->
+Advanced`: `Open Local Package...`, `Open Raw AT...`, and `Clean Local
+Packages...`.
 
 ## Config Locks And Lockouts
 
