@@ -16,6 +16,7 @@ import threading
 import time
 import traceback
 import unicodedata
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape, unescape as html_unescape
 from html.parser import HTMLParser
@@ -1018,11 +1019,7 @@ class AToolApp:
 
         status_label = ttk.Label(status_bar, textvariable=self.status_text, anchor=tk.W)
         status_label.grid(row=0, column=0, sticky="ew")
-        self._attach_tooltip(
-            status_label,
-            "🔒 you hold the shared lock; 🔓 no shared lock. ✏️ editable; 👁 test/view only. "
-            "🟡 unsaved assembly-template changes; ⬆️ unpublished package-association changes.",
-        )
+        self._attach_tooltip(status_label, self._current_mode_tooltip_text)
 
         operation_label = ttk.Label(status_bar, textvariable=self.operation_status_text, anchor=tk.W)
         operation_label.grid(row=0, column=1, sticky="ew", padx=(12, 0))
@@ -7570,10 +7567,16 @@ class AToolApp:
             used_width = button_width if used_width == 0 else used_width + gap + button_width
             column += 1
 
-    def _attach_tooltip(self, widget: tk.Widget, text: str) -> None:
+    def _attach_tooltip(self, widget: tk.Widget, text: str | Callable[[], str]) -> None:
         if not text:
             return
-        widget.bind("<Enter>", lambda event, t=text: self._show_tooltip(event, t), add="+")
+
+        def _show_current_tooltip(event: tk.Event) -> None:
+            tooltip_text = text() if callable(text) else text
+            if tooltip_text:
+                self._show_tooltip(event, tooltip_text)
+
+        widget.bind("<Enter>", _show_current_tooltip, add="+")
         widget.bind("<Leave>", lambda _event: self._hide_tooltip(), add="+")
         widget.bind("<ButtonPress>", lambda _event: self._hide_tooltip(), add="+")
         widget.bind("<FocusOut>", lambda _event: self._hide_tooltip(), add="+")
@@ -12843,6 +12846,7 @@ class AToolApp:
             return
         self.is_dirty = dirty
         self._update_window_title()
+        self._restore_default_status_text()
 
     def _set_package_bundle_dirty(self, dirty: bool) -> None:
         if self.package_bundle_dirty == dirty:
@@ -21382,7 +21386,84 @@ class AToolApp:
         editable = self.current_occs_shared_mode in {"local", "edit"}
         access_icon = "✏️" if editable else "👁"
         changes = ["🟡" if self.is_dirty else "", "⬆️" if self.package_bundle_dirty else ""]
-        return " ".join(icon for icon in (lock_icon, access_icon, *changes) if icon)
+        sync_status = self._current_occs_sync_status_text()
+        return " ".join(icon for icon in (lock_icon, access_icon, *changes, sync_status) if icon)
+
+    def _current_mode_tooltip_text(self) -> str:
+        """Describe only the status indicators currently displayed."""
+        if not self._current_package_version_label():
+            return "No package is open."
+
+        parts = [
+            "You hold the shared edit lock."
+            if self._current_shared_lock_is_owned()
+            else "No shared edit lock is held.",
+            "Package is editable."
+            if self.current_occs_shared_mode in {"local", "edit"}
+            else "Package is open for testing/viewing.",
+        ]
+        if self.is_dirty:
+            parts.append("Assembly-template edits are unsaved.")
+        if self.package_bundle_dirty:
+            parts.append("Package-association changes are unpublished.")
+
+        sync_status = self._current_occs_sync_status_text()
+        if sync_status == "➡️☁️":
+            parts.append("Update shared storage, then publish to Comms.")
+        elif sync_status == "➡️":
+            parts.append("Update shared storage.")
+        elif sync_status == "☁️":
+            parts.append("Publish the shared package to Comms.")
+        return "\n".join(parts)
+
+    def _current_occs_sync_status_text(self) -> str:
+        """Return a compact local/shared/Comms state for the status bar.
+
+        The Comms comparison uses the source hashes captured in the package
+        manifest.  The shared comparison uses the live published copy, so it
+        detects edits made outside ATool as well as ordinary in-app edits.
+        """
+        if not self.current_occs_bundle_dir or not self.current_occs_manifest:
+            return ""
+
+        try:
+            local_dir = Path(self.current_occs_bundle_dir)
+            local_hashes = self._occs_bundle_current_hashes(local_dir, self.current_occs_manifest)
+            local_differs_from_comms = self._occs_bundle_differs_from_source_hashes(
+                local_dir,
+                self.current_occs_manifest,
+            )
+        except ValueError:
+            return ""
+
+        package_dir = self.current_occs_shared_package_dir
+        if not isinstance(package_dir, Path):
+            return "☁️" if local_differs_from_comms else ""
+
+        entry = self._shared_package_entry_from_package_dir(package_dir)
+        if entry is None:
+            return "☁️" if local_differs_from_comms else ""
+
+        try:
+            shared_hashes = self._shared_current_hashes_for_entry(entry)
+            local_differs_from_shared = not self._shared_hashes_match(local_hashes, shared_hashes)
+            shared_manifest = entry.get("manifest")
+            shared_dir = entry.get("published_dir")
+            shared_differs_from_comms = (
+                isinstance(shared_manifest, dict)
+                and isinstance(shared_dir, Path)
+                and self._occs_bundle_differs_from_source_hashes(shared_dir, shared_manifest)
+            )
+        except ValueError:
+            return ""
+
+        if local_differs_from_shared:
+            if shared_differs_from_comms or local_differs_from_comms:
+                return "➡️☁️"
+            return "➡️"
+        if shared_differs_from_comms or local_differs_from_comms:
+            return "☁️"
+        return ""
 
     def _current_shared_lock_is_owned(self) -> bool:
         package_dir = self.current_occs_shared_package_dir

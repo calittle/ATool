@@ -194,9 +194,13 @@ state:
   cannot save changes.
 - `🟡`: unsaved AT changes.
 - `⬆️`: unpublished package-association changes.
+- `➡️`: the local edit copy differs from shared storage; update the shared
+  package first.
+- `☁️`: the shared package differs from its recorded Comms baseline; publish it
+  to Comms.
+- `➡️☁️`: update shared storage, then publish to Comms.
 
-The main window title shows only the open package and version. Hover over the
-status indicators for their legend.
+The mode tooltip describes only the indicators currently shown.
 
 Use `Package -> Publish Package to Comms...` only from a shared `edit` session.
 Publishing pushes that edited package to Comms and retains the edit lock. It is

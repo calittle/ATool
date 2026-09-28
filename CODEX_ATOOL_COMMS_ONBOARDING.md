@@ -335,6 +335,10 @@ The main status panel communicates package access:
   saves are blocked.
 - `🟡`: unsaved assembly-template changes; `⬆️`: unpublished package-association
   changes.
+- `➡️`: local edit copy differs from shared storage; update shared first.
+- `☁️`: shared package differs from its recorded Comms baseline; publish to
+  Comms.
+- `➡️☁️`: update shared storage, then publish to Comms.
 
 When troubleshooting shared package issues, confirm:
 
@@ -344,6 +348,7 @@ When troubleshooting shared package issues, confirm:
   the shared lock (`🔒`).
 - Whether unsaved AT edits (`🟡`) or unpublished package association changes (`⬆️`)
   are present in the bottom-left status indicators.
+- Whether the package needs a shared update (`➡️`) or a Comms publish (`☁️`).
 
 ## Package Documents Manager
 

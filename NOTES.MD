@@ -6,7 +6,9 @@
   the open package and version rather than the assembly-template filename.
 - The bottom-left status panel now shows shared-lock ownership (`🔒`/`🔓`),
   access (`✏️` edit or `👁` test/view), and change indicators (`🟡` unsaved AT,
-  `⬆️` unpublished package associations); its tooltip provides the legend.
+  `⬆️` unpublished package associations), plus package sync state: `➡️` for a
+  local copy that needs updating to shared storage and `☁️` for a shared package
+  that needs publishing. Its tooltip describes only the current indicators.
 - Publishing to Comms is now an action from a locked shared edit session; it
   retains that edit lock and no longer creates a separate publish mode.
 - Test packages cannot be saved. Local-package, raw-AT, and local-cleanup
