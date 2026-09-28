@@ -249,7 +249,7 @@ class ContentHtmlParser(HTMLParser):
 
 
 class AToolApp:
-    APP_NAME = "Assembly Template Tool (ATool)"
+    APP_NAME = "ATool for OCCS"
     CONTENT_TABLE_BLOCK = re.compile(r"<table\b[^>]*>.*?</table\s*>", re.IGNORECASE | re.DOTALL)
     CONTENT_TABLE_ROW = re.compile(r"<tr\b[^>]*>.*?</tr\s*>", re.IGNORECASE | re.DOTALL)
     CONTENT_TABLE_CELL = re.compile(
@@ -736,10 +736,7 @@ class AToolApp:
             accelerator=open_accelerator,
             command=self.open_occs_package,
         )
-        package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
-        package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
         package_menu.add_command(label="Close Package", command=self.close_current_package)
-        package_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
         package_menu.add_separator()
         package_menu.add_command(
             label="Get Packages from Comms...",
@@ -766,6 +763,13 @@ class AToolApp:
             label="Manual Shared Package Unlock...",
             command=self.manual_unlock_shared_occs_package,
         )
+        advanced_package_menu = tk.Menu(package_menu, tearoff=0)
+        advanced_package_menu.add_command(label="Open Local Package...", command=self.open_occs_package_bundle)
+        advanced_package_menu.add_command(label="Open Raw AT...", command=self.open_assembly_template)
+        advanced_package_menu.add_separator()
+        advanced_package_menu.add_command(label="Clean Local Packages...", command=self.clean_local_occs_packages)
+        package_menu.add_separator()
+        package_menu.add_cascade(label="Advanced", menu=advanced_package_menu)
 
         window_menu = tk.Menu(menu_bar, tearoff=0)
         window_menu.add_command(
@@ -968,7 +972,7 @@ class AToolApp:
 
         title = ttk.Label(
             title_row,
-            text="Assembly Template Tool (ATool)",
+            text="ATool for OCCS",
             font=("TkDefaultFont", 16, "bold"),
         )
         title.grid(row=0, column=0, sticky="w")
@@ -1014,6 +1018,11 @@ class AToolApp:
 
         status_label = ttk.Label(status_bar, textvariable=self.status_text, anchor=tk.W)
         status_label.grid(row=0, column=0, sticky="ew")
+        self._attach_tooltip(
+            status_label,
+            "🔒 you hold the shared lock; 🔓 no shared lock. ✏️ editable; 👁 test/view only. "
+            "🟡 unsaved assembly-template changes; ⬆️ unpublished package-association changes.",
+        )
 
         operation_label = ttk.Label(status_bar, textvariable=self.operation_status_text, anchor=tk.W)
         operation_label.grid(row=0, column=1, sticky="ew", padx=(12, 0))
@@ -12802,13 +12811,11 @@ class AToolApp:
         self._restore_default_status_text()
 
     def _update_window_title(self) -> None:
-        marker = " *" if self.is_dirty else ""
-        package_marker = " !" if self.package_bundle_dirty else ""
-        if self.current_file_path:
-            file_name = os.path.basename(self.current_file_path)
-            self.root.title(f"ATool - {file_name}{marker}{package_marker}")
+        package_label = self._current_package_version_label()
+        if package_label:
+            self.root.title(f"ATool - {package_label}")
         else:
-            self.root.title(f"ATool{marker}{package_marker}")
+            self.root.title("ATool")
 
     def _bind_shortcuts(self) -> None:
         self._bind_search_shortcut(self.root, self._focus_documents_filter_event)
@@ -14307,46 +14314,22 @@ class AToolApp:
         if not self._prompt_save_if_dirty():
             return
 
-        if self.current_occs_shared_package_dir is not None:
-            if self.current_occs_shared_mode == "edit":
-                if self._current_local_copy_matches_shared():
-                    lock_warning = self._refresh_current_shared_lock_baseline()
-                    if lock_warning:
-                        messagebox.showwarning("Publish Package to Comms", lock_warning)
-                    self.save_occs_package()
-                    return
-                if not self._update_shared_from_current(release_lock_after=False, show_message=False):
-                    return
-                self.save_occs_package()
-                return
-            if self.current_occs_shared_mode != "publish":
-                self.save_occs_package()
-                return
-            entry = self._shared_package_entry_from_package_dir(self.current_occs_shared_package_dir)
-            if entry is None:
-                messagebox.showerror(
-                    "Publish Package to Comms",
-                    "Could not find the shared package version for the currently open package.",
-                )
-                return
-            self._publish_shared_entry_to_comms(entry)
-            return
-
-        workspace_dir = self._ensure_occs_shared_workspace_dir()
-        if workspace_dir is None:
-            return
-        entries = self._list_shared_package_versions(workspace_dir)
-        if not entries:
+        if self.current_occs_shared_package_dir is None or self.current_occs_shared_mode != "edit":
             messagebox.showinfo(
                 "Publish Package to Comms",
-                "No package versions were found in the shared package folder.",
+                "Open the shared package version for edit before publishing to Comms.",
             )
             return
-        self._open_shared_package_selection_dialog(
-            entries,
-            title="Publish Package to Comms",
-            on_select=self._publish_shared_entry_to_comms,
-        )
+
+        if self._current_local_copy_matches_shared():
+            lock_warning = self._refresh_current_shared_lock_baseline()
+            if lock_warning:
+                messagebox.showwarning("Publish Package to Comms", lock_warning)
+            self.save_occs_package()
+            return
+        if not self._update_shared_from_current(release_lock_after=False, show_message=False):
+            return
+        self.save_occs_package()
 
     def _update_shared_from_current(
         self,
@@ -14945,8 +14928,6 @@ class AToolApp:
             return False
         if mode == "edit":
             self._show_temporary_status("Package version locked for edit", duration_ms=5000)
-        elif mode == "publish":
-            self._show_temporary_status("Loaded shared package version for Comms publish", duration_ms=5000)
         else:
             self._show_temporary_status("Opened local testing copy", duration_ms=5000)
         return True
@@ -15053,7 +15034,7 @@ class AToolApp:
         if not isinstance(published_dir, Path) or not isinstance(package_dir, Path):
             messagebox.showerror("Publish Package to Comms", "The selected package version is missing shared folder metadata.")
             return
-        if self._load_occs_bundle(str(published_dir), shared_package_dir=package_dir, shared_mode="publish"):
+        if self._load_occs_bundle(str(published_dir), shared_package_dir=package_dir, shared_mode="testing"):
             self._show_temporary_status("Loaded shared package version for Comms publish", duration_ms=5000)
             self.save_occs_package()
 
@@ -15100,8 +15081,7 @@ class AToolApp:
             sticky="w",
         )
 
-        folder_label = "Shared Folder:" if self.current_occs_shared_mode == "publish" else "Local Folder:"
-        ttk.Label(container, text=folder_label).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        ttk.Label(container, text="Package Folder:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
         ttk.Label(
             container,
             text=str(self.current_occs_bundle_dir),
@@ -20291,8 +20271,9 @@ class AToolApp:
             messagebox.showinfo("Save", "No assembly template is currently loaded.")
             return False
 
-        if self.current_occs_shared_mode == "publish" and self.current_occs_shared_package_dir is not None:
-            return self._save_publish_mode_changes_as_edit_copy()
+        if self.current_occs_shared_mode == "testing":
+            messagebox.showinfo("Save", "Test packages are read-only. Open the package for edit before saving changes.")
+            return False
 
         if not self._sync_active_field_form_to_model():
             return False
@@ -21354,14 +21335,30 @@ class AToolApp:
         )
 
     def _default_status_text(self) -> str:
+        lock_icon = "🔒" if self._current_shared_lock_is_owned() else "🔓"
+        if not self._current_package_version_label():
+            return f"{lock_icon} 👁 Mode: (none)"
+        editable = self.current_occs_shared_mode in {"local", "edit"}
+        access_icon = "✏️" if editable else "👁"
+        changes = ["🟡" if self.is_dirty else "", "⬆️" if self.package_bundle_dirty else ""]
+        return " ".join(icon for icon in (lock_icon, access_icon, *changes) if icon)
+
+    def _current_shared_lock_is_owned(self) -> bool:
+        package_dir = self.current_occs_shared_package_dir
+        if not isinstance(package_dir, Path):
+            return False
+        lock_payload = self._read_shared_lock(self._shared_lock_path(package_dir))
+        return bool(lock_payload and self._is_shared_lock_owner(lock_payload, self._current_shared_user_identity()))
+
+    def _current_package_version_label(self) -> str:
         if self.current_occs_manifest:
             occs_package = self._occs_manifest_package_short_name(self.current_occs_manifest)
             occs_version = self._occs_manifest_version_short_name(self.current_occs_manifest)
             if occs_package or occs_version:
                 package_name = occs_package or self.current_package_name or "(unknown)"
                 version_name = occs_version or "(unknown)"
-                return f"{package_name} [{version_name}] ({self.current_occs_shared_mode})"
-        return "Package: (none)"
+                return f"{package_name} [{version_name}]"
+        return ""
 
     def _restore_default_status_text(self) -> None:
         self._status_note_job = None
