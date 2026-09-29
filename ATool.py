@@ -331,6 +331,7 @@ class AToolApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
+        self._install_dialog_owner_routing()
         self._geometry_write_job: str | None = None
         self._status_note_job: str | None = None
         self._occs_status_timer_job: str | None = None
@@ -578,9 +579,68 @@ class AToolApp:
         self._style_window_background(window)
         return window
 
+    def _active_dialog_owner(self, preferred: tk.Misc | None = None) -> tk.Misc:
+        """Return the window that should own the next modal or native dialog."""
+        if preferred is not None and preferred is not self.root:
+            return preferred
+        try:
+            focused = self.root.focus_get()
+            if focused is not None:
+                owner = focused.winfo_toplevel()
+                if owner.winfo_viewable():
+                    return owner
+        except tk.TclError:
+            pass
+        return preferred if preferred is not None else self.root
+
+    def _center_dialog_over_owner(self, dialog: tk.Toplevel, owner: tk.Misc) -> None:
+        """Center a custom Tk dialog over its triggering window after layout."""
+        try:
+            dialog.update_idletasks()
+            owner.update_idletasks()
+            width, height = dialog.winfo_width(), dialog.winfo_height()
+            x_pos = owner.winfo_rootx() + max(0, (owner.winfo_width() - width) // 2)
+            y_pos = owner.winfo_rooty() + max(0, (owner.winfo_height() - height) // 2)
+            dialog.geometry(f"+{x_pos}+{y_pos}")
+        except tk.TclError:
+            pass
+
+    def _create_dialog(self, parent: tk.Misc | None = None) -> tk.Toplevel:
+        """Create a transient dialog centered on the window that invoked it."""
+        owner = self._active_dialog_owner(parent)
+        dialog = self._create_toplevel(owner)
+        dialog.transient(owner)
+        dialog.after_idle(lambda: self._center_dialog_over_owner(dialog, owner))
+        return dialog
+
+    def _install_dialog_owner_routing(self) -> None:
+        """Route Tk's native dialogs to the currently active ATool window."""
+        dialog_functions = {
+            messagebox: (
+                "askokcancel", "askquestion", "askretrycancel", "askyesno", "askyesnocancel",
+                "showerror", "showinfo", "showwarning",
+            ),
+            filedialog: (
+                "askdirectory", "askopenfile", "askopenfilename", "askopenfilenames",
+                "asksaveasfile", "asksaveasfilename",
+            ),
+            simpledialog: ("askfloat", "askinteger", "askstring"),
+            colorchooser: ("askcolor",),
+        }
+        for module, names in dialog_functions.items():
+            for name in names:
+                original = getattr(module, name)
+
+                def routed_dialog(*args: object, _original: object = original, **kwargs: object) -> object:
+                    parent = kwargs.get("parent")
+                    if parent is None or parent is self.root:
+                        kwargs["parent"] = self._active_dialog_owner()
+                    return _original(*args, **kwargs)
+
+                setattr(module, name, routed_dialog)
+
     def _run_file_dialog(self, dialog_func: object, owner: tk.Misc | None = None, **options: object) -> str:
-        if owner is not None:
-            options["parent"] = self.root
+        options["parent"] = self._active_dialog_owner(owner)
         current_grab = self.root.grab_current()
         released_grab = current_grab if owner is not None and current_grab is not None else None
         if released_grab is not None:
@@ -3104,7 +3164,7 @@ class AToolApp:
         if payload is None:
             messagebox.showinfo("Condition", "This Condition has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
             return
-        dialog = self._create_toplevel(self.content_window)
+        dialog = self._create_dialog(self.content_window)
         dialog.title("Edit Condition")
         dialog.transient(self.content_window)
         dialog.grab_set()
@@ -3302,7 +3362,7 @@ class AToolApp:
         self._center_content_chip_dialog(dialog)
 
     def _edit_content_loop(self, raw: str, tag_name: str, text_range: tuple[str, str]) -> None:
-        dialog = self._create_toplevel(self.content_window)
+        dialog = self._create_dialog(self.content_window)
         dialog.title("Edit Loop")
         dialog.transient(self.content_window)
         dialog.grab_set()
@@ -3420,7 +3480,7 @@ class AToolApp:
         if payload is None:
             messagebox.showinfo("Data field", "This data tag has an unsupported form. Edit it in Source HTML.", parent=self.content_window)
             return
-        dialog = self._create_toplevel(self.content_window)
+        dialog = self._create_dialog(self.content_window)
         dialog.title("Edit Data Field")
         dialog.transient(self.content_window)
         dialog.grab_set()
@@ -3745,7 +3805,7 @@ class AToolApp:
                 break
             remaining -= len(cells)
 
-        dialog = tk.Toplevel(self.content_window)
+        dialog = self._create_dialog(self.content_window)
         dialog.title("Edit Table")
         dialog.transient(self.content_window)
         dialog.grab_set()
@@ -5219,6 +5279,7 @@ class AToolApp:
     def _create_clause_trigger_update_window(self, clause_name: str) -> None:
         parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
         window = self._create_toplevel(parent)
+        window.after_idle(lambda: self._center_dialog_over_owner(window, parent))
         window.title("ATool - Update Document Triggers")
         window.minsize(760, 520)
         window.protocol("WM_DELETE_WINDOW", self._close_clause_trigger_update_window)
@@ -5823,6 +5884,7 @@ class AToolApp:
     def _create_condition_usage_window(self, title: str, summary: str) -> None:
         parent = self.condition_library_window if self.condition_library_window and self.condition_library_window.winfo_exists() else self.root
         window = self._create_toplevel(parent)
+        window.after_idle(lambda: self._center_dialog_over_owner(window, parent))
         window.title(f"ATool - {title}")
         window.minsize(820, 520)
         window.protocol("WM_DELETE_WINDOW", self._close_condition_usage_window)
@@ -7786,9 +7848,8 @@ class AToolApp:
         mapped_payload = self.current_data_payload
         assembly_template = self.current_payload
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title(f"Resolve Layout - {document_name}")
-        dialog.transient(self.root)
         dialog.minsize(720, 480)
         dialog.geometry("930x680")
         dialog.grab_set()
@@ -8212,9 +8273,8 @@ class AToolApp:
             self.open_layout_path_in_data_browser_button.config(state=path_state)
 
     def _open_user_settings_dialog(self) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("User Settings")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -9087,9 +9147,8 @@ class AToolApp:
         return False
 
     def open_occs_config_lockouts_dialog(self) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Config Lockouts")
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
         container = ttk.Frame(dialog, padding=14)
@@ -9151,7 +9210,7 @@ class AToolApp:
         dialog.geometry("700x390")
 
     def _open_occs_config_lockout_add_dialog(self, parent: tk.Misc, on_complete: object) -> None:
-        dialog = self._create_toplevel(parent)
+        dialog = self._create_dialog(parent)
         dialog.title("Add Config Lockout")
         dialog.transient(parent)
         dialog.resizable(False, False)
@@ -9261,7 +9320,7 @@ class AToolApp:
         except ValueError:
             selected = datetime.now()
         visible_year, visible_month = selected.year, selected.month
-        dialog = self._create_toplevel(parent)
+        dialog = self._create_dialog(parent)
         dialog.title(title)
         dialog.transient(parent)
         dialog.resizable(False, False)
@@ -10965,9 +11024,8 @@ class AToolApp:
         preview = json.dumps(payload, indent=2, ensure_ascii=False)
         summary = "\n".join(report_lines) if report_lines else "No warnings."
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title(f"Sample Input - {document_name}")
-        dialog.transient(self.root)
         dialog.geometry("860x640")
         dialog.minsize(640, 420)
 
@@ -13332,9 +13390,8 @@ class AToolApp:
         work_dir: Path,
         entries: list[dict[str, object]],
     ) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Clean Local Packages")
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
         self._local_occs_cleanup_window = dialog
@@ -13727,9 +13784,8 @@ class AToolApp:
         data_file_text = self.current_data_file_path or ""
         mapped_data_file = bool(data_file_text)
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Preview Package")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -13947,9 +14003,8 @@ class AToolApp:
             return
 
         defaults = self._get_occs_email_defaults()
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Send Email")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -14635,9 +14690,8 @@ class AToolApp:
         title: str = "Open Package",
         on_select: object | None = None,
     ) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title(title)
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
 
@@ -15188,9 +15242,8 @@ class AToolApp:
             self._show_temporary_status("Comms publish canceled: no valid open configurations", duration_ms=5000)
             return
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Publish Package to Comms")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -15441,9 +15494,8 @@ class AToolApp:
             messagebox.showinfo("Create Config", "An OCCS operation is already in progress.")
             return
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Create Config")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -15556,9 +15608,8 @@ class AToolApp:
         if not configs:
             messagebox.showinfo("Set Config", "No open configurations were returned by OCCS.")
             return
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Set Active Config")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
         container = ttk.Frame(dialog, padding=14)
@@ -15590,9 +15641,8 @@ class AToolApp:
         dialog.geometry(f"+{x_pos}+{y_pos}")
 
     def _open_occs_config_list_dialog(self, configs: list[dict[str, str]], session_alias: str) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Open Configurations")
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
 
@@ -15790,9 +15840,8 @@ class AToolApp:
         self._open_occs_config_close_dialog([], source_session)
 
     def _open_occs_config_close_dialog(self, configs: list[dict[str, str]], source_session: str) -> None:
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Close Config")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
@@ -15971,9 +16020,8 @@ class AToolApp:
             )
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Get Resource to Cache")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
         container = ttk.Frame(dialog, padding=14)
@@ -16081,9 +16129,8 @@ class AToolApp:
             )
             return
 
-        dialog = tk.Toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Download Resources")
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
         container = ttk.Frame(dialog, padding=14)
@@ -17620,7 +17667,7 @@ class AToolApp:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
             messagebox.showinfo("Package Documents", "Open an OCCS package bundle first.")
             return
-        dialog = self._create_toplevel(self.package_documents_window or self.root)
+        dialog = self._create_dialog(self.package_documents_window or self.root)
         dialog.title("Add Package Document")
         dialog.minsize(720, 420)
         dialog.transient(self.package_documents_window or self.root)
@@ -18869,9 +18916,8 @@ class AToolApp:
             return
 
         packages = self._sort_occs_packages(packages)
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Get Packages from Comms")
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
 
@@ -19202,9 +19248,8 @@ class AToolApp:
             ]
             used_latest_fallback = True
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title("Select Package Version")
-        dialog.transient(self.root)
         dialog.resizable(True, True)
         dialog.grab_set()
 
@@ -20004,9 +20049,8 @@ class AToolApp:
             messagebox.showinfo(dialog_title, "An OCCS operation is already in progress.")
             return
 
-        dialog = self._create_toplevel(self.root)
+        dialog = self._create_dialog(self.root)
         dialog.title(dialog_title)
-        dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.grab_set()
 
