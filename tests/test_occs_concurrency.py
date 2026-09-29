@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 try:
@@ -15,6 +16,14 @@ class OccsConcurrencyTests(unittest.TestCase):
         app.current_data_payload = {"sample": True}
         app._occs_operation_in_progress = False
         app._occs_preview_in_progress = False
+        app._occs_regular_operation_semaphore = threading.BoundedSemaphore(app.OCCS_REGULAR_OPERATION_LIMIT)
+        app._occs_regular_operation_lock = threading.Lock()
+        app._occs_regular_operations = {}
+        app._occs_regular_operation_next_id = 0
+        app._update_package_menu_states = lambda: None
+        app._start_occs_status_timer = lambda _message: None
+        app._stop_occs_status_timer = lambda: None
+        app._restore_default_status_text = lambda: None
         return app
 
     def test_preview_is_available_while_regular_command_runs(self):
@@ -28,7 +37,7 @@ class OccsConcurrencyTests(unittest.TestCase):
 
     def test_preview_completion_preserves_regular_command_state(self):
         app = self._app()
-        app._occs_operation_in_progress = True
+        app._begin_occs_regular_operation("Regular operation")
         app._occs_preview_in_progress = True
         app._occs_preview_cancel_requested = True
         app._update_package_menu_states = lambda: None
@@ -42,6 +51,20 @@ class OccsConcurrencyTests(unittest.TestCase):
         self.assertFalse(app._occs_preview_cancel_requested)
         self.assertTrue(app._occs_operation_in_progress)
         self.assertEqual(completed, [{"stdout": "done"}])
+
+    def test_regular_channel_allows_four_operations(self):
+        app = self._app()
+
+        slots = [app._begin_occs_regular_operation(f"Operation {number}") for number in range(4)]
+
+        self.assertEqual(slots, [1, 2, 3, 4])
+        self.assertTrue(app._occs_regular_operation_limit_reached())
+        self.assertIsNone(app._begin_occs_regular_operation("Overflow"))
+
+        app._finish_occs_regular_operation(slots[0])
+
+        self.assertFalse(app._occs_regular_operation_limit_reached())
+        self.assertEqual(app._begin_occs_regular_operation("Replacement"), 5)
 
 
 if __name__ == "__main__":

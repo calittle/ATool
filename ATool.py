@@ -270,6 +270,8 @@ class AToolApp:
     SHARED_FOLDER_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
     SHARED_PACKAGE_HISTORY_LIMIT = 5
     DEFAULT_OCCS_REQUEST_TIMEOUT_SECONDS = 360
+    DIALOG_MIN_PARENT_WIDTH_RATIO = 0.75
+    OCCS_REGULAR_OPERATION_LIMIT = 4
     OCCS_PARALLEL_READ_LIMIT = 4
     OCCS_PREVIEW_RENDER_TYPES = ("PDF", "HTML", "TEXT", "CSV", "JSON", "METADATA")
     OCCS_RESOURCE_CACHE_TYPES = (
@@ -400,6 +402,11 @@ class AToolApp:
         self.current_occs_shared_package_dir: Path | None = None
         self.current_occs_shared_mode = "local"
         self._occs_operation_in_progress = False
+        self._occs_regular_operation_semaphore = threading.BoundedSemaphore(self.OCCS_REGULAR_OPERATION_LIMIT)
+        self._occs_regular_operation_lock = threading.Lock()
+        self._occs_regular_operations: dict[int, tuple[str, float, str | None]] = {}
+        self._occs_regular_operation_next_id = 0
+        self._occs_session_login_locks: dict[str, threading.Lock] = {}
         self._occs_cancel_requested = False
         self._occs_process: subprocess.Popen[str] | None = None
         self._occs_preview_in_progress = False
@@ -610,8 +617,50 @@ class AToolApp:
         owner = self._active_dialog_owner(parent)
         dialog = self._create_toplevel(owner)
         dialog.transient(owner)
+        try:
+            owner.update_idletasks()
+            minimum_width = max(1, int(owner.winfo_width() * self.DIALOG_MIN_PARENT_WIDTH_RATIO))
+            dialog.minsize(minimum_width, 1)
+        except tk.TclError:
+            pass
         dialog.after_idle(lambda: self._center_dialog_over_owner(dialog, owner))
         return dialog
+
+    def _ask_yes_no_dialog(self, title: str, message: str, parent: tk.Misc | None = None) -> bool:
+        """Show a resizable confirmation dialog whose message has room to breathe."""
+        owner = self._active_dialog_owner(parent)
+        dialog = self._create_dialog(owner)
+        dialog.title(title)
+        dialog.resizable(True, False)
+        dialog.grab_set()
+        result = {"value": False}
+        try:
+            owner.update_idletasks()
+            wraplength = max(420, int(owner.winfo_width() * self.DIALOG_MIN_PARENT_WIDTH_RATIO) - 56)
+        except tk.TclError:
+            wraplength = 560
+
+        container = ttk.Frame(dialog, padding=20)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        ttk.Label(container, text=message, justify="left", wraplength=wraplength).grid(row=0, column=0, sticky="ew")
+        buttons = ttk.Frame(container)
+        buttons.grid(row=1, column=0, sticky="e", pady=(18, 0))
+
+        def _finish(value: bool) -> None:
+            result["value"] = value
+            dialog.destroy()
+
+        no_button = ttk.Button(buttons, text="No", command=lambda: _finish(False))
+        no_button.grid(row=0, column=0, padx=(0, 8))
+        yes_button = ttk.Button(buttons, text="Yes", command=lambda: _finish(True), default="active")
+        yes_button.grid(row=0, column=1)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: _finish(False))
+        dialog.bind("<Escape>", lambda _event: _finish(False))
+        dialog.bind("<Return>", lambda _event: _finish(True))
+        no_button.focus_set()
+        dialog.wait_window()
+        return bool(result["value"])
 
     def _install_dialog_owner_routing(self) -> None:
         """Route Tk's native dialogs to the currently active ATool window."""
@@ -13135,7 +13184,7 @@ class AToolApp:
             )
 
     def open_occs_package(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Package", "A package operation is already in progress.")
             return
         if not self._prompt_save_if_dirty():
@@ -13157,7 +13206,7 @@ class AToolApp:
         self._open_shared_package_selection_dialog(entries)
 
     def list_occs_packages_from_comms(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Get Packages from Comms", "An OCCS operation is already in progress.")
             return
         self._run_occs_json_command_async(
@@ -13187,7 +13236,7 @@ class AToolApp:
         if self.current_payload is None:
             messagebox.showinfo("Close Package", "No package is currently open.")
             return
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Close Package", "A package operation is already in progress.")
             return
         if not self._prepare_current_package_for_close():
@@ -13240,7 +13289,7 @@ class AToolApp:
         owner = self._current_shared_user_identity()
         if not self._is_shared_lock_owner(existing_lock, owner):
             return True
-        if not messagebox.askyesno(
+        if not self._ask_yes_no_dialog(
             "Close Package",
             "Release the shared package edit lock before closing?\n\n"
             f"{self._format_shared_lock(existing_lock)}",
@@ -13318,7 +13367,7 @@ class AToolApp:
         self._set_package_documents_detail("Open an OCCS package bundle to view package document associations.")
 
     def open_last_session(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Open Session", "A package operation is already in progress.")
             return
         if self._mapping_in_progress:
@@ -13990,7 +14039,7 @@ class AToolApp:
 
     def send_occs_email(self) -> None:
         """Submit the currently mapped JSON to OCCS as an EMAIL render request."""
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Send Email", "An OCCS operation is already in progress.")
             return
         data_file_text = self.current_data_file_path or ""
@@ -14293,7 +14342,7 @@ class AToolApp:
         return temp_path
 
     def save_occs_package(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
@@ -14467,7 +14516,7 @@ class AToolApp:
         self.update_shared_occs_package()
 
     def publish_occs_package_to_comms(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Publish Package to Comms", "A package operation is already in progress.")
             return
         if not self._prompt_save_if_dirty(warn_on_unshared_edit=False):
@@ -15490,7 +15539,7 @@ class AToolApp:
         return target
 
     def create_occs_config(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Create Config", "An OCCS operation is already in progress.")
             return
 
@@ -15579,7 +15628,7 @@ class AToolApp:
         )
 
     def list_occs_configs(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("List Configs", "An OCCS operation is already in progress.")
             return
         session_alias = self._get_occs_session_alias()
@@ -15594,7 +15643,7 @@ class AToolApp:
         )
 
     def set_active_occs_config(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Set Config", "An OCCS operation is already in progress.")
             return
         self._run_occs_json_command_async(
@@ -15806,7 +15855,7 @@ class AToolApp:
         dialog.geometry("1100x460")
 
     def close_occs_config(self) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Close Config", "An OCCS operation is already in progress.")
             return
         source_session = self._get_occs_config_source_session_alias()
@@ -15938,7 +15987,7 @@ class AToolApp:
             self.migrate_occs_config(confirm=False)
 
     def migrate_occs_config(self, confirm: bool = True) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Migrate Config", "An OCCS operation is already in progress.")
             return
         source_session = self._get_occs_config_source_session_alias()
@@ -16318,7 +16367,7 @@ class AToolApp:
         self._update_package_menu_states()
         # Leave the regular command's progress display intact when both kinds
         # of work are active.  Preview gets its own process/cancellation slot.
-        if not self._occs_operation_in_progress:
+        if not self._occs_regular_operations_active():
             self._start_occs_status_timer(status_message)
 
         def _worker() -> None:
@@ -16337,11 +16386,76 @@ class AToolApp:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _occs_regular_operation_limit_reached(self) -> bool:
+        """Whether every regular OCCS request slot is occupied."""
+        with self._occs_regular_operation_lock:
+            return len(self._occs_regular_operations) >= self.OCCS_REGULAR_OPERATION_LIMIT
+
+    def _occs_regular_operations_active(self) -> bool:
+        with self._occs_regular_operation_lock:
+            return bool(self._occs_regular_operations)
+
+    def _begin_occs_regular_operation(self, status_message: str, exclusive_key: str | None = None) -> int | None:
+        """Reserve one bounded regular OCCS request slot and update shared status."""
+        if not self._occs_regular_operation_semaphore.acquire(blocking=False):
+            return None
+        with self._occs_regular_operation_lock:
+            if exclusive_key and any(key == exclusive_key for _message, _started_at, key in self._occs_regular_operations.values()):
+                self._occs_regular_operation_semaphore.release()
+                return None
+            self._occs_regular_operation_next_id += 1
+            operation_id = self._occs_regular_operation_next_id
+            self._occs_regular_operations[operation_id] = (status_message, time.monotonic(), exclusive_key)
+            self._occs_operation_in_progress = True
+        self._update_package_menu_states()
+        self._start_occs_status_timer(status_message)
+        return operation_id
+
+    def _finish_occs_regular_operation(self, operation_id: int | None) -> None:
+        if operation_id is None:
+            return
+        with self._occs_regular_operation_lock:
+            removed = self._occs_regular_operations.pop(operation_id, None)
+            remaining = list(self._occs_regular_operations.values())
+            self._occs_operation_in_progress = bool(remaining)
+        if removed is not None:
+            self._occs_regular_operation_semaphore.release()
+        self._update_package_menu_states()
+        if remaining:
+            earliest_started = min(started_at for _message, started_at, _key in remaining)
+            self._occs_status_started_at = earliest_started
+            self._set_occs_status_timer_message(f"{len(remaining)} OCCS operations in progress")
+            return
+        self._stop_occs_status_timer()
+        self._restore_default_status_text()
+
+    @staticmethod
+    def _occs_regular_operation_key(args: list[str]) -> str | None:
+        """Serialize writes against the same OCCS configuration without blocking unrelated requests."""
+        command_args = [str(arg) for arg in args]
+        try:
+            config_id = command_args[command_args.index("--config-id") + 1].strip()
+        except (ValueError, IndexError):
+            config_id = ""
+        if config_id and (
+            (command_args[0:1] == ["package"] and "save" in command_args)
+            or command_args[0:1] in (["content"], ["close-config"])
+        ):
+            return f"config:{config_id.casefold()}"
+        if command_args[0:1] == ["migrate"]:
+            try:
+                source = command_args[command_args.index("--source-session") + 1].strip()
+                target = command_args[command_args.index("--target-session") + 1].strip()
+                return f"migration:{source.casefold()}:{target.casefold()}"
+            except (ValueError, IndexError):
+                return "migration"
+        return None
+
     def _on_occs_preview_command_success(self, result: dict[str, object], on_success: object) -> None:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
         self._update_package_menu_states()
-        if not self._occs_operation_in_progress:
+        if not self._occs_regular_operations_active():
             self._stop_occs_status_timer()
             self._restore_default_status_text()
         if callable(on_success):
@@ -16351,7 +16465,7 @@ class AToolApp:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
         self._update_package_menu_states()
-        if not self._occs_operation_in_progress:
+        if not self._occs_regular_operations_active():
             self._stop_occs_status_timer()
             self._restore_default_status_text()
         if isinstance(error, OccsCommandCancelled):
@@ -16371,25 +16485,22 @@ class AToolApp:
         on_success: object,
         on_failure: object | None = None,
     ) -> None:
-        if self._occs_operation_in_progress:
+        operation_id = self._begin_occs_regular_operation(status_message, self._occs_regular_operation_key(args))
+        if operation_id is None:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
-
-        self._occs_operation_in_progress = True
         self._occs_cancel_requested = False
-        self._update_package_menu_states()
-        self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
         def _worker() -> None:
             try:
-                result = self._run_occs_command(args)
-                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success))
+                result = self._run_occs_command(args, track_active_process=False, honor_cancellation=False)
+                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success, operation_id))
             except Exception as error:  # pragma: no cover - defensive runtime safety
                 stack = traceback.format_exc()
                 self.root.after(
                     0,
-                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure),
+                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure, operation_id),
                 )
 
         thread = threading.Thread(target=_worker, daemon=True)
@@ -16478,25 +16589,22 @@ class AToolApp:
         if allow_parallel_read:
             self._run_occs_json_command_parallel_async(args, on_success, on_failure)
             return
-        if self._occs_operation_in_progress:
+        operation_id = self._begin_occs_regular_operation(status_message, self._occs_regular_operation_key(args))
+        if operation_id is None:
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
             return
-
-        self._occs_operation_in_progress = True
         self._occs_cancel_requested = False
-        self._update_package_menu_states()
-        self._start_occs_status_timer(status_message)
         self._debug_log(f"OCCS command started: {' '.join(args)}")
 
         def _worker() -> None:
             try:
-                result = self._run_occs_json_command(args)
-                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success))
+                result = self._run_occs_json_command(args, track_active_process=False)
+                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success, operation_id))
             except Exception as error:  # pragma: no cover - defensive runtime safety
                 stack = traceback.format_exc()
                 self.root.after(
                     0,
-                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure),
+                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure, operation_id),
                 )
 
         thread = threading.Thread(target=_worker, daemon=True)
@@ -16547,12 +16655,14 @@ class AToolApp:
             "etimedout", "econnreset", "econnrefused", "eai_again", "socket hang up",
         ))
 
-    def _on_occs_command_success(self, result: dict[str, object], on_success: object) -> None:
-        self._occs_operation_in_progress = False
+    def _on_occs_command_success(
+        self,
+        result: dict[str, object],
+        on_success: object,
+        operation_id: int | None = None,
+    ) -> None:
+        self._finish_occs_regular_operation(operation_id)
         self._occs_cancel_requested = False
-        self._update_package_menu_states()
-        self._stop_occs_status_timer()
-        self._restore_default_status_text()
         if callable(on_success):
             on_success(result)
 
@@ -16561,12 +16671,10 @@ class AToolApp:
         error: Exception,
         stack: str,
         on_failure: object | None,
+        operation_id: int | None = None,
     ) -> None:
-        self._occs_operation_in_progress = False
+        self._finish_occs_regular_operation(operation_id)
         self._occs_cancel_requested = False
-        self._update_package_menu_states()
-        self._stop_occs_status_timer()
-        self._restore_default_status_text()
         if isinstance(error, OccsCommandCancelled):
             self._debug_log("OCCS command canceled by user.")
             self._show_temporary_status("OCCS operation canceled", duration_ms=5000)
@@ -16585,7 +16693,7 @@ class AToolApp:
             messagebox.showinfo("Preview Package", "No Preview is currently running.")
             return
         self._occs_preview_cancel_requested = True
-        if not self._occs_operation_in_progress:
+        if not self._occs_regular_operations_active():
             self._set_occs_status_timer_message("Canceling Preview...")
         self._terminate_tracked_occs_process("_occs_preview_process")
 
@@ -16765,25 +16873,28 @@ class AToolApp:
         session_alias = self._occs_session_alias_for_command(command_args)
         login_args = self._occs_login_args_for_session(session_alias)
         session_text = f" for session {session_alias}" if session_alias else ""
+        with self._occs_regular_operation_lock:
+            login_lock = self._occs_session_login_locks.setdefault(session_alias, threading.Lock())
         self._debug_log(f"OCCS authorization failed; running `occs login`{session_text} before retrying.")
         if update_status:
             self.root.after(
                 0,
                 lambda: self._set_occs_status_timer_message(f"OCCS session expired. Refreshing{session_text}..."),
             )
-        try:
-            completed = self._run_occs_cli(
-                login_args,
-                timeout_seconds=self._get_occs_request_timeout_seconds(),
-                stdin=subprocess.DEVNULL,
-                timeout_message="Automatic `occs login` timed out.",
-                track_active_process=track_active_process,
-                honor_cancellation=track_active_process,
-                process_slot=process_slot,
-                cancellation_requested=cancellation_requested,
-            )
-        except RuntimeError as error:
-            raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {error}") from error
+        with login_lock:
+            try:
+                completed = self._run_occs_cli(
+                    login_args,
+                    timeout_seconds=self._get_occs_request_timeout_seconds(),
+                    stdin=subprocess.DEVNULL,
+                    timeout_message="Automatic `occs login` timed out.",
+                    track_active_process=track_active_process,
+                    honor_cancellation=track_active_process,
+                    process_slot=process_slot,
+                    cancellation_requested=cancellation_requested,
+                )
+            except RuntimeError as error:
+                raise RuntimeError(f"{original_error}\n\nAutomatic `occs login` failed: {error}") from error
 
         stdout = (completed.stdout or "").strip()
         stderr = (completed.stderr or "").strip()
@@ -19080,7 +19191,7 @@ class AToolApp:
         if not package_text:
             messagebox.showerror("Get Packages from Comms", "Package is required.")
             return
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Get Packages from Comms", "An OCCS operation is already in progress.")
             return
         if publish_to_shared_after_get and self._ensure_occs_shared_workspace_dir() is None:
@@ -19157,24 +19268,26 @@ class AToolApp:
         on_success: object,
         on_failure: object | None = None,
     ) -> None:
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Get Packages from Comms", "An OCCS operation is already in progress.")
             return
 
-        self._occs_operation_in_progress = True
-        self._update_package_menu_states()
-        self._start_occs_status_timer(f"Loading Comms package versions for {package_name}...")
+        status_message = f"Loading Comms package versions for {package_name}..."
+        operation_id = self._begin_occs_regular_operation(status_message)
+        if operation_id is None:
+            messagebox.showinfo("Get Packages from Comms", "All OCCS operation slots are in use.")
+            return
         self._debug_log(f"OCCS package version probe started: {package_name}")
 
         def _worker() -> None:
             try:
                 result = self._run_occs_package_versions_probe(package_name)
-                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success))
+                self.root.after(0, lambda result=result: self._on_occs_command_success(result, on_success, operation_id))
             except Exception as error:  # pragma: no cover - defensive runtime safety
                 stack = traceback.format_exc()
                 self.root.after(
                     0,
-                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure),
+                    lambda error=error, stack=stack: self._on_occs_command_failure(error, stack, on_failure, operation_id),
                 )
 
         thread = threading.Thread(target=_worker, daemon=True)
@@ -19198,7 +19311,11 @@ class AToolApp:
         login_attempted = False
 
         while True:
-            completed = self._run_occs_cli(command_args)
+            completed = self._run_occs_cli(
+                command_args,
+                track_active_process=False,
+                honor_cancellation=False,
+            )
             stdout = (completed.stdout or "").strip()
             stderr = (completed.stderr or "").strip()
             parsed = self._parse_occs_json_stdout(stdout)
@@ -19211,7 +19328,12 @@ class AToolApp:
             if completed.returncode != 0:
                 message = self._occs_error_message(parsed, stderr, completed.returncode)
                 if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                    self._run_occs_login_for_retry(message)
+                    self._run_occs_login_for_retry(
+                        command_args,
+                        message,
+                        track_active_process=False,
+                        update_status=False,
+                    )
                     login_attempted = True
                     continue
                 raise RuntimeError(message)
@@ -19372,7 +19494,7 @@ class AToolApp:
         if not package_text:
             messagebox.showerror("Get Package from Comms", "Package is required.")
             return
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("Get Package from Comms", "An OCCS operation is already in progress.")
             return
 
@@ -20045,7 +20167,7 @@ class AToolApp:
     def convert_xml_data_file(self, *, map_after_generation: bool = False) -> None:
         dialog_title = "Convert and Map" if map_after_generation else "Convert XML"
         submit_label = "Convert and Map" if map_after_generation else "Convert"
-        if self._occs_operation_in_progress:
+        if self._occs_regular_operation_limit_reached():
             messagebox.showinfo(dialog_title, "An OCCS operation is already in progress.")
             return
 
