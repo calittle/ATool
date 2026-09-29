@@ -1,6 +1,6 @@
 # ATool Release Notes
 
-## Unreleased
+## v1.1.1
 
 - The main heading is now **ATool for OCCS**, and the window title now shows
   the open package and version rather than the assembly-template filename.
@@ -16,6 +16,12 @@
   retains that edit lock and no longer creates a separate publish mode.
 - Test packages cannot be saved. Local-package, raw-AT, and local-cleanup
   actions are now grouped under `Package > Advanced`.
+- Layout and document editing now provide a direct Resolve action, more compact
+  controls, and context-aware layout actions.
+- Field Manager now supports one-step undo and redo for field edits. Empty
+  computed numeric mappings display as `0`.
+- Native alerts, prompts, file pickers, and custom ATool dialogs now center
+  over the window that opened them.
 
 ## v1.0.8
 
