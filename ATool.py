@@ -626,14 +626,21 @@ class AToolApp:
         dialog.after_idle(lambda: self._center_dialog_over_owner(dialog, owner))
         return dialog
 
-    def _ask_yes_no_dialog(self, title: str, message: str, parent: tk.Misc | None = None) -> bool:
-        """Show a resizable confirmation dialog whose message has room to breathe."""
+    def _show_app_message_dialog(
+        self,
+        title: str,
+        message: str,
+        choices: tuple[tuple[str, str], ...],
+        parent: tk.Misc | None = None,
+        default: str | None = None,
+    ) -> str:
+        """Show a uniform, width-aware replacement for Tk's native message boxes."""
         owner = self._active_dialog_owner(parent)
         dialog = self._create_dialog(owner)
         dialog.title(title)
         dialog.resizable(True, False)
         dialog.grab_set()
-        result = {"value": False}
+        result = {"value": ""}
         try:
             owner.update_idletasks()
             wraplength = max(420, int(owner.winfo_width() * self.DIALOG_MIN_PARENT_WIDTH_RATIO) - 56)
@@ -644,23 +651,64 @@ class AToolApp:
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
         ttk.Label(container, text=message, justify="left", wraplength=wraplength).grid(row=0, column=0, sticky="ew")
-        buttons = ttk.Frame(container)
-        buttons.grid(row=1, column=0, sticky="e", pady=(18, 0))
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=1, column=0, sticky="e", pady=(18, 0))
 
-        def _finish(value: bool) -> None:
+        fallback = "cancel" if any(value == "cancel" for value, _label in choices) else choices[0][0]
+        affirmative = next((value for value, _label in reversed(choices) if value in {"yes", "ok", "retry"}), choices[-1][0])
+
+        def _finish(value: str) -> None:
             result["value"] = value
             dialog.destroy()
 
-        no_button = ttk.Button(buttons, text="No", command=lambda: _finish(False))
-        no_button.grid(row=0, column=0, padx=(0, 8))
-        yes_button = ttk.Button(buttons, text="Yes", command=lambda: _finish(True), default="active")
-        yes_button.grid(row=0, column=1)
-        dialog.protocol("WM_DELETE_WINDOW", lambda: _finish(False))
-        dialog.bind("<Escape>", lambda _event: _finish(False))
-        dialog.bind("<Return>", lambda _event: _finish(True))
-        no_button.focus_set()
+        button_widgets: dict[str, ttk.Button] = {}
+        for index, (value, label) in enumerate(choices):
+            button = ttk.Button(
+                button_frame,
+                text=label,
+                command=lambda selected=value: _finish(selected),
+                default="active" if value == (default or affirmative) else "normal",
+            )
+            button.grid(row=0, column=index, padx=(0, 8) if index < len(choices) - 1 else 0)
+            button_widgets[value] = button
+        dialog.protocol("WM_DELETE_WINDOW", lambda: _finish(fallback))
+        dialog.bind("<Escape>", lambda _event: _finish(fallback))
+        dialog.bind("<Return>", lambda _event: _finish(default or affirmative))
+        button_widgets.get(default or fallback, next(iter(button_widgets.values()))).focus_set()
         dialog.wait_window()
-        return bool(result["value"])
+        return result["value"]
+
+    def _ask_yes_no_dialog(self, title: str, message: str, parent: tk.Misc | None = None) -> bool:
+        return self._show_app_message_dialog(
+            title,
+            message,
+            (("no", "No"), ("yes", "Yes")),
+            parent=parent,
+        ) == "yes"
+
+    def _run_app_messagebox(self, name: str, args: tuple[object, ...], kwargs: dict[str, object]) -> object:
+        """Preserve tkinter.messagebox return values with a uniform app dialog."""
+        title = str(args[0] if args else kwargs.get("title", ""))
+        message = str(args[1] if len(args) > 1 else kwargs.get("message", ""))
+        parent = kwargs.get("parent")
+        owner = parent if isinstance(parent, tk.Misc) else None
+        default = str(kwargs.get("default", "")).lower() or None
+        button_sets = {
+            "askokcancel": (("cancel", "Cancel"), ("ok", "OK")),
+            "askquestion": (("no", "No"), ("yes", "Yes")),
+            "askretrycancel": (("cancel", "Cancel"), ("retry", "Retry")),
+            "askyesno": (("no", "No"), ("yes", "Yes")),
+            "askyesnocancel": (("cancel", "Cancel"), ("no", "No"), ("yes", "Yes")),
+        }
+        choices = button_sets.get(name, (("ok", "OK"),))
+        choice = self._show_app_message_dialog(title, message, choices, parent=owner, default=default)
+        if name == "askquestion":
+            return choice
+        if name == "askyesnocancel":
+            return {"yes": True, "no": False, "cancel": None}.get(choice)
+        if name in {"askyesno", "askokcancel", "askretrycancel"}:
+            return choice in {"yes", "ok", "retry"}
+        return "ok"
 
     def _install_dialog_owner_routing(self) -> None:
         """Route Tk's native dialogs to the currently active ATool window."""
@@ -680,7 +728,15 @@ class AToolApp:
             for name in names:
                 original = getattr(module, name)
 
-                def routed_dialog(*args: object, _original: object = original, **kwargs: object) -> object:
+                def routed_dialog(
+                    *args: object,
+                    _original: object = original,
+                    _module: object = module,
+                    _name: str = name,
+                    **kwargs: object,
+                ) -> object:
+                    if _module is messagebox:
+                        return self._run_app_messagebox(_name, args, kwargs)
                     parent = kwargs.get("parent")
                     if parent is None or parent is self.root:
                         kwargs["parent"] = self._active_dialog_owner()
@@ -13195,7 +13251,7 @@ class AToolApp:
 
         entries = self._list_shared_package_versions(workspace_dir)
         if not entries:
-            if messagebox.askyesno(
+            if self._ask_yes_no_dialog(
                 "Open Package",
                 "No package versions were found in the shared package folder.\n\n"
                 "Retrieve a package version from Comms now?",
@@ -15065,7 +15121,7 @@ class AToolApp:
         lock_payload = self._read_shared_lock(lock_path)
         owner = self._current_shared_user_identity()
         if lock_payload and not self._is_shared_lock_owner(lock_payload, owner):
-            if messagebox.askyesno(
+            if self._ask_yes_no_dialog(
                 "Open Package",
                 "This package version was locked before it could be opened.\n\n"
                 f"{self._format_shared_lock(lock_payload)}\n\n"
@@ -15076,7 +15132,7 @@ class AToolApp:
 
         if lock_payload and self._is_shared_lock_owner(lock_payload, owner):
             resume_dir = self._shared_edit_resume_dir(entry, lock_payload)
-            if resume_dir is not None and messagebox.askyesno(
+            if resume_dir is not None and self._ask_yes_no_dialog(
                 "Open Package",
                 "You already hold an edit lock for this package version.\n\n"
                 f"{self._format_shared_lock(lock_payload)}\n\n"
@@ -15087,7 +15143,7 @@ class AToolApp:
                     self._show_temporary_status("Resumed package edit session", duration_ms=5000)
                 return
 
-        lock_for_edit = messagebox.askyesno(
+        lock_for_edit = self._ask_yes_no_dialog(
             "Open Package",
             "Lock this package version for edit?\n\n"
             "Choose No to open a local testing copy only.",
@@ -15104,7 +15160,7 @@ class AToolApp:
                     json.dump(self._build_shared_lock_payload(context, owner), target, indent=2)
             except FileExistsError:
                 fresh_lock = self._read_shared_lock(lock_path)
-                if fresh_lock and messagebox.askyesno(
+                if fresh_lock and self._ask_yes_no_dialog(
                     "Open Package",
                     "This package version was locked by another user before the edit lock could be created.\n\n"
                     f"{self._format_shared_lock(fresh_lock)}\n\n"
