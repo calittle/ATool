@@ -386,6 +386,7 @@ class AToolApp:
         self._document_controls_layout_job: str | None = None
         self._document_controls_layout_signature: tuple[object, ...] | None = None
         self._tooltip_window: tk.Toplevel | None = None
+        self._documents_tree_tooltip_node = ""
         self.clause_manager_list_width = self._load_saved_clause_manager_list_width()
         self.compose_entry_widget: tk.Text | None = None
         self.compose_autocomplete_popup: tk.Toplevel | None = None
@@ -954,6 +955,7 @@ class AToolApp:
         )
         window_menu.add_command(
             label="Show Field Manager",
+            accelerator="Shift+Cmd+F" if self._is_macos() else "Shift+Ctrl+F",
             command=self._show_fields_window,
         )
         window_menu.add_command(
@@ -1169,6 +1171,8 @@ class AToolApp:
 
         self.documents_panel, self.documents_tree = self._create_documents_panel(self.left_vertical_pane)
         self.documents_tree.bind("<<TreeviewSelect>>", self._on_document_tree_select)
+        self.documents_tree.bind("<Motion>", self._on_documents_tree_motion)
+        self.documents_tree.bind("<Leave>", self._on_documents_tree_leave)
         if self._is_macos():
             self.documents_tree.bind("<Command-v>", self._paste_copied_layouts_event)
             self.documents_tree.bind("<Command-V>", self._paste_copied_layouts_event)
@@ -1315,6 +1319,7 @@ class AToolApp:
         tree.grid(row=3, column=0, sticky="nsew")
         tree.tag_configure("triggered_doc", foreground="blue")
         tree.tag_configure("untriggered_doc", foreground="red")
+        tree.tag_configure("unassociated_doc", foreground="#d97706")
 
         scrollbar = ttk.Scrollbar(panel, orient=tk.VERTICAL, command=tree.yview)
         scrollbar.grid(row=3, column=1, sticky="ns")
@@ -13108,12 +13113,22 @@ class AToolApp:
             self.root.bind_all("<Control-Shift-U>", self._publish_to_comms_event)
 
     def _bind_search_shortcut(self, widget: tk.Misc, handler: object) -> None:
+        def _dispatch(event: tk.Event) -> str:
+            # Tk's Command/Ctrl-F binding also matches Shift-modified F events.
+            # Route that overlap here so Shift+Cmd/Ctrl+F always shows Fields.
+            if event.state & 0x0001:  # Shift modifier
+                self._show_fields_window()
+                return "break"
+            if callable(handler):
+                return handler(event)
+            return "break"
+
         if self._is_macos():
-            widget.bind("<Command-f>", handler)
-            widget.bind("<Command-F>", handler)
+            widget.bind("<Command-f>", _dispatch)
+            widget.bind("<Command-F>", _dispatch)
         else:
-            widget.bind("<Control-f>", handler)
-            widget.bind("<Control-F>", handler)
+            widget.bind("<Control-f>", _dispatch)
+            widget.bind("<Control-F>", _dispatch)
 
     def _focus_documents_filter_event(self, event: tk.Event) -> str:
         if hasattr(self, "documents_filter_entry"):
@@ -17320,14 +17335,19 @@ class AToolApp:
             column=3,
             padx=(0, 6),
         )
-        ttk.Button(controls, text="Remove", command=self._remove_active_package_document_association).grid(
+        ttk.Button(controls, text="Associate...", command=self._show_associate_active_package_document_dialog).grid(
             row=0,
             column=4,
+            padx=(0, 6),
+        )
+        ttk.Button(controls, text="Remove", command=self._remove_active_package_document_association).grid(
+            row=0,
+            column=5,
         )
         ttk.Label(
             controls,
             text="Select one or more associated documents and drag them to a new position.",
-        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(6, 0))
+        ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         ttk.Label(detail_frame, text="AT Condition").grid(row=2, column=0, sticky="w")
         condition_frame = ttk.Frame(detail_frame)
@@ -17830,16 +17850,34 @@ class AToolApp:
             return f"Unclosed delimiter '{stack[-1]}'."
         return ""
 
-    def _show_add_package_document_dialog(self) -> None:
+    def _show_associate_active_package_document_dialog(self) -> None:
+        row = self._active_package_document_or_warn("Associate")
+        if row is None:
+            return
+        if row.get("associated"):
+            messagebox.showinfo("Package Documents", "Selected document is already associated to the package.")
+            return
+        document_ref = row.get("document_ref")
+        document_name = str(row.get("document", "")).strip()
+        if not isinstance(document_ref, dict) or not document_name:
+            messagebox.showinfo(
+                "Package Documents",
+                "Only an Assembly Template document can be associated from this row.",
+            )
+            return
+        self._show_add_package_document_dialog(associate_document_name=document_name)
+
+    def _show_add_package_document_dialog(self, *, associate_document_name: str = "") -> None:
         if not self.current_occs_bundle_dir or not self.current_occs_manifest:
             messagebox.showinfo("Package Documents", "Open an OCCS package bundle first.")
             return
         dialog = self._create_dialog(self.package_documents_window or self.root)
-        dialog.title("Add Package Document")
+        associating_existing_document = bool(associate_document_name)
+        dialog.title("Associate Package Document" if associating_existing_document else "Add Package Document")
         dialog.minsize(720, 420)
         dialog.transient(self.package_documents_window or self.root)
 
-        filter_var = tk.StringVar(value="")
+        filter_var = tk.StringVar(value=associate_document_name)
         status_var = tk.StringVar(value="")
         documents: list[dict[str, str]] = []
 
@@ -17886,6 +17924,13 @@ class AToolApp:
         action_row.grid(row=3, column=0, sticky="e", pady=(10, 0))
 
         def visible_documents() -> list[dict[str, str]]:
+            if associating_existing_document:
+                expected_name = associate_document_name.casefold()
+                return [
+                    item
+                    for item in documents
+                    if str(item.get("shortName", "")).strip().casefold() == expected_name
+                ]
             query = filter_var.get().strip().lower()
             if not query:
                 return documents
@@ -17913,7 +17958,13 @@ class AToolApp:
                     iid=item["uuid"],
                     values=(item.get("shortName", ""), item.get("name", ""), item.get("description", "")),
                 )
-            status_var.set(f"Cached documents: {len(documents)} | Showing: {len(visible)}")
+            if associating_existing_document:
+                status_var.set(
+                    f"Choose the Comms document whose short name is exactly: {associate_document_name} | "
+                    f"Matches: {len(visible)}"
+                )
+            else:
+                status_var.set(f"Cached documents: {len(documents)} | Showing: {len(visible)}")
 
         def refresh_complete(_result: dict[str, object]) -> None:
             nonlocal documents
@@ -17923,12 +17974,24 @@ class AToolApp:
         def add_selected() -> None:
             selection = catalog_tree.selection()
             if not selection:
-                messagebox.showinfo("Add Package Document", "Select a document to add.")
+                messagebox.showinfo(
+                    "Associate Package Document" if associating_existing_document else "Add Package Document",
+                    "Select a document to associate." if associating_existing_document else "Select a document to add.",
+                )
                 return
             selected_uuid = str(selection[0])
             document = next((item for item in documents if item.get("uuid") == selected_uuid), None)
             if document is None:
-                messagebox.showerror("Add Package Document", "Could not find the selected cached document.")
+                messagebox.showerror("Package Documents", "Could not find the selected cached document.")
+                return
+            if (
+                associating_existing_document
+                and str(document.get("shortName", "")).strip().casefold() != associate_document_name.casefold()
+            ):
+                messagebox.showerror(
+                    "Associate Package Document",
+                    "The Comms document short name must exactly match the Assembly Template document name.",
+                )
                 return
             if not self._add_package_document_association(document):
                 return
@@ -17938,7 +18001,7 @@ class AToolApp:
             self._select_package_document_by_uuid(selected_uuid)
             dialog.destroy()
 
-        ttk.Button(action_row, text="Add", command=add_selected).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(action_row, text="Associate" if associating_existing_document else "Add", command=add_selected).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(action_row, text="Cancel", command=dialog.destroy).grid(row=0, column=1)
         filter_var.trace_add("write", lambda *_args: populate())
         catalog_tree.bind("<Double-1>", lambda _event: add_selected())
@@ -21267,6 +21330,8 @@ class AToolApp:
         return "".join(chars)
 
     def _render_documents_tree(self) -> None:
+        self._documents_tree_tooltip_node = ""
+        self._hide_tooltip()
         self.documents_tree.delete(*self.documents_tree.get_children())
         self._document_node_details = {}
         self._clear_document_details()
@@ -21315,11 +21380,46 @@ class AToolApp:
             }
 
     def _document_mapping_tags(self, document: dict[str, object]) -> tuple[str, ...]:
+        if self._document_is_package_associated(document) is False:
+            return ("unassociated_doc",)
         if self.current_data_payload is None:
             return ()
         if bool(document.get("triggered")):
             return ("triggered_doc",)
         return ("untriggered_doc",)
+
+    def _document_is_package_associated(self, document: dict[str, object]) -> bool | None:
+        """Return package association state, or None when metadata is unavailable."""
+        association_payload = getattr(self, "current_document_associations", None)
+        if not isinstance(association_payload, dict):
+            return None
+        associations = association_payload.get("associations")
+        if not isinstance(associations, list):
+            return None
+        document_name = str(document.get("name", "")).strip().casefold()
+        if not document_name:
+            return None
+        return any(
+            isinstance(association, dict)
+            and str(association.get("documentShortName", "")).strip().casefold() == document_name
+            for association in associations
+        )
+
+    def _on_documents_tree_motion(self, event: tk.Event) -> None:
+        node_id = self.documents_tree.identify_row(event.y)
+        if node_id == self._documents_tree_tooltip_node:
+            return
+        self._documents_tree_tooltip_node = node_id
+        details = self._document_node_details.get(node_id)
+        document = details.get("document_ref") if isinstance(details, dict) else None
+        if isinstance(document, dict) and self._document_is_package_associated(document) is False:
+            self._show_tooltip(event, "This document is not associated with the Package")
+            return
+        self._hide_tooltip()
+
+    def _on_documents_tree_leave(self, _event: tk.Event) -> None:
+        self._documents_tree_tooltip_node = ""
+        self._hide_tooltip()
 
     def _capture_saved_document_snapshots(self) -> None:
         """Remember the saved state of each currently loaded document."""
