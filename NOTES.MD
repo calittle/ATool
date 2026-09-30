@@ -1,5 +1,22 @@
 # ATool Release Notes
 
+## v1.1.2
+
+- Assembly Template documents without a package association are highlighted in
+  the Documents list, with a tooltip explaining their status. Package Documents
+  can now associate an existing document by matching its short name in the
+  Comms document catalog, then publish the association through the package
+  workflow.
+- `Shift+Cmd/Ctrl+F` opens Field Manager, including when focus is in a search
+  field.
+- Up to four regular OCCS operations can run concurrently. Operations that
+  write to the same Config cannot overlap, and simultaneous login retries for
+  the same session are coordinated.
+- Confirmation and information dialogs now use consistent, width-aware ATool
+  windows that remain centered over their parent.
+- Release publishing now queues runs for the same tag so concurrent attempts
+  do not create competing GitHub Releases.
+
 ## v1.1.1
 
 - The main heading is now **ATool for OCCS**, and the window title now shows
