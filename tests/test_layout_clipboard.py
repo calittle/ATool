@@ -134,6 +134,16 @@ class LayoutClipboardTests(unittest.TestCase):
             ["First", "Second", "First Copy", "Second Copy"],
         )
 
+    def test_shift_copy_shortcut_shows_clause_manager(self):
+        layout = {"$$Id": "Page"}
+        app = self._app({"layout": ("layout", layout)}, {"layout": ""}, ["layout"])
+        app._show_condition_library_window = Mock()
+
+        self.assertEqual(app._copy_selected_layouts_event(Mock(state=0x0001)), "break")
+
+        app._show_condition_library_window.assert_called_once_with()
+        self.assertEqual(app._layout_clipboard, [])
+
 
 if __name__ == "__main__":
     unittest.main()

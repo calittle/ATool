@@ -961,10 +961,12 @@ class AToolApp:
         )
         window_menu.add_command(
             label="Show Clause Manager",
+            accelerator="Shift+Cmd+C" if self._is_macos() else "Shift+Ctrl+C",
             command=self._show_condition_library_window,
         )
         window_menu.add_command(
             label="Show Layouts",
+            accelerator="Shift+Cmd+L" if self._is_macos() else "Shift+Ctrl+L",
             command=self._show_layouts_window,
         )
         window_menu.add_command(
@@ -973,10 +975,12 @@ class AToolApp:
         )
         window_menu.add_command(
             label="Show Package Documents",
+            accelerator="Shift+Cmd+P" if self._is_macos() else "Shift+Ctrl+P",
             command=self.show_package_documents_manager,
         )
         window_menu.add_command(
             label="Show Data Browser",
+            accelerator="Shift+Cmd+D" if self._is_macos() else "Shift+Ctrl+D",
             command=self._show_data_browser_window,
         )
         window_menu.add_separator()
@@ -10910,7 +10914,10 @@ class AToolApp:
         self._refresh_layouts_for_active_document()
         self._select_layout_node_for_source(layout, preferred_kind="layout")
 
-    def _copy_selected_layouts_event(self, _event: tk.Event) -> str:
+    def _copy_selected_layouts_event(self, event: tk.Event) -> str:
+        if event.state & 0x0001:  # Shift modifier
+            self._show_condition_library_window()
+            return "break"
         self.copy_selected_layout_items()
         return "break"
 
@@ -13164,6 +13171,10 @@ class AToolApp:
             self.root.bind_all("<Command-period>", self._cancel_occs_event)
             self.root.bind_all("<Command-.>", self._cancel_occs_event)
             self.root.bind_all("<Command-Shift-M>", self._convert_and_map_event)
+            self.root.bind_all("<Command-Shift-C>", self._show_condition_library_window_event)
+            self.root.bind_all("<Command-Shift-D>", self._show_data_browser_window_event)
+            self.root.bind_all("<Command-Shift-L>", self._show_layouts_window_event)
+            self.root.bind_all("<Command-Shift-P>", self._show_package_documents_event)
             self.root.bind_all("<Command-u>", self._update_shared_event)
             self.root.bind_all("<Command-Shift-U>", self._publish_to_comms_event)
         else:
@@ -13186,6 +13197,10 @@ class AToolApp:
             self.root.bind_all("<Control-period>", self._cancel_occs_event)
             self.root.bind_all("<Control-.>", self._cancel_occs_event)
             self.root.bind_all("<Control-Shift-M>", self._convert_and_map_event)
+            self.root.bind_all("<Control-Shift-C>", self._show_condition_library_window_event)
+            self.root.bind_all("<Control-Shift-D>", self._show_data_browser_window_event)
+            self.root.bind_all("<Control-Shift-L>", self._show_layouts_window_event)
+            self.root.bind_all("<Control-Shift-P>", self._show_package_documents_event)
             self.root.bind_all("<Control-u>", self._update_shared_event)
             self.root.bind_all("<Control-Shift-U>", self._publish_to_comms_event)
 
@@ -13264,6 +13279,9 @@ class AToolApp:
         return "break"
 
     def _preview_event(self, event: tk.Event) -> str:
+        if event.state & 0x0001:  # Shift modifier
+            self.show_package_documents_manager()
+            return "break"
         self.preview_occs_package()
         return "break"
 
@@ -13281,6 +13299,22 @@ class AToolApp:
 
     def _convert_and_map_event(self, event: tk.Event) -> str:
         self.convert_and_map_data_file()
+        return "break"
+
+    def _show_layouts_window_event(self, _event: tk.Event) -> str:
+        self._show_layouts_window()
+        return "break"
+
+    def _show_condition_library_window_event(self, _event: tk.Event) -> str:
+        self._show_condition_library_window()
+        return "break"
+
+    def _show_data_browser_window_event(self, _event: tk.Event) -> str:
+        self._show_data_browser_window()
+        return "break"
+
+    def _show_package_documents_event(self, _event: tk.Event) -> str:
+        self.show_package_documents_manager()
         return "break"
 
     def _update_shared_event(self, event: tk.Event) -> str:
