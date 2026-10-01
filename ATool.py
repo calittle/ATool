@@ -444,6 +444,7 @@ class AToolApp:
         self._updating_layout_form = False
         self._active_layout_node_id: str | None = None
         self._layout_clipboard: list[dict[str, object]] = []
+        self._layout_clipboard_kind = ""
         self.root.title("ATool")
         self._restore_window_geometry()
 
@@ -10910,26 +10911,58 @@ class AToolApp:
         self._select_layout_node_for_source(layout, preferred_kind="layout")
 
     def _copy_selected_layouts_event(self, _event: tk.Event) -> str:
-        self.copy_selected_layouts()
+        self.copy_selected_layout_items()
         return "break"
 
     def _paste_copied_layouts_event(self, _event: tk.Event) -> str:
-        self.paste_copied_layouts()
+        self.paste_copied_layout_items()
         return "break"
 
     def copy_selected_layouts(self) -> None:
-        selected_layouts = self._get_selected_layout_sources_in_tree_order()
-        if not selected_layouts:
-            self._show_temporary_status("Select one or more layouts to copy.", duration_ms=3000)
+        self.copy_selected_layout_items()
+
+    def copy_selected_layout_items(self) -> None:
+        selected_node_ids = set(self.layouts_tree.selection())
+        if not selected_node_ids and self._active_layout_node_id:
+            selected_node_ids.add(self._active_layout_node_id)
+        selected = [
+            self._layout_node_details[node_id]
+            for node_id in self._layout_tree_node_ids_in_order()
+            if node_id in selected_node_ids and node_id in self._layout_node_details
+        ]
+        kinds = {str(details.get("node_kind", "")) for details in selected}
+        if len(kinds) != 1 or not kinds <= {"layout", "content", "iteration", "field"}:
+            self._show_temporary_status("Select one or more items of the same kind to copy.", duration_ms=3000)
             return
-        self._layout_clipboard = [copy.deepcopy(layout) for layout in selected_layouts]
-        layout_count = len(self._layout_clipboard)
-        noun = "layout" if layout_count == 1 else "layouts"
-        self._show_temporary_status(f"Copied {layout_count} {noun}.", duration_ms=3000)
+        kind = kinds.pop()
+        if kind == "iteration" and len(selected) != 1:
+            self._show_temporary_status("Select one iteration to copy.", duration_ms=3000)
+            return
+        sources = [details.get("source_ref") for details in selected]
+        self._layout_clipboard = [copy.deepcopy(source) for source in sources if isinstance(source, dict)]
+        if not self._layout_clipboard:
+            return
+        self._layout_clipboard_kind = kind
+        count = len(self._layout_clipboard)
+        self._show_temporary_status(f"Copied {count} {kind}{'' if count == 1 else 's'}.", duration_ms=3000)
+
+    def _layout_tree_node_ids_in_order(self, parent: str = "") -> list[str]:
+        node_ids: list[str] = []
+        for node_id in self.layouts_tree.get_children(parent):
+            node_ids.append(node_id)
+            node_ids.extend(self._layout_tree_node_ids_in_order(node_id))
+        return node_ids
 
     def paste_copied_layouts(self) -> None:
+        self.paste_copied_layout_items()
+
+    def paste_copied_layout_items(self) -> None:
         if not self._layout_clipboard:
-            self._show_temporary_status("No copied layouts to paste.", duration_ms=3000)
+            self._show_temporary_status("No copied layout items to paste.", duration_ms=3000)
+            return
+        kind = self._layout_clipboard_kind
+        if kind in {"content", "iteration", "field"}:
+            self._paste_copied_layout_children(kind)
             return
         document_ref = self._get_selected_document_ref()
         if document_ref is None:
@@ -10960,6 +10993,50 @@ class AToolApp:
         layout_count = len(pasted_layouts)
         noun = "layout" if layout_count == 1 else "layouts"
         self._show_temporary_status(f"Pasted {layout_count} {noun}.", duration_ms=3000)
+
+    def _paste_copied_layout_children(self, kind: str) -> None:
+        parent_kind = {"content": "layout", "iteration": "content", "field": "iteration"}[kind]
+        parent_details = self._find_layout_ancestor_details(parent_kind)
+        parent = parent_details.get("source_ref") if parent_details else None
+        if not isinstance(parent, dict):
+            self._show_temporary_status(f"Select a {parent_kind} before pasting {kind}s.", duration_ms=3000)
+            return
+
+        if kind == "iteration":
+            if self._extract_iteration(parent) is not None:
+                self._show_temporary_status("This content already has an iteration.", duration_ms=3000)
+                return
+            pasted = copy.deepcopy(self._layout_clipboard[0])
+            parent["Iteration"] = pasted
+            count = 1
+        else:
+            if kind == "content":
+                items = self._contents_list_for_layout(parent)
+                if items is None:
+                    items = []
+                    parent["Contents"] = items
+            else:
+                items = self._fields_list_for_iteration(parent)
+                if items is None:
+                    items = []
+                    parent["Fields"] = items
+            selected_details = self._layout_node_details.get(self._active_layout_node_id or "", {})
+            selected_source = selected_details.get("source_ref") if selected_details.get("node_kind") == kind else None
+            selected_index = self._index_of_identity(items, selected_source)
+            insertion_index = selected_index + 1 if selected_index >= 0 else len(items)
+            existing_names = self._existing_layout_identity_values(items)
+            pasted_items = [copy.deepcopy(item) for item in self._layout_clipboard]
+            for pasted_item in pasted_items:
+                self._deduplicate_pasted_layout_identity(pasted_item, existing_names)
+            items[insertion_index:insertion_index] = pasted_items
+            pasted = pasted_items[0]
+            count = len(pasted_items)
+
+        self._touch_selected_document_updated()
+        self._set_dirty(True)
+        self._refresh_layouts_for_active_document()
+        self._select_layout_node_for_source(pasted, preferred_kind=kind)
+        self._show_temporary_status(f"Pasted {count} {kind}{'' if count == 1 else 's'}.", duration_ms=3000)
 
     def _get_selected_layout_sources_in_tree_order(self) -> list[dict[str, object]]:
         selected_node_ids = set(self.layouts_tree.selection())
@@ -13466,7 +13543,10 @@ class AToolApp:
         data_file_path = Path(os.path.expanduser(data_file_text)) if data_file_text else None
         can_map_data_file = data_file_path is not None and data_file_path.exists() and data_file_path.is_file()
 
-        if not self._load_occs_bundle(str(bundle_dir)):
+        shared_package_dir, shared_mode = self._last_session_shared_context(bundle_dir)
+        if not self._load_occs_bundle(
+            str(bundle_dir), shared_package_dir=shared_package_dir, shared_mode=shared_mode
+        ):
             return
 
         if can_map_data_file and data_file_path is not None:
@@ -13478,6 +13558,34 @@ class AToolApp:
             self._show_temporary_status("Opened last package; no previous JSON file to map", duration_ms=5000)
         else:
             self._show_temporary_status("Opened last package; previous JSON file was not found", duration_ms=5000)
+
+    def _last_session_shared_context(self, bundle_dir: Path) -> tuple[Path | None, str]:
+        """Restore a shared local copy only when its baseline and lock still match."""
+        baseline = self._read_shared_baseline_for_local_copy(bundle_dir)
+        published_text = str(baseline.get("publishedDir", "")).strip()
+        if not published_text:
+            return None, "local"
+        published_dir = Path(os.path.expanduser(published_text))
+        package_dir = published_dir.parent.parent
+        if published_dir != package_dir / "published" / "current":
+            return None, "local"
+        entry = self._shared_package_entry_from_package_dir(package_dir)
+        if not entry or not self._is_shared_edit_resume_dir(bundle_dir, entry):
+            return None, "local"
+        if self._resolved_path(entry["published_dir"]) != self._resolved_path(published_dir):
+            return None, "local"
+
+        lock = self._read_shared_lock(self._shared_lock_path(package_dir))
+        owner = self._current_shared_user_identity()
+        locked_bundle = str(lock.get("bundleDir", "")).strip() if isinstance(lock, dict) else ""
+        if (
+            isinstance(lock, dict)
+            and self._is_shared_lock_owner(lock, owner)
+            and locked_bundle
+            and self._resolved_path(Path(os.path.expanduser(locked_bundle))) == self._resolved_path(bundle_dir)
+        ):
+            return package_dir, "edit"
+        return package_dir, "testing"
 
     def clean_local_occs_packages(self) -> None:
         work_dir = Path(os.path.expanduser(self._get_occs_work_dir()))
@@ -14071,7 +14179,8 @@ class AToolApp:
                 ):
                     return
 
-            output_base = self._build_occs_preview_output_base(data_file_path, package_name)
+            environment = "pre" if use_pre_prod_session_var.get() else "non"
+            output_base = self._build_occs_preview_output_base(data_file_path, package_name, environment)
             args = [
                 "preview",
                 "--package",
@@ -20086,10 +20195,14 @@ class AToolApp:
     def _default_preview_timeout_seconds(self, render_types: list[str]) -> int:
         return self._get_occs_request_timeout_seconds()
 
-    def _build_occs_preview_output_base(self, data_file_path: Path, package_name: str) -> Path:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def _build_occs_preview_output_base(
+        self, data_file_path: Path, package_name: str, environment: str
+    ) -> Path:
+        if environment not in {"non", "pre", "prod"}:
+            raise ValueError(f"Unsupported preview environment: {environment}")
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         package_segment = self._safe_occs_path_segment(package_name)
-        return data_file_path.parent / f"{data_file_path.stem}-{package_segment}-preview-{timestamp}"
+        return data_file_path.parent / f"{data_file_path.stem}-{package_segment}-{environment}-{timestamp}"
 
     def _on_occs_preview_complete(
         self,

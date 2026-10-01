@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import py_compile
+import re
 import sys
 import tempfile
 import zipfile
@@ -56,7 +57,10 @@ def package_files(repo_root: Path, source: str) -> list[str]:
             continue
         if normalized.endswith((".pyc", ".DS_Store")) or "/__pycache__/" in normalized:
             continue
-        if normalized.startswith("tools/td_generator/samples/") and "-preview-" in normalized and normalized.endswith(".html"):
+        if normalized.startswith("tools/td_generator/samples/") and normalized.endswith(".html") and (
+            "-preview-" in normalized
+            or re.search(r"-(?:non|pre|prod)-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.html$", normalized)
+        ):
             continue
         if normalized.startswith(TD_ROOT) or normalized in TD_DEPENDENCIES:
             included.append(normalized)

@@ -1,5 +1,6 @@
 import threading
 import unittest
+from unittest.mock import Mock
 
 try:
     from ATool import AToolApp
@@ -20,6 +21,7 @@ class OccsConcurrencyTests(unittest.TestCase):
         app._occs_regular_operation_lock = threading.Lock()
         app._occs_regular_operations = {}
         app._occs_regular_operation_next_id = 0
+        app.operation_status_text = Mock()
         app._update_package_menu_states = lambda: None
         app._start_occs_status_timer = lambda _message: None
         app._stop_occs_status_timer = lambda: None
@@ -64,6 +66,7 @@ class OccsConcurrencyTests(unittest.TestCase):
         app._finish_occs_regular_operation(slots[0])
 
         self.assertFalse(app._occs_regular_operation_limit_reached())
+        self.assertIn("3 OCCS operations in progress", app.operation_status_text.set.call_args.args[0])
         self.assertEqual(app._begin_occs_regular_operation("Replacement"), 5)
 
 
