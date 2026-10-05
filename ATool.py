@@ -1475,11 +1475,12 @@ class AToolApp:
         self.layout_condition_title.grid(row=0, column=0, sticky="w")
         self.layout_condition_tool_button = ttk.Button(
             condition_row,
-            text="...",
+            text=">",
             width=3,
-            command=self.open_conditions_tool_from_layout,
+            command=self._open_selected_layout_condition_in_data_browser,
         )
         self.layout_condition_tool_button.grid(row=0, column=1, sticky="e")
+        self._attach_tooltip(self.layout_condition_tool_button, "Evaluate condition in Data Browser")
         row += 1
         self.layout_condition_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_condition_edit_var)
         self.layout_condition_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
@@ -2289,7 +2290,7 @@ class AToolApp:
         mode = ttk.Combobox(
             toolbar,
             textvariable=self.data_browser_search_mode_var,
-            values=("Auto", "JSONPath", "Full Text"),
+            values=("Auto", "JSONPath", "Full Text", "Condition"),
             state="readonly",
             width=11,
         )
@@ -2298,7 +2299,7 @@ class AToolApp:
         ttk.Button(toolbar, text="Clear", command=self._clear_data_browser_search).grid(row=0, column=4, padx=(6, 0))
         ttk.Label(
             container,
-            text="Use a JSONPath such as $.customer.name or $..billId, or search any text in the mapped data.",
+            text="Search mapped data by JSONPath or text, or evaluate a Condition.",
             foreground="#555555",
         ).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
@@ -2395,6 +2396,21 @@ class AToolApp:
         self._show_data_browser_window()
         self.data_browser_search_mode_var.set("JSONPath")
         self.data_browser_search_var.set(self._field_path_for_data_browser(layout_path))
+        self._search_data_browser()
+
+    def _open_selected_layout_condition_in_data_browser(self) -> None:
+        details = self._layout_node_details.get(self._active_layout_node_id or "")
+        source_ref = details.get("source_ref") if details else None
+        node_kind = str(details.get("node_kind", "")) if details else ""
+        if node_kind not in {"layout", "content", "iteration", "field", "condition"} or not isinstance(source_ref, dict):
+            return
+        condition = self.layout_condition_edit_var.get().strip()
+        if not condition:
+            return
+
+        self._show_data_browser_window()
+        self.data_browser_search_mode_var.set("Condition")
+        self.data_browser_search_var.set(condition)
         self._search_data_browser()
 
     def _field_path_for_data_browser(self, field_path: str) -> str:
@@ -2521,6 +2537,13 @@ class AToolApp:
         self._data_browser_pending_children = {}
         self._set_readonly_text_widget_value(self.data_browser_details, "")
         self.data_browser_selected_path_var.set("")
+        if mode == "Condition":
+            passed = self._evaluate_document_condition(query, self.current_data_payload)
+            status = self._condition_status_text(passed)
+            node_id = self.data_browser_tree.insert("", "end", text="Condition", values=(status,))
+            self._data_browser_node_values[node_id] = passed
+            self.data_browser_status_var.set(f"Condition: {status}.")
+            return
         if use_jsonpath:
             results = self._extract_values_and_paths_by_path(self.current_data_payload, query)
             for index, (path, value) in enumerate(results, start=1):
@@ -8378,7 +8401,11 @@ class AToolApp:
             toggle_state = tk.NORMAL if has_expandable_nodes else tk.DISABLED
             self.toggle_layout_tree_button.config(text=toggle_text, state=toggle_state)
         if hasattr(self, "layout_condition_tool_button"):
-            condition_state = tk.NORMAL if node_kind in {"layout", "content", "field", "condition"} else tk.DISABLED
+            source_ref = details.get("source_ref") if self._active_layout_node_id else None
+            condition = str(source_ref.get("Condition", "")).strip() if isinstance(source_ref, dict) else ""
+            condition_state = (
+                tk.NORMAL if node_kind in {"layout", "content", "iteration", "field", "condition"} and condition else tk.DISABLED
+            )
             self.layout_condition_tool_button.config(state=condition_state)
         if hasattr(self, "open_layout_path_in_data_browser_button"):
             source_ref = details.get("source_ref") if self._active_layout_node_id else None
@@ -10690,6 +10717,7 @@ class AToolApp:
             )
             self._refresh_layout_mapping_tags()
             self._set_layout_details(details)
+            self._update_layout_context_buttons()
             return
         self._refresh_layouts_for_active_document()
         self._select_layout_node_for_source(source_ref, preferred_kind=node_kind)
