@@ -12297,14 +12297,21 @@ class AToolApp:
         index = self._index_of_identity(items, item)
         if index < 0:
             return
-        new_index = index + direction
-        if new_index < 0 or new_index >= len(items):
+        node_id = self._active_layout_node_id or ""
+        parent_node_id = self.layouts_tree.parent(node_id)
+        siblings = self.layouts_tree.get_children(parent_node_id)
+        tree_index = siblings.index(node_id)
+        new_tree_index = tree_index + direction
+        if new_tree_index < 0 or new_tree_index >= len(siblings):
+            return
+        neighbor = self._layout_node_details.get(siblings[new_tree_index], {}).get("source_ref")
+        new_index = self._index_of_identity(items, neighbor)
+        if new_index < 0:
             return
         items[index], items[new_index] = items[new_index], items[index]
+        self.layouts_tree.move(node_id, parent_node_id, new_tree_index)
         self._touch_selected_document_updated()
         self._set_dirty(True)
-        self._refresh_layouts_for_active_document()
-        self._select_layout_node_for_source(item, preferred_kind=node_kind)
 
     def move_selected_layout(self, direction: int) -> None:
         """Backward-compatible alias for callers using the original method name."""
