@@ -1,5 +1,22 @@
 # ATool Release Notes
 
+## v1.1.3
+
+- `File > Open Session` now restores the shared package context for the last
+  local copy. It resumes edit mode when the current user still owns its lock,
+  or opens the copy in test mode when the lock no longer matches.
+- The Layouts window can now copy and paste content, iterations, and fields in
+  addition to layouts. Pasted items keep their nested data, and pasted content
+  or fields receive unique identities when needed.
+- Added `Shift+Cmd/Ctrl+C`, `D`, `L`, and `P` shortcuts for Clause Manager,
+  Data Browser, Layouts, and Package Documents, respectively.
+- A layout item's Condition button now opens that expression in Data Browser's
+  new Condition mode and shows whether it passes against the mapped data.
+- Moving a layout item up or down now keeps that item selected and preserves
+  the expanded tree state.
+- OCCS preview filenames now include the selected environment (`non` or `pre`)
+  and a readable timestamp.
+
 ## v1.1.2
 
 - Assembly Template documents without a package association are highlighted in
