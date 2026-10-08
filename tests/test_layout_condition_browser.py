@@ -11,6 +11,34 @@ except ImportError:  # pragma: no cover - environments without Tkinter
 
 @unittest.skipIf(AToolApp is None, "Tkinter is not installed")
 class LayoutConditionBrowserTests(unittest.TestCase):
+    def test_layout_field_browser_search_includes_parent_iterator(self):
+        app = AToolApp.__new__(AToolApp)
+        app._active_layout_node_id = "field-node"
+        iterator_path = "$..billCalcLineList[?(@.cmElements.chargeType == 'EC')]"
+        app._layout_node_details = {
+            "field-node": {"node_kind": "field", "source_ref": {"Path": "$.cmElements.calcAmt"}},
+            "iterator-node": {"node_kind": "iteration", "source_ref": {"Path": iterator_path}},
+        }
+        app.layouts_tree = Mock()
+        app.layouts_tree.parent.side_effect = lambda node: {"field-node": "iterator-node", "iterator-node": ""}[node]
+        app.data_browser_search_mode_var = Mock()
+        app.data_browser_search_var = Mock()
+        app._show_data_browser_window = Mock()
+        app._search_data_browser = Mock()
+
+        app._open_selected_layout_path_in_data_browser()
+
+        app.data_browser_search_mode_var.set.assert_called_once_with("JSONPath")
+        app.data_browser_search_var.set.assert_called_once_with(iterator_path + ".cmElements.calcAmt")
+        app._search_data_browser.assert_called_once_with()
+
+    def test_full_layout_field_path_is_not_prefixed_again(self):
+        app = AToolApp.__new__(AToolApp)
+        self.assertEqual(
+            "$.orders[*].amount",
+            app._layout_field_browser_path("$.orders[*].amount", "$.orders[*]"),
+        )
+
     def test_selected_condition_opens_browser_and_runs_search(self):
         app = AToolApp.__new__(AToolApp)
         app._active_layout_node_id = "condition-node"

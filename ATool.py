@@ -2396,8 +2396,32 @@ class AToolApp:
 
         self._show_data_browser_window()
         self.data_browser_search_mode_var.set("JSONPath")
-        self.data_browser_search_var.set(self._field_path_for_data_browser(layout_path))
+        search_path = self._field_path_for_data_browser(layout_path)
+        if node_kind == "field":
+            iteration_details = self._find_iteration_details_for_node(self._active_layout_node_id or "")
+            iteration = iteration_details.get("source_ref") if iteration_details else None
+            iteration_path = str(iteration.get("Path", "")).strip() if isinstance(iteration, dict) else ""
+            if iteration_path:
+                search_path = self._layout_field_browser_path(search_path, iteration_path)
+        self.data_browser_search_var.set(search_path)
         self._search_data_browser()
+
+    def _layout_field_browser_path(self, field_path: str, iteration_path: str) -> str:
+        """Expand an iteration-relative field path for a document-wide search."""
+        field_path = self._field_path_for_data_browser(field_path)
+        iteration_path = self._field_path_for_data_browser(iteration_path)
+        if not iteration_path or iteration_path == "$":
+            return field_path
+        if field_path == iteration_path or (
+            field_path.startswith(iteration_path)
+            and field_path[len(iteration_path) :].startswith((".", "["))
+        ):
+            return field_path
+        if field_path == "$":
+            return iteration_path
+        if field_path.startswith("$.") or field_path.startswith("$["):
+            return iteration_path + field_path[1:]
+        return field_path
 
     def _open_selected_layout_condition_in_data_browser(self) -> None:
         details = self._layout_node_details.get(self._active_layout_node_id or "")
