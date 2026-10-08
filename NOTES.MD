@@ -1,5 +1,13 @@
 # ATool Release Notes
 
+## v1.1.4
+
+- Package Preview now lets you choose an effective date with a calendar or by
+  entering `YYYY-MM-DD`. The selected date is sent to OCCS; it defaults to today
+  when ATool starts and stays selected for later previews in the same session.
+- Opening a layout field in Data Browser now includes its parent iteration path
+  in the search, so fields inside repeated data resolve in the right context.
+
 ## v1.1.3
 
 - `File > Open Session` now restores the shared package context for the last
