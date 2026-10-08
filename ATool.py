@@ -17,6 +17,7 @@ import time
 import traceback
 import unicodedata
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape, unescape as html_unescape
 from html.parser import HTMLParser
@@ -14245,14 +14246,21 @@ class AToolApp:
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         open_after_var = tk.BooleanVar(value=True)
+        exclude_charts_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            container,
+            text="Exclude Charts",
+            variable=exclude_charts_var,
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
         ttk.Checkbutton(
             container,
             text="Open after generation",
             variable=open_after_var,
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=7, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        buttons.grid(row=8, column=0, columnspan=3, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
 
         def _submit() -> None:
@@ -14335,6 +14343,7 @@ class AToolApp:
                     should_open,
                 ),
                 on_failure=lambda error: messagebox.showerror("Preview Package", str(error)),
+                exclude_charts=exclude_charts_var.get(),
             )
 
         preview_button = ttk.Button(buttons, text="Preview", command=_submit, default="active")
@@ -16661,12 +16670,26 @@ class AToolApp:
                 return f"Shared package folder was updated, but baseline metadata could not be refreshed: {error}"
         return ""
 
+    @staticmethod
+    def _exclude_charts_from_preview_payload(payload: object) -> object:
+        """Return a preview-only copy without any entries named 'charts'."""
+        if isinstance(payload, dict):
+            return {
+                key: AToolApp._exclude_charts_from_preview_payload(value)
+                for key, value in payload.items()
+                if key != "charts"
+            }
+        if isinstance(payload, list):
+            return [AToolApp._exclude_charts_from_preview_payload(value) for value in payload]
+        return payload
+
     def _run_occs_preview_command_async(
         self,
         args: list[str],
         status_message: str,
         on_success: object,
         on_failure: object | None = None,
+        exclude_charts: bool = False,
     ) -> None:
         if self._occs_preview_in_progress:
             messagebox.showinfo("Preview Package", "A preview is already in progress.")
@@ -16681,13 +16704,30 @@ class AToolApp:
 
         def _worker() -> None:
             try:
-                result = self._run_occs_command(
-                    args,
-                    track_active_process=False,
-                    honor_cancellation=False,
-                    process_slot="_occs_preview_process",
-                    cancellation_requested=lambda: self._occs_preview_cancel_requested,
-                )
+                # Keep the temporary input alive until the CLI has finished,
+                # including failed or canceled previews. Never edit mapped data.
+                with (
+                    tempfile.TemporaryDirectory(prefix="atool-preview-")
+                    if exclude_charts else nullcontext()
+                ) as temp_dir:
+                    preview_args = list(args)
+                    if exclude_charts:
+                        input_index = preview_args.index("--input") + 1
+                        source_path = Path(preview_args[input_index])
+                        payload = json.loads(source_path.read_text(encoding="utf-8-sig"))
+                        preview_path = Path(temp_dir) / "input.json"
+                        preview_path.write_text(
+                            json.dumps(self._exclude_charts_from_preview_payload(payload), ensure_ascii=False),
+                            encoding="utf-8",
+                        )
+                        preview_args[input_index] = str(preview_path)
+                    result = self._run_occs_command(
+                        preview_args,
+                        track_active_process=False,
+                        honor_cancellation=False,
+                        process_slot="_occs_preview_process",
+                        cancellation_requested=lambda: self._occs_preview_cancel_requested,
+                    )
                 self.root.after(0, lambda result=result: self._on_occs_preview_command_success(result, on_success))
             except Exception as error:  # pragma: no cover - defensive runtime safety
                 stack = traceback.format_exc()
