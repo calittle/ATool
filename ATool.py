@@ -413,6 +413,7 @@ class AToolApp:
         self._occs_preview_in_progress = False
         self._occs_preview_cancel_requested = False
         self._occs_preview_process: subprocess.Popen[str] | None = None
+        self._occs_preview_effective_date = datetime.now().date().isoformat()
         self._occs_process_lock = threading.Lock()
         self._occs_parallel_read_semaphore = threading.BoundedSemaphore(self.OCCS_PARALLEL_READ_LIMIT)
         self._occs_download_all_in_progress = False
@@ -9456,7 +9457,7 @@ class AToolApp:
     def _open_occs_config_lockout_date_picker(
         self, parent: tk.Misc, date_var: tk.StringVar, title: str = "Choose Lockout Date"
     ) -> None:
-        """Small dependency-free calendar picker for a lockout start date."""
+        """Small dependency-free calendar picker for an ISO-formatted date."""
         try:
             selected = datetime.strptime(date_var.get().strip(), "%Y-%m-%d")
         except ValueError:
@@ -9690,6 +9691,9 @@ class AToolApp:
                 return timeout_seconds
         return self._default_preview_timeout_seconds(render_types)
 
+    def _get_last_occs_preview_effective_date(self) -> str:
+        return self._occs_preview_effective_date
+
     def _get_occs_package_mru(self) -> list[dict[str, str]]:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -9866,6 +9870,17 @@ class AToolApp:
                 normalized.append(render_type)
                 seen.add(render_type)
         return normalized or ["PDF"]
+
+    @staticmethod
+    def _normalize_occs_preview_effective_date(raw_date: object) -> str:
+        if not isinstance(raw_date, str):
+            return ""
+        value = raw_date.strip()
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return ""
+        return value if parsed.date().isoformat() == value else ""
 
     def _normalize_preview_render_type(self, render_type: str) -> str:
         normalized = str(render_type or "").strip().upper()
@@ -14192,15 +14207,28 @@ class AToolApp:
         timeout_entry.grid(row=4, column=1, sticky="w", pady=(10, 0))
         timeout_var.trace_add("write", _on_timeout_changed)
 
+        effective_date_var = tk.StringVar(value=self._get_last_occs_preview_effective_date())
+        ttk.Label(container, text="Effective date:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
+        effective_date_row = ttk.Frame(container)
+        effective_date_row.grid(row=5, column=1, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Entry(effective_date_row, textvariable=effective_date_var, width=12).pack(side=tk.LEFT)
+        ttk.Button(
+            effective_date_row,
+            text="Choose...",
+            command=lambda: self._open_occs_config_lockout_date_picker(
+                dialog, effective_date_var, title="Choose Effective Date"
+            ),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
         open_after_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             container,
             text="Open after generation",
             variable=open_after_var,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         buttons = ttk.Frame(container)
-        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        buttons.grid(row=7, column=0, columnspan=3, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
 
         def _submit() -> None:
@@ -14226,6 +14254,11 @@ class AToolApp:
                 messagebox.showerror("Preview Package", "Timeout must be a positive number of seconds.", parent=dialog)
                 return
 
+            effective_date = self._normalize_occs_preview_effective_date(effective_date_var.get())
+            if not effective_date:
+                messagebox.showerror("Preview Package", "Effective date must be a valid YYYY-MM-DD date.", parent=dialog)
+                return
+
             pre_prod_session_alias = self._get_occs_pre_prod_session_alias()
             if use_pre_prod_session_var.get() and not pre_prod_session_alias:
                 messagebox.showerror(
@@ -14236,6 +14269,7 @@ class AToolApp:
                 return
 
             self._set_last_occs_preview_options(render_types, timeout_seconds)
+            self._occs_preview_effective_date = effective_date
 
             unpublished_reasons = self._occs_preview_unpublished_change_reasons()
             if unpublished_reasons:
@@ -14260,6 +14294,8 @@ class AToolApp:
                 str(output_base),
                 "--timeout",
                 str(timeout_seconds * 1000),
+                "--effective-date",
+                effective_date,
                 "--render-type",
                 *render_types,
             ]
