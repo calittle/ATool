@@ -17,65 +17,148 @@ application remains available through the legacy launchers.
 
 ## Requirements
 
-- Python 3.10+ (recommended)
+- Python 3.10–3.15 (required by the pinned PySide6 version)
 - PySide6 (installed from `requirements.txt`)
 - OCCS CLI access for OCCS package, preview, mapping, and conversion actions
 - `tkinter` is needed only for the original application
 
-Set up the local runtime once from the ATool folder:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
+**Qt is not included with standard Python.** ATool 1.x users may never have
+installed it. Installing `requirements.txt` installs PySide6 (the Python Qt
+bindings) and its Qt runtime automatically. You do not need to install the Qt
+SDK or Qt Creator separately. Dependency installation requires internet access.
 
 ## Installation
 
+Download the ATool application ZIP from the **Assets** section of the
+[2.0.0 release](https://github.com/calittle/ATool/releases/tag/v2.0.0) and extract
+it to a folder where you can write files. Keep the extracted files together.
+If upgrading from 1.x, read [Upgrading from 1.x](#upgrading-from-1x) below first.
+
 ### macOS
 
-1. Check if Python exists:
+1. Check that Python is version 3.10–3.15:
 
    ```bash
    python3 --version
    ```
 
-2. If not installed, install from:
-   - [python.org](https://www.python.org/downloads/macos/)
-3. Verify:
+2. If Python is missing or outside that range, install a supported version from
+   [python.org](https://www.python.org/downloads/macos/). Reopen Terminal and
+   check the version again.
+3. Create ATool's environment and install its dependencies. Replace the example
+   folder path with the folder you extracted:
 
    ```bash
-   python3 --version
+   cd "/path/to/ATool"
+   python3 -m venv .venv
+   .venv/bin/python -m pip install -r requirements.txt
    ```
+4. Verify PySide6 is available to ATool:
+
+   ```bash
+   .venv/bin/python -c "import PySide6; print(PySide6.__version__)"
+   ```
+
+   This should print `6.12.0`. Double-click `Run_ATool.command` to start ATool.
 
 ### Windows
 
-1. Check if Python exists:
+1. In PowerShell, check that Python is version 3.10–3.15:
 
    ```powershell
-   py --version
+   py -3 --version
    ```
 
-2. If not installed, install from:
-   - [python.org](https://www.python.org/downloads/windows/)
-3. During install, enable **Add python.exe to PATH**.
-4. Verify:
+2. If Python is missing or outside that range, install a supported version from
+   [python.org](https://www.python.org/downloads/windows/). Enable
+   **Add python.exe to PATH** and the Python launcher during installation.
+   Reopen PowerShell and check the version again.
+3. Create ATool's environment and install its dependencies. Replace the example
+   folder path with the folder you extracted:
 
    ```powershell
-   py --version
+   cd "C:\path\to\ATool"
+   py -3 -m venv .venv
+   .venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+4. Verify PySide6 is available to ATool:
+
+   ```powershell
+   .venv\Scripts\python.exe -c "import PySide6; print(PySide6.__version__)"
    ```
 
-## Run ATool
+   This should print `6.12.0`. Double-click `Run_ATool.bat` to start ATool.
 
-Install the dependencies before using either launcher. On Windows, run these
-commands from the extracted ATool folder:
+If you have several Python versions installed, use the supported version
+explicitly when creating the environment: for example, `python3.13 -m venv
+.venv` on macOS or `py -3.13 -m venv .venv` on Windows, if Python 3.13 is installed.
+
+## Upgrading from 1.x
+
+The main change is the unified Qt workspace. **Copying the new application
+files alone is not enough:** you must install the updated dependencies before
+launching 2.0. The default launchers now start the Qt application.
+
+1. Save your work and close ATool 1.x.
+2. Keep your existing ATool folder as a fallback. Back up your packages and
+   user settings, including any custom storage locations. Settings normally
+   live in `~/.atool` on macOS or `%USERPROFILE%\.atool` on Windows. The default
+   local package folder is `occs-bundles` inside that directory; shared storage
+   may be elsewhere, such as OneDrive.
+3. Download and extract the 2.0.0 application ZIP into a **separate folder**.
+   Follow the macOS or Windows installation steps above in that new folder.
+   Create a fresh `.venv`; do not copy the old environment into the new folder.
+   This also handles 1.x installations that used an older Python version.
+4. Launch using the **new folder's** `Run_ATool.command` (macOS) or
+   `Run_ATool.bat` (Windows). Update shortcuts that still point to the old folder
+   or directly to `ATool.py`.
+5. Open **Settings → User Settings** and verify your OCCS CLI and storage paths.
+   The existing `.atool/.settings.json` settings file is reused, including
+   configured local, shared, cache and model folders. Keep those folders in
+   place. If moving the application changes the location of your OCCS CLI,
+   update its path here; the CLI is not installed by `requirements.txt`.
+6. Use **File → Open Session** to reopen your previous package and mapped JSON
+   file when their saved paths still exist. On first use, this can read the
+   original application's saved bundle session. Alternatively, use
+   **Package → Open Shared Package…** or open your existing template through
+   the File menu. If the old data file has moved, map it again from its new location.
+
+You do not need to download packages again or recreate your shared storage
+just to upgrade ATool. Do not delete `.atool` during the upgrade. The Qt panel
+layout is saved separately; the old application's window positions are not
+imported.
+
+### Updating an existing environment instead
+
+If you replace the application files in an existing folder and its `.venv`
+already uses Python 3.10–3.15, install the **new** requirements in that folder:
+
+macOS:
+
+```bash
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Windows:
 
 ```powershell
-py -3 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-On macOS, use the environment setup commands under Requirements above.
-Existing installations also need to install the updated `requirements.txt`.
+Run the PySide6 verification command from the installation section afterward.
+If the environment uses an older Python, use the separate-folder installation
+above with a supported Python version.
+
+### Returning to the original interface
+
+The 2.0 distribution also includes `Run_ATool_Legacy.command` for macOS and
+`Run_ATool_Legacy.bat` for Windows. These start the original Tkinter interface
+using the same installed environment. Tkinter must be available for those
+launchers; it is not required for the Qt workspace.
+
+## Run ATool
+
+Complete the installation steps above before using a launcher.
 
 ### Windows
 
@@ -152,6 +235,21 @@ selected content; text reports and JSON evidence can still be saved.
 
 Install Python from [python.org](https://www.python.org/downloads/), then reopen
 Terminal or PowerShell and try again.
+
+### PySide6 Missing or Dependency Installation Fails
+
+`ModuleNotFoundError: No module named 'PySide6'` means the Python environment
+running ATool does not have Qt installed. Run the dependency installation and
+PySide6 verification commands above using **the `.venv` in your ATool folder**,
+then use the provided launcher. Installing PySide6 into a different Python
+environment will not fix the launcher.
+
+If installation reports that no matching PySide6 distribution exists, check
+the environment's Python version (`.venv/bin/python --version` on macOS or
+`.venv\Scripts\python.exe --version` on Windows). It must be 3.10–3.15. Updating
+Python on your computer does not change an existing `.venv`; create a new
+environment with the supported interpreter as described above. Also check
+the installation output for network or proxy errors.
 
 ### `tkinter` Missing
 
