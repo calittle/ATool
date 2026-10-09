@@ -1,0 +1,2 @@
+# Compatibility dependency file for existing Qt installations.
+-r requirements.txt

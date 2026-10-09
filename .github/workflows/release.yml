@@ -41,12 +41,26 @@ jobs:
       - name: Build distribution ZIP
         run: python3 tools/build_artifact.py --source head
 
+      - name: Prepare version release notes
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          heading = '## ' + os.environ['TAG']
+          notes = Path('NOTES.MD').read_text()
+          sections = notes.splitlines()
+          start = sections.index(heading) + 1
+          end = next((index for index in range(start, len(sections)) if sections[index].startswith('## ')), len(sections))
+          Path('dist/release-notes.md').write_text('\n'.join(sections[start:end]).strip() + '\n')
+          PY
+
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.zip --clobber
+            gh release edit "$TAG" --notes-file dist/release-notes.md
           else
-            gh release create "$TAG" dist/*.zip --title "ATool $TAG" --generate-notes
+            gh release create "$TAG" dist/*.zip --title "ATool $TAG" --notes-file dist/release-notes.md
           fi

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import html
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,6 +119,83 @@ class LayoutResolverTests(unittest.TestCase):
         self.assertIn("grid page one", report)
         self.assertIn("name present", report)
         self.assertEqual([], result["warnings"])
+
+    def test_bill_heading_conditions_with_spaces_and_nested_data_are_evaluated(self) -> None:
+        template_path = self.cache / 'packages/Pkg/versions/v1/AssemblyTemplate.json'
+        template = json.loads(template_path.read_text())
+        field_names = ['isEnglishBill', 'has_DevAccount', 'DC2_BY_SATYPE', 'DC2_BY_RATESCHED', 'isStatement']
+        template['Fields'].extend({'Name': name, 'Path': '$.'+name} for name in field_names)
+        template_path.write_text(json.dumps(template))
+        non_residential = 'Non-Residential Tariff (Unmetered Supply)'
+        conditions = [
+            ('isEnglishBill empty false && has_DevAccount empty false', 'Developer Bill'),
+            (f"DC2_BY_SATYPE == '{non_residential}' || DC2_BY_RATESCHED == '{non_residential}'", 'Non-Residential Tariff'),
+            (f"DC2_BY_SATYPE empty false && DC2_BY_SATYPE \u00a0!= '{non_residential}' && has_DevAccount empty true", '<comms-data>$Data{"Id":"DC2_BY_SATYPE"}</comms-data>'),
+            (f"DC2_BY_RATESCHED empty false && DC2_BY_RATESCHED \u00a0!= '{non_residential}' && has_DevAccount empty true", '<comms-data>$Data{"Id":"DC2_BY_RATESCHED"}</comms-data>'),
+            ('isStatement empty false', 'Group Bill'),
+        ]
+        markup = ''.join('<comms-cond>$Cond{"Condition":'+json.dumps(expression)+', "Text":"'+target+'"}</comms-cond>' for expression, target in conditions)
+        (self.cache/'contents/header-content/versions/1.0/header-content.blob').write_text(html.escape(markup, quote=True))
+        cases = [
+            ({'isEnglishBill':'ENGLISH', 'has_DevAccount':'yes', 'DC2_BY_SATYPE':non_residential}, [True, True, False, False, False], ['Developer Bill', 'Non-Residential Tariff']),
+            ({'DC2_BY_SATYPE':'Residential', 'DC2_BY_RATESCHED':'E-RES', 'isStatement':'yes'}, [False, False, True, True, True], ['Residential', 'E-RES', 'Group Bill']),
+        ]
+        for payload, expected, rendered in cases:
+            with self.subTest(payload=payload):
+                result = LayoutResolver(self.cache, 'Pkg', 'Doc', {'show':True, **payload}, effective_date='2026-09-25').resolve('header')
+                content = result['layout']['children'][0]
+                self.assertEqual([node['passed'] for node in content['children']], expected)
+                self.assertFalse(any('parse a conditional' in warning for warning in result['warnings']))
+                for text in rendered:
+                    self.assertIn(text, content['rendered'])
+
+    def test_conditional_content_accepts_whitespace_around_keys_and_closing_braces(self) -> None:
+        markup = '<comms-cond> \n$Cond { "Condition" : "Address empty false" ,\n "Content" : "address-content" \n} \n</comms-cond>'
+        (self.cache/'contents/header-content/versions/1.0/header-content.blob').write_text(markup)
+        result = LayoutResolver(self.cache, 'Pkg', 'Doc', {'show':True, 'address':'Main St'}, effective_date='2026-09-25').resolve('header')
+        content = result['layout']['children'][0]
+        self.assertTrue(content['children'][0]['passed'])
+        self.assertIn('Main St', content['rendered'])
+        self.assertEqual([], result['warnings'])
+
+    def test_selector_chain_finds_iteration_on_original_layout(self) -> None:
+        template_path = self.cache/'packages/Pkg/versions/v1/AssemblyTemplate.json'
+        template = json.loads(template_path.read_text())
+        template['Documents'][0]['Layouts'] = [{'$$Id':'header', 'Contents':[
+            {'$$Id':'address-content', 'Iteration':{'$$Id':'AddressRows', 'Path':'$.addresses[*]',
+                'Fields':[{'Name':'Address', 'Path':'$.street'}]}}
+        ]}]
+        # A different layout using the same content must not supply its iterator.
+        template['Documents'].append({'$$Id':'Other', 'Layouts':[{'$$Id':'other-layout', 'Contents':[
+            {'$$Id':'address-content', 'Iteration':{'$$Id':'OtherRows', 'Path':'$.wrong[*]',
+                'Fields':[{'Name':'Address', 'Path':'$.wrongStreet'}]}}
+        ]}]})
+        template_path.write_text(json.dumps(template))
+        header = '<comms-cond>$Cond{"Condition":"Name empty false", "Text":"<comms-cond>$Cond{"Condition":"Name empty false", "Content":"conditional-content"}</comms-cond>"}</comms-cond>'
+        intermediate = '<comms-cond>$Cond{"Condition":"Name empty false", "Content":"address-content"}</comms-cond>'
+        address = '<comms-loop><comms-data>$Data{"Id":"AddressRows"}</comms-data></comms-loop><p><comms-data>$Data{"Id":"Address"}</comms-data></p>'
+        for name, markup in [('header-content',header), ('conditional-content',intermediate), ('address-content',address)]:
+            (self.cache/f'contents/{name}/versions/1.0/{name}.blob').write_text(markup)
+        payload = {'show':True, 'name':'Alice', 'addresses':[{'street':'Main St'}, {'street':'Side St'}], 'wrong':[{'wrongStreet':'Wrong Street'}]}
+        result = LayoutResolver(self.cache,'Pkg','Doc',payload,effective_date='2026-09-25').resolve('header')
+        content = result['layout']['children'][0]
+        self.assertEqual(content['rendered'], 'Main St\nSide St')
+        self.assertNotIn('unresolved loop', format_report(result))
+        self.assertEqual([],result['warnings'])
+        def descendants(node):
+            yield node
+            for child in node.get('children',[]):
+                yield from descendants(child)
+        loops = [node for node in descendants(content) if node.get('kind')=='loop']
+        self.assertEqual(loops[0]['name'],'AddressRows')
+        self.assertEqual(loops[0]['count'],2)
+        fields = [node for node in descendants(content) if node.get('kind')=='field']
+        self.assertEqual([node['values'] for node in fields],[['Main St'],['Side St']])
+        self.assertEqual([node['iteration_index'] for node in fields],[1,2])
+        missing = LayoutResolver(self.cache,'Pkg','Doc',payload,effective_date='2026-09-25')._content('header-content',layout_context='unconfigured-layout')
+        self.assertIn('[unresolved loop]',missing['rendered'])
+        suppressed = LayoutResolver(self.cache,'Pkg','Doc',{'show':True},effective_date='2026-09-25').resolve('header')
+        self.assertEqual(suppressed['layout']['children'][0]['rendered'],'')
 
     def test_page_override_and_suppressed_content(self) -> None:
         result = LayoutResolver(

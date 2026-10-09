@@ -1,0 +1,46 @@
+{
+  "application": {
+    "confirm_on_quit": true
+  },
+  "document_display": {
+    "collapse": false
+  },
+  "content_editor": {
+    "font_family": ""
+  },
+  "diagnostics": {
+    "debug_logging": false
+  },
+  "occs": {
+    "cli_path": "",
+    "work_dir": "",
+    "request_timeout_seconds": 360,
+    "session_alias": "",
+    "pre_prod_session_alias": "",
+    "config_source_session_alias": "np",
+    "config_target_session_alias": "pp",
+    "config_id_filter": "",
+    "last_config_id": "",
+    "active_config_label": "",
+    "last_preview_render_types": [
+      "PDF"
+    ],
+    "shared_workspace_dir": "",
+    "models_dir": "",
+    "comms_cache_dir": "",
+    "user_name": "",
+    "retain_lock_after_shared_update": false,
+    "use_static_xsd_conversion": false,
+    "static_xsd_path": "",
+    "package_mru": [],
+    "resource_cache_mru": [],
+    "preview_open_programs": {
+      "PDF": "",
+      "HTML": "",
+      "TEXT": "",
+      "CSV": "",
+      "JSON": "",
+      "METADATA": ""
+    }
+  }
+}

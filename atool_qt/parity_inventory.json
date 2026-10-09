@@ -1,0 +1,3801 @@
+[
+  {
+    "owner": "_show_app_message_dialog",
+    "line": 670,
+    "kind": "Button",
+    "label": "label",
+    "command": "lambda selected=value: _finish(selected)",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/shared_actions.py",
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Qt QMessageBox standard choice controls used by authoring/shared/config workflows. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "expanded_controls": [
+      "OK",
+      "OK/Cancel",
+      "Yes/No",
+      "Yes/No/Cancel",
+      "Retry/Cancel"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 784,
+    "kind": "add_command",
+    "label": "Save",
+    "command": "self.save_assembly_template",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 789,
+    "kind": "add_command",
+    "label": "Open Session",
+    "command": "self.open_last_session",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 794,
+    "kind": "add_command",
+    "label": "Show Local Storage",
+    "command": "self.show_local_storage",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 799,
+    "kind": "add_command",
+    "label": "About ATool",
+    "command": "self._show_about_dialog",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 801,
+    "kind": "add_command",
+    "label": "Exit",
+    "command": "self._on_close",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 806,
+    "kind": "add_command",
+    "label": "Undo",
+    "command": "self.undo_last_change",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 807,
+    "kind": "add_command",
+    "label": "Redo",
+    "command": "self.redo_last_change",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "File/Edit save/session/history/about/storage/exit actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_bundle.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 813,
+    "kind": "add_command",
+    "label": "Map...",
+    "command": "self.map_data_file",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 818,
+    "kind": "add_command",
+    "label": "Remap",
+    "command": "self.remap_data_file",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 823,
+    "kind": "add_command",
+    "label": "Convert...",
+    "command": "self.convert_xml_data_file",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 827,
+    "kind": "add_command",
+    "label": "Convert and Map...",
+    "command": "self.convert_and_map_data_file",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 833,
+    "kind": "add_command",
+    "label": "Generate Sample...",
+    "command": "self.generate_sample_input_for_selected_document",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 837,
+    "kind": "add_command",
+    "label": "Resolve...",
+    "command": "self.resolve_selected_layout",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "Data menu mapping/conversion/sample/resolution actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 846,
+    "kind": "add_command",
+    "label": "User Settings...",
+    "command": "self._open_user_settings_dialog",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 849,
+    "kind": "add_command",
+    "label": "Set...",
+    "command": "self.set_active_occs_config",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 850,
+    "kind": "add_command",
+    "label": "Lock",
+    "command": "self.toggle_active_occs_config_lock",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 855,
+    "kind": "add_command",
+    "label": "Lockouts...",
+    "command": "self.open_occs_config_lockouts_dialog",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 857,
+    "kind": "add_command",
+    "label": "Create...",
+    "command": "self.create_occs_config",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 858,
+    "kind": "add_command",
+    "label": "List",
+    "command": "self.list_occs_configs",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 860,
+    "kind": "add_command",
+    "label": "Close...",
+    "command": "self.close_occs_config",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 861,
+    "kind": "add_command",
+    "label": "Migrate",
+    "command": "self.migrate_occs_config",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ],
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 864,
+    "kind": "add_command",
+    "label": "f\"Active: {active_config or '(not set)'}\"",
+    "command": "",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Config menu lifecycle/locks/active label actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 870,
+    "kind": "add_command",
+    "label": "Download Single...",
+    "command": "self.get_occs_resource_to_cache",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 871,
+    "kind": "add_command",
+    "label": "Download...",
+    "command": "self.download_occs_resource_type",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 873,
+    "kind": "add_command",
+    "label": "Download All",
+    "command": "self.download_all_occs_resources",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 874,
+    "kind": "add_command",
+    "label": "Cancel Download All",
+    "command": "self.cancel_occs_download_all",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 878,
+    "kind": "add_command",
+    "label": "View",
+    "command": "self._view_selected_document_model",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 880,
+    "kind": "add_command",
+    "label": "Generate",
+    "command": "self._generate_selected_document_model",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 882,
+    "kind": "add_command",
+    "label": "Generate all",
+    "command": "self._generate_all_document_models",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "Resources/Model menu download/cache/generation/cancellation actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 892,
+    "kind": "add_command",
+    "label": "Preview...",
+    "command": "self.preview_occs_package",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 899,
+    "kind": "add_command",
+    "label": "Send Email...",
+    "command": "self.send_occs_email",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_email.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_email.py"
+    ],
+    "evidence": "EmailDialog Dry Run/Generate/Cancel/input invalidation/recipient and CLI contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 906,
+    "kind": "add_command",
+    "label": "Cancel Preview",
+    "command": "self.cancel_occs_preview",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 914,
+    "kind": "add_command",
+    "label": "Open Shared Package...",
+    "command": "self.open_occs_package",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 919,
+    "kind": "add_command",
+    "label": "Close Package",
+    "command": "self.close_current_package",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 921,
+    "kind": "add_command",
+    "label": "Get Packages from Comms...",
+    "command": "self.list_occs_packages_from_comms",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "PackagePicker original fuzzy filter/clear/Close/Get Local/Get Shared Edit. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 926,
+    "kind": "add_command",
+    "label": "Update Shared Package",
+    "command": "self.update_shared_occs_package",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 931,
+    "kind": "add_command",
+    "label": "Publish Package to Comms...",
+    "command": "self.publish_occs_package_to_comms",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "PublishConfigDialog Config/dry run/review and guarded publication workflow. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/package_publish.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_publish.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 936,
+    "kind": "add_command",
+    "label": "Check Shared Folder Sync...",
+    "command": "self.check_shared_folder_sync",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 941,
+    "kind": "add_command",
+    "label": "Release Shared Package Lock",
+    "command": "self.release_shared_occs_lock",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 942,
+    "kind": "add_command",
+    "label": "Manual Shared Package Unlock...",
+    "command": "self.manual_unlock_shared_occs_package",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 947,
+    "kind": "add_command",
+    "label": "Open Local Package...",
+    "command": "self.open_occs_package_bundle",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 948,
+    "kind": "add_command",
+    "label": "Open Raw AT...",
+    "command": "self.open_assembly_template",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 950,
+    "kind": "add_command",
+    "label": "Clean Local Packages...",
+    "command": "self.clean_local_occs_packages",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_sync.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_shared_retries.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "Package/Advanced shared/open/close/sync/lock/cleanup actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 955,
+    "kind": "add_command",
+    "label": "Show Documents (Main Window)",
+    "command": "self._show_main_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 959,
+    "kind": "add_command",
+    "label": "Show Field Manager",
+    "command": "self._show_fields_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 964,
+    "kind": "add_command",
+    "label": "Show Clause Manager",
+    "command": "self._show_condition_library_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 969,
+    "kind": "add_command",
+    "label": "Show Layouts",
+    "command": "self._show_layouts_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 974,
+    "kind": "add_command",
+    "label": "Show Content Manager",
+    "command": "self._show_content_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 978,
+    "kind": "add_command",
+    "label": "Show Package Documents",
+    "command": "self.show_package_documents_manager",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 983,
+    "kind": "add_command",
+    "label": "Show Data Browser",
+    "command": "self._show_data_browser_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_build_app_menu",
+    "line": 989,
+    "kind": "add_command",
+    "label": "Arrange",
+    "command": "self._arrange_main_windows",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/authoring.py",
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_menu_parity.py",
+      "tests/test_qt_prototype.py",
+      "tests/test_qt_panels.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1236,
+    "kind": "Button",
+    "label": "\ud83d\udccb",
+    "command": "self._toggle_document_view_mode",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1244,
+    "kind": "Button",
+    "label": "Model",
+    "command": "self._view_selected_document_model",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1255,
+    "kind": "Button",
+    "label": "Resolve",
+    "command": "self.resolve_selected_layout",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1265,
+    "kind": "Button",
+    "label": "Map",
+    "command": "self._toggle_mapping_file",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1273,
+    "kind": "Button",
+    "label": "Show Triggered",
+    "command": "self._toggle_triggered_document_filter",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1283,
+    "kind": "Button",
+    "label": "\u2795 \ud83d\udcc4",
+    "command": "self.add_document",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1290,
+    "kind": "Button",
+    "label": "\u2796 \ud83d\udcc4",
+    "command": "self.remove_selected_document",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_documents_panel",
+    "line": 1318,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "self._clear_documents_filter",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel documents and manager/document actions. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/manager_controls.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_mapping_details.py",
+      "tests/test_qt_resources.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1352,
+    "kind": "Button",
+    "label": "\u2795 \ud83e\udde9",
+    "command": "self.add_layout_to_selected_document",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1359,
+    "kind": "Button",
+    "label": "\u2795 \ud83d\udcdd",
+    "command": "self.add_content_to_selected_layout",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1366,
+    "kind": "Button",
+    "label": "\u2b06\ufe0f",
+    "command": "lambda: self.move_selected_layout_item(-1)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1374,
+    "kind": "Button",
+    "label": "\u2b07\ufe0f",
+    "command": "lambda: self.move_selected_layout_item(1)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1382,
+    "kind": "Button",
+    "label": "\u2795 \ud83d\udd01",
+    "command": "self.add_iteration_to_selected_content",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1389,
+    "kind": "Button",
+    "label": "\u2795 \ud83c\udff7\ufe0f",
+    "command": "self.add_field_to_selected_iteration",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1396,
+    "kind": "Button",
+    "label": "\u2796",
+    "command": "self.remove_selected_layout_item",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1404,
+    "kind": "Button",
+    "label": "\ud83d\udcc2",
+    "command": "self.toggle_layout_tree_expansion",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1478,
+    "kind": "Button",
+    "label": ">",
+    "command": "self._open_selected_layout_condition_in_data_browser",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1505,
+    "kind": "Button",
+    "label": ">",
+    "command": "self._open_selected_layout_path_in_data_browser",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1593,
+    "kind": "Button",
+    "label": "Collapse All",
+    "command": "self._collapse_all_fields",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1596,
+    "kind": "Button",
+    "label": "Expand All",
+    "command": "self._expand_all_fields",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1599,
+    "kind": "Button",
+    "label": "View: Path",
+    "command": "self._toggle_field_view",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1606,
+    "kind": "Button",
+    "label": "Show Mapped",
+    "command": "self._toggle_mapped_field_filter",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1617,
+    "kind": "Button",
+    "label": "Add Field",
+    "command": "self.add_field",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1624,
+    "kind": "Button",
+    "label": "Remove Field",
+    "command": "self.remove_selected_field",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_tree_panel",
+    "line": 1640,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "self._clear_fields_filter",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ManagerPanel fields Name/Path/filter/expand/collapse/CRUD controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py"
+    ]
+  },
+  {
+    "owner": "_create_field_details_panel",
+    "line": 1734,
+    "kind": "Button",
+    "label": ">",
+    "command": "self._open_selected_field_path_in_data_browser",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "Field properties Mandatory and Browse Path. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_manager_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_data_browser_window",
+    "line": 2300,
+    "kind": "Button",
+    "label": "Search",
+    "command": "self._search_data_browser",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/data_queries.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py"
+    ],
+    "evidence": "DataPanel Search/Clear/copy path and original DataQueries engine. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_data_browser_window",
+    "line": 2301,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "self._clear_data_browser_search",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/data_queries.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py"
+    ],
+    "evidence": "DataPanel Search/Clear/copy path and original DataQueries engine. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2705,
+    "kind": "Button",
+    "label": "List from Config",
+    "command": "lambda: self._load_content_browser('config', bypass_filter=True)",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2713,
+    "kind": "Button",
+    "label": "List...",
+    "command": "lambda: self._load_content_browser('all')",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2717,
+    "kind": "Button",
+    "label": "New",
+    "command": "self._new_content_in_manager",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2719,
+    "kind": "Button",
+    "label": "Load",
+    "command": "self._load_selected_content",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2808,
+    "kind": "Button",
+    "label": "New Version",
+    "command": "self._new_content_version",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2810,
+    "kind": "Button",
+    "label": "Save",
+    "command": "self._save_content_from_manager",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2859,
+    "kind": "Button",
+    "label": "Open HTML\u2026",
+    "command": "self._open_content_html_file",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2861,
+    "kind": "Button",
+    "label": "Web Editor\u2026",
+    "command": "self._open_content_web_editor",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2864,
+    "kind": "Button",
+    "label": "Source HTML",
+    "command": "self._toggle_content_html_source",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2901,
+    "kind": "Button",
+    "label": "Reopen Web Editor",
+    "command": "self._open_content_web_editor",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2938,
+    "kind": "Button",
+    "label": "Insert",
+    "command": "self._insert_selected_content_field",
+    "status": "verified_equivalent_in_embedded_editor",
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ],
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_content_window",
+    "line": 2844,
+    "kind": "Button",
+    "label": "label",
+    "command": "command",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "ContentPanel resource/metadata/version/file/source/rich controls and embedded editor toolbar. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "expanded_controls": [
+      "Bold",
+      "Italic",
+      "Underline",
+      "Bulleted list",
+      "Numbered list",
+      "Text color",
+      "Highlight",
+      "Link",
+      "Table",
+      "Style classes",
+      "Undo",
+      "Redo",
+      "Point size"
+    ],
+    "qt_implementation": [
+      "atool_qt/content.py",
+      "atool_qt/rich_content.py",
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/test_qt_content.py",
+      "tests/check_qt_content_editor.py",
+      "tests/check_qt_content_formatting.py"
+    ]
+  },
+  {
+    "owner": "_edit_content_condition",
+    "line": 3506,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded condition-chip draft editor Save/Cancel/scoped completion. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_condition",
+    "line": 3525,
+    "kind": "Button",
+    "label": "Save",
+    "command": "save",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded condition-chip draft editor Save/Cancel/scoped completion. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_loop",
+    "line": 3610,
+    "kind": "Button",
+    "label": "'Use AT Picker' if source_visible and picker_visible else 'Edit Source HTML\u2026'",
+    "command": "toggle_source",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded loop-chip AT picker/source editor Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_loop",
+    "line": 3593,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded loop-chip AT picker/source editor Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_loop",
+    "line": 3639,
+    "kind": "Button",
+    "label": "Save",
+    "command": "save",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded loop-chip AT picker/source editor Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_data",
+    "line": 3689,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded data-chip typed properties/suggestions Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_edit_content_data",
+    "line": 3709,
+    "kind": "Button",
+    "label": "Save",
+    "command": "save",
+    "status": "verified_equivalent_in_embedded_editor",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/content_chip_editors.js"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_chips.py"
+    ],
+    "evidence": "Embedded data-chip typed properties/suggestions Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_content_table_editor",
+    "line": 4089,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "Embedded table/cell structure and style controls, selection and Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_tables.py",
+      "tests/check_qt_content_chips.py"
+    ]
+  },
+  {
+    "owner": "_open_content_table_editor",
+    "line": 4058,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "prop.destroy",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "Embedded table/cell structure and style controls, selection and Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_tables.py",
+      "tests/check_qt_content_chips.py"
+    ]
+  },
+  {
+    "owner": "_open_content_table_editor",
+    "line": 4066,
+    "kind": "Button",
+    "label": "Save",
+    "command": "save_properties",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "Embedded table/cell structure and style controls, selection and Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_tables.py",
+      "tests/check_qt_content_chips.py"
+    ]
+  },
+  {
+    "owner": "_open_content_table_editor",
+    "line": 4078,
+    "kind": "Button",
+    "label": "label",
+    "command": "command",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "Embedded table/cell structure and style controls, selection and Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "expanded_controls": [
+      "Row above",
+      "Row below",
+      "Column left",
+      "Column right",
+      "Split horizontally",
+      "Split vertically",
+      "Merge left",
+      "Merge right",
+      "Merge up",
+      "Merge down",
+      "Cell/table style Save/Cancel"
+    ],
+    "qt_implementation": [
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_tables.py",
+      "tests/check_qt_content_chips.py"
+    ]
+  },
+  {
+    "owner": "_open_content_table_editor",
+    "line": 4088,
+    "kind": "Button",
+    "label": "self._content_table_cell_label(cell)",
+    "command": "choose",
+    "status": "verified_equivalent_in_embedded_editor",
+    "evidence": "Embedded table/cell structure and style controls, selection and Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/content_editor.html"
+    ],
+    "verification_tests": [
+      "tests/check_qt_content_tables.py",
+      "tests/check_qt_content_chips.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4914,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "self._clear_condition_library_filter",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4969,
+    "kind": "Button",
+    "label": "Add",
+    "command": "self._add_condition_library_entry",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4970,
+    "kind": "Button",
+    "label": "Delete",
+    "command": "self._delete_condition_library_entry",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4971,
+    "kind": "Button",
+    "label": "Save",
+    "command": "self._save_condition_library_entry",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4972,
+    "kind": "Button",
+    "label": "Find Usage...",
+    "command": "self._show_selected_clause_usage",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4975,
+    "kind": "Button",
+    "label": "Find Raw...",
+    "command": "self._show_raw_condition_usage",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4978,
+    "kind": "Button",
+    "label": "Update Triggers...",
+    "command": "self._update_document_triggers_from_clause_entry",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 4993,
+    "kind": "Button",
+    "label": "(i)",
+    "command": "self._show_compose_help",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 5030,
+    "kind": "Button",
+    "label": "Insert Name",
+    "command": "self._insert_selected_clause_name",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_library_window",
+    "line": 5033,
+    "kind": "Button",
+    "label": "Apply Composed",
+    "command": "self._apply_composed_condition",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_clause_usage.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_panels.py",
+      "tests/test_qt_menu_parity.py"
+    ],
+    "evidence": "ClausePanel independent library/composer, clear filter, toolbar usage/update/composition. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_clause_trigger_update_window",
+    "line": 5527,
+    "kind": "Button",
+    "label": "Apply This",
+    "command": "self._apply_current_clause_trigger_update",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog Apply Current/Skip/All/Cancel and stale-source/next-pending behavior. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_create_clause_trigger_update_window",
+    "line": 5533,
+    "kind": "Button",
+    "label": "Skip",
+    "command": "self._skip_current_clause_trigger_update",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog Apply Current/Skip/All/Cancel and stale-source/next-pending behavior. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_create_clause_trigger_update_window",
+    "line": 5539,
+    "kind": "Button",
+    "label": "Apply All",
+    "command": "self._apply_all_clause_trigger_updates",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog Apply Current/Skip/All/Cancel and stale-source/next-pending behavior. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_create_clause_trigger_update_window",
+    "line": 5545,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "self._close_clause_trigger_update_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog Apply Current/Skip/All/Cancel and stale-source/next-pending behavior. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_usage_window",
+    "line": 6139,
+    "kind": "Button",
+    "label": "Select Owner",
+    "command": "self._select_current_condition_usage_target",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog owner navigation and Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_create_condition_usage_window",
+    "line": 6145,
+    "kind": "Button",
+    "label": "Close",
+    "command": "self._close_condition_usage_window",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog owner navigation and Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_refresh_condition_usage_type_filter_menu",
+    "line": 6194,
+    "kind": "add_command",
+    "label": "All Types",
+    "command": "lambda: self._set_condition_usage_type_filter('')",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog type selection All Types/generated owner kinds. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "_refresh_condition_usage_type_filter_menu",
+    "line": 6199,
+    "kind": "add_command",
+    "label": "type_label",
+    "command": "lambda selected=type_label: self._set_condition_usage_type_filter(selected)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConditionUsageDialog type selection All Types/generated owner kinds. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/clause_usage.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_clause_usage.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8198,
+    "kind": "Button",
+    "label": "Resolve",
+    "command": "_resolve",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8200,
+    "kind": "Button",
+    "label": "Save...",
+    "command": "_save",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8050,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_cache",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8056,
+    "kind": "Button",
+    "label": "Choose...",
+    "command": "lambda: self._open_occs_config_lockout_date_picker(dialog, date_var, title='Choose Effective Date')",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8105,
+    "kind": "Button",
+    "label": "Refresh",
+    "command": "_refresh_layouts",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "resolve_selected_layout",
+    "line": 8202,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResolveDialog Browse/native date calendar/Refresh/Resolve/Save/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py",
+      "tests/test_layout_resolver.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8788,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8855,
+    "kind": "Button",
+    "label": "Save",
+    "command": "_save_settings",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8545,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_cli_path",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8568,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_work_dir",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8632,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_shared_workspace",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8654,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_models_dir",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8676,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_comms_cache_dir",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8722,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_static_xsd",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8764,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "lambda selected_render_type=render_type: _browse_preview_program(selected_render_type)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "open_occs_config_lockouts_dialog",
+    "line": 9338,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LockoutsDialog Add/Remove/Refresh/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "open_occs_config_lockouts_dialog",
+    "line": 9375,
+    "kind": "Button",
+    "label": "Add...",
+    "command": "_add",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LockoutsDialog Add/Remove/Refresh/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "open_occs_config_lockouts_dialog",
+    "line": 9376,
+    "kind": "Button",
+    "label": "Remove",
+    "command": "_remove",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "LockoutsDialog Add/Remove/Refresh/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_add_dialog",
+    "line": 9398,
+    "kind": "Button",
+    "label": "Choose...",
+    "command": "lambda: self._open_occs_config_lockout_date_picker(dialog, date_var)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "AddLockoutDialog native date calendar/timezone/duration/Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_add_dialog",
+    "line": 9479,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "AddLockoutDialog native date calendar/timezone/duration/Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_add_dialog",
+    "line": 9480,
+    "kind": "Button",
+    "label": "Add Lockout",
+    "command": "_save",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "AddLockoutDialog native date calendar/timezone/duration/Save/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_date_picker",
+    "line": 9536,
+    "kind": "Button",
+    "label": "\u2039",
+    "command": "_previous",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "QDateEdit native calendar replaces separate day and month controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_data_actions.py",
+      "tests/test_qt_package_preview.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_date_picker",
+    "line": 9537,
+    "kind": "Button",
+    "label": "\u203a",
+    "command": "_next",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "QDateEdit native calendar replaces separate day and month controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_data_actions.py",
+      "tests/test_qt_package_preview.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_lockout_date_picker",
+    "line": 9515,
+    "kind": "Button",
+    "label": "str(day)",
+    "command": "lambda picked_day=day: _choose(picked_day)",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "QDateEdit native calendar replaces separate day and month controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py",
+      "atool_qt/data_actions.py",
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_data_actions.py",
+      "tests/test_qt_package_preview.py"
+    ]
+  },
+  {
+    "owner": "_show_generated_input_preview",
+    "line": 11351,
+    "kind": "Button",
+    "label": "Save As...",
+    "command": "_save_generated",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SampleDialog editable JSON Save As/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_show_generated_input_preview",
+    "line": 11352,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "SampleDialog editable JSON Save As/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13979,
+    "kind": "Button",
+    "label": "Close",
+    "command": "_on_dialog_close",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13980,
+    "kind": "Button",
+    "label": "Toggle",
+    "command": "_toggle_selected_rows",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13981,
+    "kind": "Button",
+    "label": "Select Old",
+    "command": "_select_old",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13982,
+    "kind": "Button",
+    "label": "Select All Removable",
+    "command": "_select_all_removable",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13983,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "_clear_selection",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_local_occs_cleanup_dialog",
+    "line": 13984,
+    "kind": "Button",
+    "label": "Clean Selected",
+    "command": "_delete_selected",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py",
+      "atool_qt/shared_packages.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py"
+    ],
+    "evidence": "CleanupDialog Toggle/Space/Old/Removable/None/Delete/Close with fresh protection checks. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14349,
+    "kind": "Button",
+    "label": "Preview",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14240,
+    "kind": "Button",
+    "label": "Choose...",
+    "command": "lambda: self._open_occs_config_lockout_date_picker(dialog, effective_date_var, title='Choose Effective Date')",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14264,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14161,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_json_file",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "send_occs_email",
+    "line": 14446,
+    "kind": "Button",
+    "label": "Generate",
+    "command": "",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_email.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_email.py"
+    ],
+    "evidence": "EmailDialog Dry Run/Generate/Cancel/input invalidation/recipient and CLI contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "send_occs_email",
+    "line": 14588,
+    "kind": "Button",
+    "label": "Dry Run",
+    "command": "_dry_run",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_email.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_email.py"
+    ],
+    "evidence": "EmailDialog Dry Run/Generate/Cancel/input invalidation/recipient and CLI contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "send_occs_email",
+    "line": 14443,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_email.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_email.py"
+    ],
+    "evidence": "EmailDialog Dry Run/Generate/Cancel/input invalidation/recipient and CLI contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_shared_package_selection_dialog",
+    "line": 15132,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "SharedPicker original edit/testing/resume and Comms retrieval controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_shared_package_selection_dialog",
+    "line": 15138,
+    "kind": "Button",
+    "label": "Retrieve from Comms...",
+    "command": "_retrieve_from_comms",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "SharedPicker original edit/testing/resume and Comms retrieval controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_shared_package_selection_dialog",
+    "line": 15170,
+    "kind": "Button",
+    "label": "action_label",
+    "command": "_open_selected",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/shared_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "SharedPicker original edit/testing/resume and Comms retrieval controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_save_dialog",
+    "line": 15661,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_publish.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_publish.py"
+    ],
+    "evidence": "PublishConfigDialog Config/dry run/review and guarded publication workflow. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_save_dialog",
+    "line": 15673,
+    "kind": "Button",
+    "label": "Dry Run",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_publish.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_publish.py"
+    ],
+    "evidence": "PublishConfigDialog Config/dry run/review and guarded publication workflow. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "create_occs_config",
+    "line": 15891,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "CreateConfigDialog validated fields/Create/Cancel and active identity. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "create_occs_config",
+    "line": 15927,
+    "kind": "Button",
+    "label": "Create",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "CreateConfigDialog validated fields/Create/Cancel and active identity. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_active_occs_config_dialog",
+    "line": 15994,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker Set Config/Cancel and original last selection. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_active_occs_config_dialog",
+    "line": 16003,
+    "kind": "Button",
+    "label": "Set Config",
+    "command": "_apply",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker Set Config/Cancel and original last selection. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_list_dialog",
+    "line": 16058,
+    "kind": "Button",
+    "label": "Lock Configuration",
+    "command": "",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker list/filter/lock/unlock/Close Config/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_list_dialog",
+    "line": 16060,
+    "kind": "Button",
+    "label": "Close Configuration",
+    "command": "",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker list/filter/lock/unlock/Close Config/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_list_dialog",
+    "line": 16057,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker list/filter/lock/unlock/Close Config/Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_close_dialog",
+    "line": 16243,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker Close Config/Cancel with original shortName/numeric protection ID. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "_open_occs_config_close_dialog",
+    "line": 16263,
+    "kind": "Button",
+    "label": "Close",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ConfigPicker Close Config/Cancel with original shortName/numeric protection ID. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/configuration.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py"
+    ]
+  },
+  {
+    "owner": "get_occs_resource_to_cache",
+    "line": 16450,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResourceDialog single type/name/MRU/Refresh Cache/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py"
+    ]
+  },
+  {
+    "owner": "get_occs_resource_to_cache",
+    "line": 16466,
+    "kind": "Button",
+    "label": "Refresh Cache",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResourceDialog single type/name/MRU/Refresh Cache/Cancel. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py"
+    ]
+  },
+  {
+    "owner": "download_occs_resource_type",
+    "line": 16525,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResourceDialog type Download/Cancel, seven original categories. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py"
+    ]
+  },
+  {
+    "owner": "download_occs_resource_type",
+    "line": 16536,
+    "kind": "Button",
+    "label": "Download",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "ResourceDialog type Download/Cancel, seven original categories. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/resource_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_resources.py"
+    ]
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17543,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "self._clear_package_documents_filter",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17595,
+    "kind": "Button",
+    "label": "Move Up",
+    "command": "lambda: self._move_active_package_document(-1)",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17600,
+    "kind": "Button",
+    "label": "Move Down",
+    "command": "lambda: self._move_active_package_document(1)",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17611,
+    "kind": "Button",
+    "label": "Add...",
+    "command": "self._show_add_package_document_dialog",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17616,
+    "kind": "Button",
+    "label": "Associate...",
+    "command": "self._show_associate_active_package_document_dialog",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17621,
+    "kind": "Button",
+    "label": "Remove",
+    "command": "self._remove_active_package_document_association",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17641,
+    "kind": "Button",
+    "label": "Apply Condition",
+    "command": "self._apply_active_package_document_condition",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17660,
+    "kind": "Button",
+    "label": "Refresh",
+    "command": "self._refresh_package_documents_manager",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17665,
+    "kind": "Button",
+    "label": "Close",
+    "command": "self._close_package_documents_manager",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_show_add_package_document_dialog",
+    "line": 18172,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "lambda: filter_var.set('')",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "CatalogDialog filter/clear/refresh/selection/Add/Associate/Cancel; selected catalog document creates AT entry as in original. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_show_add_package_document_dialog",
+    "line": 18173,
+    "kind": "Button",
+    "label": "Refresh from Comms",
+    "command": "lambda: self._refresh_document_catalog_cache(filter_var.get().strip(), refresh_complete)",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "CatalogDialog filter/clear/refresh/selection/Add/Associate/Cancel; selected catalog document creates AT entry as in original. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_show_add_package_document_dialog",
+    "line": 18282,
+    "kind": "Button",
+    "label": "'Associate' if associating_existing_document else 'Add'",
+    "command": "add_selected",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "CatalogDialog filter/clear/refresh/selection/Add/Associate/Cancel; selected catalog document creates AT entry as in original. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_show_add_package_document_dialog",
+    "line": 18283,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "parity_note": "Original workflow and Qt controls reconciled in the completed requirement/control audit; see verification_tests.",
+    "qt_implementation": [
+      "atool_qt/package_documents.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_comms.py"
+    ],
+    "evidence": "CatalogDialog filter/clear/refresh/selection/Add/Associate/Cancel; selected catalog document creates AT entry as in original. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_list_dialog",
+    "line": 19450,
+    "kind": "Button",
+    "label": "Clear",
+    "command": "_clear_filter",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "PackagePicker original fuzzy filter/clear/Close/Get Local/Get Shared Edit. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_list_dialog",
+    "line": 19523,
+    "kind": "Button",
+    "label": "Close",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "PackagePicker original fuzzy filter/clear/Close/Get Local/Get Shared Edit. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_list_dialog",
+    "line": 19564,
+    "kind": "Button",
+    "label": "Get to Local...",
+    "command": "_get_selected_to_local",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "PackagePicker original fuzzy filter/clear/Close/Get Local/Get Shared Edit. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_list_dialog",
+    "line": 19569,
+    "kind": "Button",
+    "label": "Get to Shared/Edit...",
+    "command": "_get_selected_to_shared_edit",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "PackagePicker original fuzzy filter/clear/Close/Get Local/Get Shared Edit. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_version_dialog",
+    "line": 19837,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "VersionPicker cancel/Get and version probe/fallback/actual version handling. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_occs_package_version_dialog",
+    "line": 19872,
+    "kind": "Button",
+    "label": "submit_label",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_downloads.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_downloads.py"
+    ],
+    "evidence": "VersionPicker cancel/Get and version probe/fallback/actual version handling. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "convert_xml_data_file",
+    "line": 20607,
+    "kind": "Button",
+    "label": "Browse...",
+    "command": "_browse_xml_file",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "XmlConversionDialog Browse/Convert/Cancel/Close/bill/reroot/XSD/map contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "convert_xml_data_file",
+    "line": 20651,
+    "kind": "Button",
+    "label": "Cancel",
+    "command": "dialog.destroy",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "XmlConversionDialog Browse/Convert/Cancel/Close/bill/reroot/XSD/map contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "convert_xml_data_file",
+    "line": 20729,
+    "kind": "Button",
+    "label": "submit_label",
+    "command": "_submit",
+    "status": "verified_equivalent_in_qt",
+    "evidence": "XmlConversionDialog Browse/Convert/Cancel/Close/bill/reroot/XSD/map contracts. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "qt_implementation": [
+      "atool_qt/data_actions.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_data_actions.py"
+    ]
+  },
+  {
+    "owner": "_create_layouts_panel",
+    "line": 1536,
+    "kind": "Checkbutton",
+    "label": "(unlabeled)",
+    "command": "self.layout_mandatory_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_manager_parity.py",
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_mapping_details.py"
+    ],
+    "evidence": "LayoutPanel and AuthoringActions layout CRUD/order/path/condition controls. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_field_details_panel",
+    "line": 1728,
+    "kind": "Checkbutton",
+    "label": "(unlabeled)",
+    "command": "self.edit_field_mandatory_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/window.py",
+      "atool_qt/authoring.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_authoring.py",
+      "tests/test_qt_manager_parity.py"
+    ],
+    "evidence": "Field properties Mandatory and Browse Path. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_document_details_panel",
+    "line": 1832,
+    "kind": "Button",
+    "label": "_toggle_document_metadata_collapsed",
+    "command": "self._toggle_document_metadata_collapsed",
+    "status": "superseded_by_requested_document_tabs",
+    "qt_implementation": [
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_panels.py",
+      "tests/test_qt_package_document_controls.py"
+    ],
+    "evidence": "Requested Properties/Source JSON/Match Details tabs replace legacy disclosure buttons. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_document_details_panel",
+    "line": 1874,
+    "kind": "Button",
+    "label": "_toggle_document_clauses_collapsed",
+    "command": "self._toggle_document_clauses_collapsed",
+    "status": "superseded_by_requested_document_tabs",
+    "qt_implementation": [
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_panels.py",
+      "tests/test_qt_package_document_controls.py"
+    ],
+    "evidence": "Requested Properties/Source JSON/Match Details tabs replace legacy disclosure buttons. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_document_details_panel",
+    "line": 1891,
+    "kind": "Button",
+    "label": "_toggle_document_condition_collapsed",
+    "command": "self._toggle_document_condition_collapsed",
+    "status": "superseded_by_requested_document_tabs",
+    "qt_implementation": [
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_panels.py",
+      "tests/test_qt_package_document_controls.py"
+    ],
+    "evidence": "Requested Properties/Source JSON/Match Details tabs replace legacy disclosure buttons. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_document_details_panel",
+    "line": 1901,
+    "kind": "Button",
+    "label": "_toggle_document_match_details_collapsed",
+    "command": "self._toggle_document_match_details_collapsed",
+    "status": "superseded_by_requested_document_tabs",
+    "qt_implementation": [
+      "atool_qt/window.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_panels.py",
+      "tests/test_qt_package_document_controls.py"
+    ],
+    "evidence": "Requested Properties/Source JSON/Match Details tabs replace legacy disclosure buttons. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8457,
+    "kind": "Checkbutton",
+    "label": "Confirm on Quit",
+    "command": "confirm_on_quit_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8468,
+    "kind": "Checkbutton",
+    "label": "Collapse",
+    "command": "collapse_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8493,
+    "kind": "Checkbutton",
+    "label": "Debug Logging (console)",
+    "command": "debug_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8688,
+    "kind": "Checkbutton",
+    "label": "Retain lock on package after update",
+    "command": "retain_lock_after_shared_update_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_open_user_settings_dialog",
+    "line": 8695,
+    "kind": "Checkbutton",
+    "label": "Use local XSD for XML conversion (bypass OCCS conversion API)",
+    "command": "use_static_xsd_conversion_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/user_settings.py",
+      "atool_qt/settings_defaults.json"
+    ],
+    "verification_tests": [
+      "tests/test_qt_settings_config.py",
+      "tests/test_qt_shared_packages.py",
+      "tests/test_qt_data_actions.py"
+    ],
+    "evidence": "SettingsDialog fresh draft, all browse/check/Save/Cancel controls and validated persistence. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14170,
+    "kind": "Checkbutton",
+    "label": "Use Pre-Prod Session Alias for this preview",
+    "command": "use_pre_prod_session_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14250,
+    "kind": "Checkbutton",
+    "label": "Exclude Charts",
+    "command": "exclude_charts_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14256,
+    "kind": "Checkbutton",
+    "label": "Open after generation",
+    "command": "open_after_var",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "_create_package_documents_manager_window",
+    "line": 17605,
+    "kind": "Checkbutton",
+    "label": "Always trigger",
+    "command": "self._toggle_active_package_document_always_trigger",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_documents.py",
+      "atool_qt/window.py",
+      "atool_qt/editor.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_document_controls.py",
+      "tests/test_qt_bundle.py",
+      "tests/test_qt_prototype.py"
+    ],
+    "evidence": "Integrated Documents Manager association/order/trigger/condition/refresh controls; dock Close replaces separate window Close. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence."
+  },
+  {
+    "owner": "preview_occs_package",
+    "line": 14187,
+    "kind": "Checkbutton",
+    "label": "render_type",
+    "command": "render_vars[render_type]",
+    "status": "verified_equivalent_in_qt",
+    "qt_implementation": [
+      "atool_qt/package_preview.py"
+    ],
+    "verification_tests": [
+      "tests/test_qt_package_preview.py"
+    ],
+    "evidence": "PreviewDialog original render flags/date/input/alias/timeout and independent cancellation. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",
+    "expanded_controls": [
+      "PDF",
+      "HTML",
+      "TEXT",
+      "CSV",
+      "JSON",
+      "METADATA"
+    ]
+  }
+]

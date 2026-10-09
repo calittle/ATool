@@ -11,12 +11,16 @@
 
 ATool (Assembly Template Tool) is a cross-platform Python desktop app for working with Oracle Communications Cloud Service (OCCS) Packages and Assembly Templates.
 
+Version 2.0.0 uses a unified Qt workspace with dockable, tabbed, detachable panels
+for Documents, Layouts, Fields, Clauses, Data and Content. The original Tkinter
+application remains available through the legacy launchers.
+
 ## Requirements
 
 - Python 3.10+ (recommended)
-- `tkinter` (bundled with standard Python installers on macOS/Windows)
+- PySide6 (installed from `requirements.txt`)
 - OCCS CLI access for OCCS package, preview, mapping, and conversion actions
-- The dependencies in `requirements.txt` for the unified browser Content Editor
+- `tkinter` is needed only for the original application
 
 Set up the local runtime once from the ATool folder:
 
@@ -62,6 +66,17 @@ python3 -m venv .venv
 
 ## Run ATool
 
+Install the dependencies before using either launcher. On Windows, run these
+commands from the extracted ATool folder:
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+On macOS, use the environment setup commands under Requirements above.
+Existing installations also need to install the updated `requirements.txt`.
+
 ### Windows
 
 Double-click:
@@ -90,8 +105,8 @@ chmod +x Run_ATool.zsh
 ./Run_ATool.zsh
 ```
 
-If you want a Finder double-click launcher on macOS, rename or copy the script as
-`Run_ATool.command`, then run `chmod +x Run_ATool.command`.
+For a Finder double-click launch, use the included `Run_ATool.command`.
+The release ZIP preserves its executable permissions.
 
 ### Direct Python Command
 
@@ -100,14 +115,36 @@ If the launchers are unavailable, run the app directly from the ATool folder:
 macOS:
 
 ```bash
-.venv/bin/python ATool.py
+.venv/bin/python ATool_Qt.py
 ```
 
 Windows:
 
 ```powershell
-py -3 ATool.py
+.venv\Scripts\python.exe ATool_Qt.py
 ```
+
+### Original Application
+
+Use `Run_ATool_Legacy.command` on macOS or `Run_ATool_Legacy.bat` on Windows
+to launch the original Tkinter application. Its source remains `ATool.py`.
+The Tkinter troubleshooting below applies to that legacy application.
+
+### Workspace Controls
+
+Drag panel titles to dock, tab, detach or rearrange the managers. Use
+**View → Panels** to show hidden panels and **View → Reset Layout** to restore
+the default arrangement. Clause Manager and Data Browser initially share tabs
+with Field Manager.
+
+Every grid supports column resizing and header-click sorting. Selected rows use
+a lavender background and purple outline; PASS/mapped values are blue and
+FAIL/unmapped values are red. An asterisk marks changed items. Field Manager
+supports multi-field copy/paste with Cmd/Ctrl+C and Cmd/Ctrl+V.
+
+The Layout Resolver displays a collapsible evidence tree with resolved values,
+condition results and iteration rows. Expand or collapse branches to inspect
+selected content; text reports and JSON evidence can still be saved.
 
 ## Troubleshooting Startup
 

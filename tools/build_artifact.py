@@ -6,10 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import py_compile
 import subprocess
 import sys
-import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -17,15 +15,26 @@ from pathlib import Path
 
 PACKAGE_FILES = (
     "ATool.py",
+    "ATool_Qt.py",
     "atool_web_editor.py",
     "Run_ATool.bat",
     "Run_ATool.zsh",
+    "Run_ATool.command",
+    "Run_ATool_Legacy.bat",
+    "Run_ATool_Legacy.zsh",
+    "Run_ATool_Legacy.command",
+    "Run_ATool_Qt.bat",
+    "Run_ATool_Qt.command",
     "README.md",
+    "LICENSE",
+    "QT_PROTOTYPE.md",
     "requirements.txt",
+    "requirements-qt.txt",
     "tools/resolve_layout.py",
 )
 PACKAGE_DIRECTORIES = (
     "atool_core",
+    "atool_qt",
 )
 
 
@@ -65,17 +74,10 @@ def git_output(repo_root: Path, *args: str, default: str = "") -> str:
 
 
 def compile_app(repo_root: Path, source: str) -> None:
-    if source == "worktree":
-        py_compile.compile(str(repo_root / "ATool.py"), doraise=True)
-        return
-
-    app_source = git_value(repo_root, "show", "HEAD:ATool.py")
-    if not app_source:
-        raise RuntimeError("Could not read ATool.py from HEAD.")
-    with tempfile.TemporaryDirectory(prefix="atool-build-") as temp_dir:
-        temp_app = Path(temp_dir) / "ATool.py"
-        temp_app.write_text(app_source, encoding="utf-8")
-        py_compile.compile(str(temp_app), doraise=True)
+    files = (*PACKAGE_FILES, *package_directory_files(repo_root, source))
+    for path in files:
+        if path.endswith('.py'):
+            compile(read_package_file(repo_root, path, source), path, 'exec')
 
 
 def read_package_file(repo_root: Path, relative_path: str, source: str) -> bytes:
@@ -90,7 +92,7 @@ def read_package_file(repo_root: Path, relative_path: str, source: str) -> bytes
     )
     if result.returncode == 0:
         return result.stdout
-    return file_path.read_bytes()
+    raise RuntimeError(f"Required release file is not committed: {relative_path}")
 
 
 def package_directory_files(repo_root: Path, source: str) -> tuple[str, ...]:
@@ -225,10 +227,18 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     built_at = datetime.now().isoformat(timespec="seconds")
 
     with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        def write_runtime_file(relative_path: str) -> None:
+            info = zipfile.ZipInfo(relative_path, datetime.now().timetuple()[:6])
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            mode = 0o100755 if relative_path.endswith((".command", ".zsh")) else 0o100644
+            info.external_attr = mode << 16
+            archive.writestr(info, read_package_file(repo_root, relative_path, source))
+
         for relative_path in PACKAGE_FILES:
-            archive.writestr(relative_path, read_package_file(repo_root, relative_path, source))
+            write_runtime_file(relative_path)
         for relative_path in package_directory_files(repo_root, source):
-            archive.writestr(relative_path, read_package_file(repo_root, relative_path, source))
+            write_runtime_file(relative_path)
         archive.writestr(
             "NOTES.MD",
             build_release_notes(

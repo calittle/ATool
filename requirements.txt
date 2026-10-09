@@ -1,2 +1,5 @@
-# Native WebKit editor window used by the unified Content editor on macOS.
+# Unified Qt application.
+PySide6==6.12.0
+
+# Browser editor support for the original application.
 pywebview==6.2.1

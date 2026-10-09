@@ -17,7 +17,7 @@ _COMMS_TAG = re.compile(r"<comms-(cond|data|loop)(?:\s[^>]*)?>", re.IGNORECASE)
 _BLOCK_END = re.compile(r"</(?:p|div|tr|table|figure)>|<br\s*/?>", re.IGNORECASE)
 _HTML_TAG = re.compile(r"<[^>]+>")
 _COND_HEAD = re.compile(
-    r'^\$Cond\{"Condition":"(?P<condition>(?:\\.|[^"\\])*)","(?P<kind>Text|Content)":"',
+    r'^\s*\$Cond\s*\{\s*"Condition"\s*:\s*"(?P<condition>(?:\\.|[^"\\])*)"\s*,\s*"(?P<kind>Text|Content)"\s*:\s*"',
     re.DOTALL,
 )
 
@@ -412,6 +412,7 @@ class LayoutResolver:
         self,
         markup: str,
         iteration_context: dict[str, Any] | None = None,
+        layout_context: str | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         children: list[dict[str, Any]] = []
         output: list[str] = []
@@ -463,31 +464,33 @@ class LayoutResolver:
                 output.append(value)
             else:
                 head = _COND_HEAD.match(inner)
-                if not head or not inner.endswith('"}'):
+                tail = re.search(r'"\s*\}\s*$', inner)
+                if not head or not tail or tail.start() < head.end():
                     self._warn("Could not parse a conditional content fragment")
                     children.append({"kind": "condition", "passed": None, "raw": inner[:300]})
                 else:
                     condition_text = json.loads('"' + head.group("condition") + '"')
                     check = self._condition(condition_text)
-                    target = inner[head.end():-2]
+                    target = inner[head.end():tail.start()]
                     branch: dict[str, Any] = {"kind": "condition", **check, "target_kind": head.group("kind")}
                     if head.group("kind") == "Content":
                         branch["target"] = target
                         if check["passed"] is True:
-                            child = self._content(target)
+                            iteration = self._relationship_iteration(layout_context, target) if layout_context else None
+                            child = self._content(target, iteration=iteration, layout_context=layout_context)
                             branch["children"] = [child]
                             branch["rendered"] = child.get("rendered", "")
                             if branch["rendered"]:
                                 output.append("\n" + branch["rendered"] + "\n")
                     elif check["passed"] is True:
-                        branch["children"], branch["rendered"] = self._markup(target, iteration_context)
+                        branch["children"], branch["rendered"] = self._markup(target, iteration_context, layout_context)
                         output.append(branch["rendered"])
                     children.append(branch)
             cursor = tag_end
         output.append(self._plain(markup[cursor:]))
         return children, "".join(output)
 
-    def _content(self, name: str, iteration: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _content(self, name: str, iteration: dict[str, Any] | None = None, *, layout_context: str | None = None) -> dict[str, Any]:
         node: dict[str, Any] = {"kind": "content", "name": name, "passed": True, "children": [], "rendered": ""}
         if name in self._content_stack:
             node["passed"] = None
@@ -546,7 +549,7 @@ class LayoutResolver:
                     for tag in unsupported:
                         self._warn(f"Unsupported comms-{tag} markup in {name}")
                     if iteration is None:
-                        branches, rendered = self._markup(markup)
+                        branches, rendered = self._markup(markup, layout_context=layout_context)
                         node["children"].extend(branches)
                     else:
                         iteration_path = str(iteration.get("Path", ""))
@@ -562,7 +565,7 @@ class LayoutResolver:
                         rendered_rows: list[str] = []
                         for item_index, item in enumerate(items, start=1):
                             context = {"definition": iteration, "item": item, "index": item_index}
-                            branches, row_rendered = self._markup(markup, context)
+                            branches, row_rendered = self._markup(markup, context, layout_context)
                             loop_node["children"].append({
                                 "kind": "iteration",
                                 "name": f"row {item_index}",
@@ -628,7 +631,7 @@ class LayoutResolver:
             resolved = (
                 self._layout(child["name"], child["uuid"], (*trail, uuid))
                 if child["kind"] == "layout"
-                else self._content(child["name"], iteration=iteration)
+                else self._content(child["name"], iteration=iteration, layout_context=name)
             )
             resolved.update({"index": index, "area": child["area"]})
             if child["always"] is False:

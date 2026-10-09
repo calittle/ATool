@@ -1,0 +1,185 @@
+<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-atool-editor' qrc:; script-src-attr 'none';"><meta charset="utf-8"><style>
+body { margin:0; font:14px -apple-system, BlinkMacSystemFont, sans-serif; color:#1f2937; }
+#bar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:8px 10px; border-bottom:1px solid #d1d5db; background:#f8fafc; position:sticky; top:0; z-index:2; }
+.tools { position:relative; } .tools summary { cursor:pointer; border:1px solid #cbd5e1; border-radius:5px; background:white; padding:5px 9px; } .tools > div { position:fixed; width:min(350px, calc(100vw - 16px)); box-sizing:border-box; overflow:auto; padding:10px; background:#fff; border:1px solid #cbd5e1; border-radius:5px; box-shadow:0 4px 14px #0002; z-index:4; display:flex; flex-wrap:wrap; gap:5px; }
+#bar .spacer { flex:1; } button { border:1px solid #cbd5e1; border-radius:5px; background:white; padding:5px 9px; cursor:pointer; } button:hover { background:#eff6ff; }
+#editor { min-height:160px; box-sizing:border-box; padding:22px; outline:none; } #editor:focus { box-shadow:inset 0 0 0 2px #bfdbfe; }
+table { border-collapse:collapse; } td, th { min-width:32px; min-height:18px; padding:0; vertical-align:top; outline:1px solid #cbd5e1; outline-offset:-1px; } td.atool-cell-active, th.atool-cell-active { outline:2px solid #2563eb; outline-offset:-2px; }
+.chip { display:inline-block; padding:1px 5px; margin:0 2px; border-radius:4px; background:#e0f2fe; color:#075985; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor:pointer; user-select:none; } .chip.data { background:#f3e8ff; color:#6d28d9; } .chip.loop { background:#ffedd5; color:#7c2d12; }
+#dialog { position:fixed; inset:0; display:none; place-items:center; background:#0004; z-index:5; } #dialog.open { display:grid; } #card { width:min(520px, calc(100vw - 40px)); background:white; border-radius:9px; box-shadow:0 18px 48px #0005; padding:18px; } #card h2 { margin:0 0 14px; font-size:16px; } #card input, #card select, #card textarea, .text-target { width:100%; box-sizing:border-box; padding:7px; border:1px solid #94a3b8; border-radius:4px; } #choices { max-height:210px; overflow:auto; border:1px solid #cbd5e1; border-radius:4px; margin-top:5px; } #choices button { display:block; width:100%; text-align:left; border:0; border-radius:0; } #dialog-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:16px; }
+#card { box-sizing:border-box; max-height:calc(100vh - 24px); overflow:auto; } #dialog-actions { position:sticky; bottom:0; background:white; padding:8px 0; border-top:1px solid #e2e8f0; } #card label { display:block; margin:9px 0 4px; } .text-target { min-height:65px; max-height:170px; overflow:auto; white-space:pre-wrap; } #cond-fields { max-height:110px; overflow:auto; } #cond-fields button { display:block; width:100%; text-align:left; } #loop-context { white-space:pre-wrap; } [hidden] { display:none !important; }
+#source { width:100%; height:calc(100vh - 54px); box-sizing:border-box; border:0; padding:18px; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; display:none; outline:none; }
+</style></head><body>
+<div id="bar"><button type="button" data-command="cmd('bold')"><b>B</b></button><button type="button" data-command="cmd('italic')"><i>I</i></button><button type="button" data-command="cmd('underline')"><u>U</u></button><button type="button" data-command="insertField()">Field…</button><button type="button" data-command="insertTable()">Table</button><details class="tools"><summary>Table tools</summary><div><button type="button" data-command="addRow(true)">Row ↑</button><button type="button" data-command="addRow(false)">Row ↓</button><button type="button" data-command="addColumn(true)">Column ←</button><button type="button" data-command="addColumn(false)">Column →</button><button type="button" data-command="splitCell(false)">Split ↔</button><button type="button" data-command="splitCell(true)">Split ↕</button><button type="button" data-command="mergeLeft()">Merge ←</button><button type="button" data-command="mergeRight()">Merge →</button><button type="button" data-command="mergeUp()">Merge ↑</button><button type="button" data-command="mergeDown()">Merge ↓</button><button type="button" data-command="cellProperties()">Cell style…</button><button type="button" data-command="tableProperties()">Table style…</button></div></details><button type="button" data-command="cmd('insertUnorderedList')">• List</button><button type="button" data-command="cmd('insertOrderedList')">1. List</button><button type="button" data-command="cmd('undo')">Undo</button><button type="button" data-command="cmd('redo')">Redo</button><button type="button" data-command="chooseFormat()">Format…</button><span class="spacer"></span></div>
+<div id="editor" contenteditable="true"></div><textarea id="source" spellcheck="false"></textarea><div id="dialog"><div id="card"></div></div>
+<script nonce="atool-editor" src="qrc:///qtwebchannel/qwebchannel.js"></script><script nonce="atool-editor">
+let sourceMode=false, activeCell=null, fields=[], iterations=[], contents=[];
+const editor=document.getElementById('editor'), source=document.getElementById('source');
+function cmd(name){if(name==='undo'){undoRich();return;}if(name==='redo'){redoRich();return;}document.execCommand(name,false,null);editor.focus();}
+function makeChip(raw, encoded=false){
+ const chip=document.createElement('span');
+ const kind=/^<comms-data>/i.test(raw)?'data':/^<comms-loop>/i.test(raw)?'loop':'cond';
+ chip.className='chip '+kind;chip.contentEditable='false';chip.dataset.comms=raw;
+ if(encoded)chip.dataset.encoded='true';
+ const value=kind==='loop'?null:tagPayload(raw,kind);
+ chip.textContent=kind==='data'&&value?'$'+value.Id:kind==='loop'?'↻ Loop':'◆ '+(value?(value.Text||value.Content||'Condition'):'Condition');
+ return chip;
+}
+function textCommsTokens(raw){
+ const tags=/<\/?comms-(data|cond|loop)>/gi, tokens=[], stack=[];let match,start=0;
+ while((match=tags.exec(raw))){
+  const closing=match[0].startsWith('</'),kind=match[1].toLowerCase();
+  if(!closing){if(!stack.length)start=match.index;stack.push(kind);}
+  else if(stack.length&&stack[stack.length-1]===kind){stack.pop();if(!stack.length)tokens.push({start,end:tags.lastIndex,raw:raw.slice(start,tags.lastIndex)});}
+  else stack.length=0;
+ }
+ return tokens;
+}
+function normalizeChips(root=editor){
+ root.querySelectorAll('comms-data,comms-cond,comms-loop').forEach(node=>{if(!node.parentElement.closest('comms-data,comms-cond,comms-loop'))node.replaceWith(makeChip(node.outerHTML));});
+ const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT), nodes=[];
+ while(walker.nextNode())nodes.push(walker.currentNode);
+ nodes.forEach(node=>{
+  const raw=node.nodeValue,tokens=textCommsTokens(raw);if(!tokens.length)return;
+  const fragment=document.createDocumentFragment();let last=0;
+  tokens.forEach(token=>{fragment.append(document.createTextNode(raw.slice(last,token.start)),makeChip(token.raw,true));last=token.end;});
+  fragment.append(document.createTextNode(raw.slice(last)));node.replaceWith(fragment);
+ });
+}
+function closeDialog(){document.getElementById('dialog').classList.remove('open');}
+function insertChip(chip){const range=window.getSelection().rangeCount?window.getSelection().getRangeAt(0):null; if(range&&editor.contains(range.commonAncestorContainer)){range.deleteContents();range.insertNode(chip);range.setStartAfter(chip);range.collapse(true);window.getSelection().removeAllRanges();window.getSelection().addRange(range);}else editor.append(chip); editor.focus();}
+function insertField(){ const selection=window.getSelection(), savedRange=selection.rangeCount&&editor.contains(selection.getRangeAt(0).commonAncestorContainer)?selection.getRangeAt(0).cloneRange():null; const card=document.getElementById('card'), dialog=document.getElementById('dialog'); card.innerHTML='<h2>Insert data field</h2><input id="field-filter" placeholder="Search fields"><div id="choices"></div><div id="dialog-actions"><button type="button" data-command="closeDialog()">Cancel</button></div>'; const filter=card.querySelector('#field-filter'), choices=card.querySelector('#choices'); const render=()=>{const q=filter.value.toLowerCase();choices.innerHTML='';fields.filter(f=>(f.name+' '+f.scope).toLowerCase().includes(q)).slice(0,100).forEach(field=>{const b=document.createElement('button');b.type='button';b.textContent=field.name+(field.scope?' — '+field.scope:'');b.onclick=()=>{if(savedRange&&editor.contains(savedRange.commonAncestorContainer)){selection.removeAllRanges();selection.addRange(savedRange);}insertChip(makeChip('<comms-data>$Data'+JSON.stringify({Id:field.name})+'</comms-data>'));closeDialog()};choices.append(b)});};filter.oninput=render;render();dialog.classList.add('open');filter.focus();}
+/* CHIP_EDITORS */
+function serialize(){ const copy=editor.cloneNode(true); copy.querySelectorAll('.chip[data-comms]').forEach(chip=>chip.replaceWith(chip.dataset.encoded ? document.createTextNode(chip.dataset.comms) : document.createRange().createContextualFragment(chip.dataset.comms))); copy.querySelectorAll('td.atool-cell-active,th.atool-cell-active').forEach(cell=>{cell.classList.remove('atool-cell-active');if(!cell.className)cell.removeAttribute('class');}); return copy.innerHTML; }
+function selectCell(cell){ if(activeCell)activeCell.classList.remove('atool-cell-active'); activeCell=cell; if(cell)cell.classList.add('atool-cell-active'); }
+editor.addEventListener('click', e => selectCell(e.target.closest('td,th')));
+editor.addEventListener('dblclick', e => {const chip=e.target.closest('.chip[data-comms]');if(chip){e.preventDefault();editChip(chip);}});
+function insertTable(){ const table=document.createElement('table'); table.innerHTML='<tbody><tr><td style="padding:0px;">Cell</td><td style="padding:0px;">Cell</td></tr></tbody>'; editor.append(table); selectCell(table.querySelector('td')); }
+function table(){ return activeCell && editor.contains(activeCell) && activeCell.closest('table'); }
+function tableGrid(t){
+ const rows=[...t.rows], grid=rows.map(()=>[]), positions=new Map();let width=0;
+ rows.forEach((row,r)=>{let c=0;[...row.cells].forEach(cell=>{
+  while(grid[r][c])c++;
+  const w=Math.max(1,cell.colSpan), remaining=rows.slice(r).findIndex(next=>next.parentElement!==row.parentElement);
+  const limit=remaining<0?rows.length-r:remaining, h=Math.min(cell.rowSpan||limit,limit);
+  const position={row:r,col:c,w,h};positions.set(cell,position);
+  for(let y=r;y<r+h;y++)for(let x=c;x<c+w;x++)grid[y][x]=cell;
+  c+=w;width=Math.max(width,c);
+ });});return {rows,grid,positions,width};
+}
+function blankCell(tag='td'){const cell=document.createElement(tag);cell.style.padding='0px';cell.innerHTML='<br>';return cell;}
+function insertAtColumn(row,cell,column,layout){const before=[...row.cells].find(candidate=>layout.positions.get(candidate).col>=column);row.insertBefore(cell,before||null);}
+function addRow(above){
+ const t=table();if(!t)return;const layout=tableGrid(t),position=layout.positions.get(activeCell),at=position.row+(above?0:1);
+ const row=activeCell.parentElement, added=document.createElement('tr'), crossing=new Set();
+ for(const [cell,p] of layout.positions)if(p.row<at&&p.row+p.h>at){cell.rowSpan=p.h+1;crossing.add(cell);}
+ let selected=null;
+ for(let c=0;c<layout.width;c++){
+  if([...crossing].some(cell=>{const p=layout.positions.get(cell);return c>=p.col&&c<p.col+p.w;}))continue;
+  const cell=blankCell();added.append(cell);if(c===position.col)selected=cell;
+ }
+ if(above)row.before(added);else row.after(added);selectCell(selected||added.cells[0]||activeCell);
+}
+function addColumn(left){
+ const t=table();if(!t)return;const layout=tableGrid(t),position=layout.positions.get(activeCell),at=position.col+(left?0:position.w),expanded=new Set();let selected=null;
+ layout.rows.forEach((row,r)=>{
+  const crossing=layout.grid[r].find(cell=>{if(!cell)return false;const p=layout.positions.get(cell);return p.col<at&&p.col+p.w>at;});
+  if(crossing){if(!expanded.has(crossing)){crossing.colSpan+=1;expanded.add(crossing);}return;}
+  const cell=blankCell();insertAtColumn(row,cell,at,layout);if(r===position.row)selected=cell;
+ });selectCell(selected||activeCell);
+}
+function mergeCell(direction){
+ const t=table();if(!t)return;const layout=tableGrid(t),p=layout.positions.get(activeCell);
+ const horizontal=direction==='left'||direction==='right';
+ const r=direction==='up'?p.row-1:direction==='down'?p.row+p.h:p.row;
+ const c=direction==='left'?p.col-1:direction==='right'?p.col+p.w:p.col;
+ const other=layout.grid[r]?.[c];if(!other||other===activeCell)return;const q=layout.positions.get(other);
+ if(activeCell.parentElement.parentElement!==other.parentElement.parentElement)return;
+ if(horizontal?(p.row!==q.row||p.h!==q.h||!(q.col+q.w===p.col||p.col+p.w===q.col)):(p.col!==q.col||p.w!==q.w||!(q.row+q.h===p.row||p.row+p.h===q.row)))return;
+ const first=direction==='left'||direction==='up'?other:activeCell,second=first===other?activeCell:other;
+ first.innerHTML+=(first.innerHTML&&second.innerHTML?'<br>':'')+second.innerHTML;
+ if(horizontal)first.colSpan=p.w+q.w;else first.rowSpan=p.h+q.h;
+ second.remove();selectCell(first);
+}
+function mergeRight(){mergeCell('right');}
+function mergeLeft(){mergeCell('left');}
+function mergeDown(){mergeCell('down');}
+function mergeUp(){mergeCell('up');}
+function splitCell(vertical){
+ const t=table();if(!t)return;const layout=tableGrid(t),p=layout.positions.get(activeCell);
+ if(vertical){if(p.h<2){addRow(false);return;}const cell=blankCell(activeCell.tagName);cell.colSpan=p.w;activeCell.rowSpan=p.h-1;insertAtColumn(layout.rows[p.row+p.h-1],cell,p.col,layout);selectCell(cell);}
+ else{if(p.w<2){addColumn(false);return;}const cell=blankCell(activeCell.tagName);cell.rowSpan=p.h;activeCell.colSpan=p.w-1;activeCell.after(cell);selectCell(cell);}
+}
+function styleDialog(title,target){
+ const card=document.getElementById('card'),dialog=document.getElementById('dialog'),revision=generation;
+ card.innerHTML='<h2></h2><div id="style-fields"></div><div id="dialog-actions"><button type="button" data-command="closeDialog()">Cancel</button><button type="button" id="p-save">Save</button></div>';
+ card.querySelector('h2').textContent=title;
+ const properties=[['Width','width','width'],['Height','height','height'],['Padding','padding','padding'],['Background','background-color','background'],['Top border','border-top','border'],['Horizontal align','text-align','align',['left','center','right']],['Vertical align','vertical-align','vertical',['top','middle','bottom']]];
+ const container=card.querySelector('#style-fields');
+ properties.forEach(([label,key,id,choices])=>{
+  const heading=document.createElement('label');heading.textContent=label;
+  const input=document.createElement('input');input.id='p-'+id;input.value=target.style.getPropertyValue(key);
+  container.append(heading,input);
+  if(choices){const list=document.createElement('datalist');list.id='p-'+id+'-choices';input.setAttribute('list',list.id);fillSuggestions(list,choices);container.append(list);}
+ });
+ card.querySelector('#p-save').onclick=()=>{
+  if(revision!==generation||!editor.contains(target)){closeDialog();return;}
+  properties.forEach(([label,key,id])=>{const value=card.querySelector('#p-'+id).value.trim();if(value)target.style.setProperty(key,value);else target.style.removeProperty(key);});
+  if(!target.getAttribute('style'))target.removeAttribute('style');
+  closeDialog();notify();
+ };
+ dialog.classList.add('open');card.scrollTop=0;
+}
+function cellProperties(){if(activeCell)styleDialog('Cell properties',activeCell);}
+function tableProperties(){const t=table();if(t)styleDialog('Table properties',t);}
+function toggleSource(){ sourceMode=!sourceMode; if(sourceMode){source.value=serialize();editor.style.display='none';source.style.display='block';source.focus()}else{editor.innerHTML=source.value;normalizeChips();source.style.display='none';editor.style.display='block'} }
+
+let bridge=null, original='', changed=false, setting=false, generation=0, undoStack=[], redoStack=[], lastSnapshot='';
+function snapshot(){return changed ? serialize() : original;}
+function notify(){if(setting)return;changed=true;const next=snapshot();if(next===lastSnapshot)return;undoStack.push(lastSnapshot);redoStack=[];lastSnapshot=next;if(bridge)bridge.changed(generation,next);}
+function restoreEdit(html){setting=true;original=html;changed=false;activeCell=null;editor.innerHTML=html;normalizeChips();observer.takeRecords();setting=false;lastSnapshot=html;if(bridge)bridge.changed(generation,html);}
+function undoRich(){if(undoStack.length){redoStack.push(snapshot());restoreEdit(undoStack.pop());}}
+function redoRich(){if(redoStack.length){undoStack.push(snapshot());restoreEdit(redoStack.pop());}}
+function loadHtml(value, revision){closeDialog();generation=revision;undoStack=[];redoStack=[];lastSnapshot=value;setting=true;original=value;changed=false;activeCell=null;editor.innerHTML=value;normalizeChips();observer.takeRecords();setting=false;}
+function context(value){fields=value.fields||[];iterations=value.iterations||[];contents=value.contents||[];editor.style.fontFamily=value.fontFamily||'';}
+function insertMarkup(raw){insertChip(makeChip(raw));notify();}
+function chooseFormat(){
+ const card=document.getElementById('card');
+ card.innerHTML='<h2>Text formatting</h2><label>Font size</label><select id="format-size"><option value="">Keep current size</option>'+[10,11,12,14,16,18,24].map(size=>'<option value="'+size+'pt">'+size+'pt</option>').join('')+'</select><label>Foreground color</label><input id="format-fore" placeholder="#000000"><label>Background color</label><input id="format-back" placeholder="#ffffff"><label>Link URL</label><input id="format-link"><label>CSS classes</label><input id="format-class"><div id="dialog-actions"><button type="button" id="format-cancel">Cancel</button><button type="button" id="format-save">Apply</button></div>';
+ const selection=window.getSelection(), range=selection.rangeCount&&editor.contains(selection.getRangeAt(0).commonAncestorContainer)?selection.getRangeAt(0).cloneRange():null, revision=generation;
+ card.querySelector('#format-cancel').onclick=closeDialog;
+ card.querySelector('#format-save').onclick=()=>{
+  if(revision!==generation||!range||!editor.contains(range.commonAncestorContainer)){closeDialog();return;}
+  const size=card.querySelector('#format-size').value;
+  const classes=card.querySelector('#format-class').value.trim();
+  const commands=[['createLink','link'],['foreColor','fore'],['hiliteColor','back']].map(([command,id])=>[command,card.querySelector('#format-'+id).value.trim()]).filter(([,value])=>value);
+  if(!size&&!classes&&!commands.length){closeDialog();return;}
+  selection.removeAllRanges();selection.addRange(range);
+  setting=true;
+  try{
+   commands.forEach(([command,value])=>document.execCommand(command,false,value));
+   if((size||classes)&&selection.rangeCount){const r=selection.getRangeAt(0),span=document.createElement('span');if(classes)span.className=classes;if(size)span.style.fontSize=size;span.append(r.extractContents());r.insertNode(span);r.selectNodeContents(span);selection.removeAllRanges();selection.addRange(r);}
+  }finally{observer.takeRecords();setting=false;}
+  closeDialog();notify();editor.focus();
+ };
+ document.getElementById('dialog').classList.add('open');
+}
+document.getElementById('bar').addEventListener('mousedown',e=>e.preventDefault());
+function positionTableTools(){
+ const tools=document.querySelector('.tools');if(!tools.open)return;
+ const menu=tools.querySelector('div'),rect=tools.querySelector('summary').getBoundingClientRect();
+ const below=innerHeight-rect.bottom-8,above=rect.top-8,useBelow=below>=above;
+ menu.style.maxHeight=Math.max(40,(useBelow?below:above)-6)+'px';
+ menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-menu.getBoundingClientRect().width-8))+'px';
+ menu.style.top=(useBelow?rect.bottom+6:Math.max(8,rect.top-menu.getBoundingClientRect().height-6))+'px';
+}
+document.querySelector('.tools').addEventListener('toggle',positionTableTools);
+window.addEventListener('resize',positionTableTools);
+document.addEventListener('click', event=>{const button=event.target.closest('[data-command]');if(!button)return;const command=button.dataset.command;{const call=command.match(/^(\w+)\((.*?)\)$/); if(!call)return;const actions={closeDialog,cmd,insertField,insertTable,addRow,addColumn,splitCell,mergeLeft,mergeRight,mergeUp,mergeDown,cellProperties,tableProperties,chooseFormat};const arg=call[2]==='true'?true:call[2]==='false'?false:call[2].replace(/^'|'$/g,'');if(actions[call[1]])actions[call[1]](arg);}});
+editor.addEventListener('input', notify);
+const observer=new MutationObserver(records=>{
+ if(records.some(record=>!(record.type==='attributes'&&record.attributeName==='class'&&/^(TD|TH)$/.test(record.target.tagName))))notify();
+});
+observer.observe(editor,{childList:true,subtree:true,characterData:true,attributes:true});
+new QWebChannel(qt.webChannelTransport, channel=>{bridge=channel.objects.content;bridge.ready();});
+</script></body></html>

@@ -1,5 +1,29 @@
 # ATool Release Notes
 
+## v2.0.0
+
+- The default application is now the unified PySide6/Qt workspace. Documents,
+  Layouts, Fields, Clauses, Data Browser and Content Manager are dockable,
+  tabbed, detachable panels. Windows and macOS launchers are included, with
+  separate legacy launchers retaining the original Tkinter application.
+- Integrated package document ordering and associations, editing controls,
+  original menus, package/data status and shared-package workflows.
+- Added mapped values, iteration details, blue/red trigger diagnostics,
+  constituent clause trees and detailed match explanations. Changed items
+  display an asterisk; fields with multiple values display their count.
+- All grids support column resizing and header-click sorting, with lavender
+  row selection and a purple outline. Field Manager supports multi-field
+  copy/paste across packages, duplicate naming and undo/redo.
+- Layout resolution uses a collapsible evidence grid. Conditional fragments
+  accept whitespace, and selectors preserve layout context so included content
+  can find its configured iterator. Text and JSON exports remain available.
+- Successful Comms operations close their progress windows automatically.
+  Mapping and conversion remember their directories; Preview defaults to the
+  loaded JSON file. Dialogs stay on screen when the workspace extends past
+  a monitor edge.
+- Release archives include the Qt application and its HTML/JavaScript assets,
+  pinned dependencies and both platforms' launchers.
+
 ## v1.1.4
 
 - Package Preview now lets you choose an effective date with a calendar or by

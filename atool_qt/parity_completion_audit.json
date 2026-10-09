@@ -1,0 +1,201 @@
+{
+  "status": "complete",
+  "review_ready": true,
+  "original_source_sha256": "0a4159672d2b4b24da38dbd8bf038931366b2ede09246748a13ee4553e1434e1",
+  "original_control_calls": 217,
+  "original_push_button_menu_calls": 205,
+  "original_checkbox_calls": 12,
+  "unit_tests_passed": 246,
+  "native_editor_checks_passed": 4,
+  "requirements": [
+    {
+      "id": "unified_workspace",
+      "requirement": "One drag/dock/tab/hide/detach IDE; Layouts in the middle and narrower Documents; Clause Manager/Data Browser tabbed with Fields",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_prototype.py",
+        "tests/test_qt_panels.py",
+        "tests/test_qt_menu_parity.py"
+      ]
+    },
+    {
+      "id": "document_details",
+      "requirement": "Document Properties/Source JSON/Match Details buttons match Layout tabs; name/description/package/constituent clause PASS/FAIL tree and original condition JSON",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_panels.py",
+        "tests/test_qt_mapping_details.py",
+        "tests/test_qt_package_document_controls.py"
+      ]
+    },
+    {
+      "id": "mapped_filters",
+      "requirement": "Documents and Layouts default to matched-only when mapped and retain/refresh user filter choices appropriately",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_panels.py",
+        "tests/test_qt_manager_parity.py"
+      ]
+    },
+    {
+      "id": "layout_properties_mapping",
+      "requirement": "Individual layout controls replace Other Properties; scoped iterator field values, content/iterator triggering and red/blue across panels, including zero/false",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_mapping_details.py",
+        "tests/test_qt_manager_parity.py",
+        "tests/test_qt_authoring.py"
+      ]
+    },
+    {
+      "id": "integrated_package_documents",
+      "requirement": "Package order, missing AT/package indications, Add/Associate/Remove/Up/Down/drag/Always Trigger/condition/refresh controls inside Documents",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_bundle.py",
+        "tests/test_qt_package_document_controls.py"
+      ]
+    },
+    {
+      "id": "clause_manager",
+      "requirement": "Original independent library and selected-document/layout composer interaction; editing/drafts, named completion/help, usage/raw searches and guarded trigger-update review",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_panels.py",
+        "tests/test_qt_clause_usage.py",
+        "tests/test_qt_manager_parity.py",
+        "tests/test_qt_menu_parity.py",
+        "tests/test_qt_authoring.py"
+      ]
+    },
+    {
+      "id": "data_browser",
+      "requirement": "Original path/full-text/condition search, lazy browsing, exact values/path copy and Clear; XML convert/map, generated samples and cached Resolve tools",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_authoring.py",
+        "tests/test_qt_panels.py",
+        "tests/test_qt_data_actions.py",
+        "tests/test_layout_resolver.py"
+      ]
+    },
+    {
+      "id": "all_original_controls",
+      "requirement": "Fresh AST inventory contains all 205 original Button/add_command and 12 Checkbutton call sites, with explicit dynamic expansions and Qt implementation/test references",
+      "status": "verified",
+      "evidence": [
+        "atool_qt/parity_inventory.json"
+      ]
+    },
+    {
+      "id": "all_menu_controls",
+      "requirement": "File/Edit/Data/Settings/Config/Resources/Model/Package/Advanced/Window workflows, original shortcuts, enabled states and About",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_menu_parity.py",
+        "tests/test_qt_manager_parity.py",
+        "tests/test_qt_settings_config.py",
+        "tests/test_qt_resources.py",
+        "tests/test_qt_shared_packages.py"
+      ]
+    },
+    {
+      "id": "content_manager",
+      "requirement": "Content/resource/version/metadata/files/create/save/new-version; embedded source/rich editing, data/condition/loop chips, formatting/styles/tables and undo/cancellation",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_content.py",
+        "tests/check_qt_content_editor.py",
+        "tests/check_qt_content_chips.py",
+        "tests/check_qt_content_tables.py",
+        "tests/check_qt_content_formatting.py"
+      ]
+    },
+    {
+      "id": "save_history",
+      "requirement": "Original payload/unknown metadata retention, editing/undo/redo, atomic save/backups/conflicts, shared Save As and original-session restore; publishing history retained with refreshed server metadata",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_authoring.py",
+        "tests/test_qt_bundle.py",
+        "tests/test_qt_shared_packages.py",
+        "tests/test_qt_package_publish.py"
+      ]
+    },
+    {
+      "id": "shared_comms_workflows",
+      "requirement": "Original shared lock/baseline/history/edit/testing/resume/update/release/manual unlock/cleanup, retrieval/version selection, publication/review, preview/email and transport/alias/retry/cancel contracts",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_shared_packages.py",
+        "tests/test_qt_shared_retries.py",
+        "tests/test_qt_comms.py",
+        "tests/test_qt_package_downloads.py",
+        "tests/test_qt_package_publish.py",
+        "tests/test_qt_package_preview.py",
+        "tests/test_qt_package_email.py"
+      ]
+    },
+    {
+      "id": "settings_config_resources",
+      "requirement": "Draft Settings Save/Cancel/Browse/preferences/conflicts; Config lifecycle/calendar/locks/lockouts; seven Resource categories/Model/cache/openers",
+      "status": "verified",
+      "evidence": [
+        "tests/test_qt_settings_config.py",
+        "tests/test_qt_resources.py"
+      ]
+    },
+    {
+      "id": "launch_release",
+      "requirement": "Qt dependencies/CLI/mac launcher syntax; release includes runtime assets and executable launchers; extracted executable mac launcher starts mapped sample and closes with isolated preferences",
+      "status": "verified",
+      "evidence": [
+        "ATool_Qt.py",
+        "Run_ATool_Qt.command",
+        "Run_ATool_Qt.bat",
+        "requirements-qt.txt",
+        "tools/build_artifact.py"
+      ]
+    },
+    {
+      "id": "visual_documentation",
+      "requirement": "Rendered manager/Clause/Data layouts and selection colors inspected; embedded editor dialogs/table viewport inspected; current run/workflow/verification documentation",
+      "status": "verified",
+      "evidence": [
+        "QT_PROTOTYPE.md",
+        "atool_qt/parity_progress.json"
+      ]
+    },
+    {
+      "id": "repository_workflow",
+      "requirement": "All work performed on main, no new branch/worktree/PR; original ATool.py byte-identical to HEAD",
+      "status": "verified",
+      "evidence": [
+        "AGENTS.md",
+        "ATool.py"
+      ]
+    }
+  ],
+  "verification_limits": [
+    "Live Comms publication/email/server changes were not executed; contracts and subprocess behavior were verified using original source and a local fake CLI.",
+    "Native Windows execution was not available on this macOS host; Windows launch syntax and shortcut contracts were inspected/tested."
+  ],
+  "latest_unit_log": "/private/tmp/atool-parity-tests.log",
+  "latest_native_logs": [
+    "/private/tmp/atool-final-content-editor.log",
+    "/private/tmp/atool-final-content-chips.log",
+    "/private/tmp/atool-final-content-tables.log",
+    "/private/tmp/atool-final-content-formatting.log"
+  ],
+  "review_corrections": {
+    "menus": "Original Package, Config, Settings, Resources and Model commands verified against ATool.py; visible in the workspace menu bar.",
+    "status": "Package/version and data file; original lock, access, unsaved, association and sync icons; document/field counts removed from status bar.",
+    "buttons": "Original compact editing labels and symbols, filter Clear, field view/expand/collapse and layout folder toggle; manager buttons wrap without overflow.",
+    "startup": "Empty workspace; removed built-in sample action/startup and prototype/read-only notes.",
+    "evidence": "tests/test_qt_review_presentation.py and native macOS UI inspection",
+    "package_download": "Successful progress windows close automatically; debug logging stays in Activity; targeted Qt empty-table warning suppression. End-to-end regression uses a fake CLI and temporary shared storage.",
+    "item_labels_and_clauses": "Per-item unsaved * markers, multiple field values xN, raw-name-safe editing and drag ordering, and three vertical Clause Manager stacks with separate saved layout. Regression checks cover save, undo/redo, Name/Path views and old column-state migration.",
+    "duplicate_close_buttons": "Removed plain Close buttons from dialogs in favor of OS window controls, as requested; retained Cancel and meaningful package/configuration close operations. Tests exercise native window close for cleanup and cancellation.",
+    "convert_and_map": "Automatic XML file picker with remembered folder; initial cancel dismisses the dialog; no duplicate Close button; automatic close only after successful conversion/mapping, with errors retained. Fake CLI and actual mapping regression checks pass."
+  }
+}
