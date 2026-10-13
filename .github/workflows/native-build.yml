@@ -12,8 +12,46 @@ permissions:
   contents: read
 
 jobs:
+  resolve-cli:
+    name: Select latest OCCS CLI release
+    runs-on: ubuntu-latest
+    outputs:
+      repository: ${{ steps.cli.outputs.repository }}
+      revision: ${{ steps.cli.outputs.revision }}
+      tag: ${{ steps.cli.outputs.tag }}
+    steps:
+      - name: Check out ATool
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Set up Node.js for release selection tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test release selection
+        run: node --test tests/test_latest_occs_release.cjs
+
+      - name: Resolve latest published OCCS CLI release
+        id: cli
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { latestOccsRelease } = require('./tools/latest_occs_release.cjs');
+            const settings = JSON.parse(fs.readFileSync('packaging/runtime-versions.json', 'utf8'));
+            const release = await latestOccsRelease(github, settings.occs_repository);
+            core.setOutput('repository', release.repository);
+            core.setOutput('revision', release.revision);
+            core.setOutput('tag', release.tag);
+            await core.summary.addHeading('Bundled OCCS CLI release')
+              .addLink(release.tag, release.url)
+              .addRaw(`\n\nCommit: ${release.revision}\n`).write();
+
   native:
     name: Build and check ${{ matrix.platform }}
+    needs: resolve-cli
     strategy:
       fail-fast: false
       matrix:
@@ -44,7 +82,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Read pinned runtime versions
+      - name: Read runtime settings
         id: versions
         run: |
           python - <<'PY'
@@ -59,8 +97,8 @@ jobs:
       - name: Check out OCCS CLI runtime
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.versions.outputs.occs_repository }}
-          ref: ${{ steps.versions.outputs.occs_revision }}
+          repository: ${{ needs.resolve-cli.outputs.repository }}
+          ref: ${{ needs.resolve-cli.outputs.revision }}
           path: build/inputs/occs
           persist-credentials: false
 

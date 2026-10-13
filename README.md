@@ -26,8 +26,10 @@ GitHub Actions builds three native ZIPs for main and version releases:
 | `ATool-windows-x86_64.zip` | 64-bit Windows | `ATool/ATool.exe` |
 
 Get the matching ZIP from [GitHub Releases](https://github.com/calittle/ATool/releases)
-once a release containing native builds is published. Main builds are available
-from the successful **Build main artifact** run in GitHub Actions.
+once a release containing native builds is published. Pushing a version tag
+(`v*`) builds and publishes the release; commits to `main` do not trigger builds.
+Native applications bundle the latest published stable OCCS CLI release selected
+when the build starts.
 Extract the ZIP, then double-click the application. On macOS you can move
 `ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
 folder. macOS identifies the native application as **ATool** in the Dock and

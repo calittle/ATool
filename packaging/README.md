@@ -1,10 +1,18 @@
 # Native release builds
 
-Both main builds and tagged releases call `.github/workflows/native-build.yml`.
+Version tag pushes (`v*`) trigger the release workflow, which calls
+`.github/workflows/native-build.yml`. Commits to `main` do not trigger builds.
+An existing version tag can also be rebuilt through the release workflow's
+manual **Run workflow** control.
+
 The matrix builds on macOS ARM64, macOS Intel and Windows x64 runners using
-Python 3.12, pinned PyInstaller/PySide6, and the Node/OCCS CLI versions in
-`runtime-versions.json`. Update the CLI revision deliberately to a tested commit;
-`npm ci --omit=dev` uses that commit's lockfile on each target OS.
+Python 3.12, pinned PyInstaller/PySide6, and the Node version and CLI repository in
+`runtime-versions.json`. The workflow selects GitHub's latest published stable
+OCCS CLI release once before starting the platform builds. All platforms use
+that release's exact commit; `npm ci --omit=dev` uses its lockfile on each OS.
+Drafts and prereleases are excluded. A missing release or failed lookup stops
+the build. Publish the OCCS CLI release before tagging ATool to include new CLI
+fixes. Rebuilding an existing ATool tag selects the latest CLI release again.
 
 The builder stages only CLI runtime directories, manifests and license notices.
 It never copies a developer checkout's settings, sessions, `.env`, outputs or
@@ -28,7 +36,8 @@ credentials and are not configured by this workflow.
 Optional local validation, on the target operating system:
 
 1. Install `requirements-build.txt` in a development environment.
-2. Check out the pinned OCCS CLI revision and run `npm ci --omit=dev` there.
+2. Check out the latest published stable OCCS CLI release and run
+   `npm ci --omit=dev` there.
 3. Provide the target Node executable, its LICENSE, and `Python-LICENSE.txt`
    and `Qt-LGPL-3.0.txt` beside the Node LICENSE (the workflow retrieves these
    from the exact upstream Python and Qt versions).
