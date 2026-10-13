@@ -30,6 +30,14 @@ PACKAGE_FILES = (
     "QT_PROTOTYPE.md",
     "requirements.txt",
     "requirements-qt.txt",
+    "requirements-build.txt",
+    "packaging/ATool.spec",
+    "packaging/runtime-versions.json",
+    "packaging/THIRD_PARTY.md",
+    "packaging/README.md",
+    "tools/build_native.py",
+    "tools/check_native_bundle.py",
+    "tools/archive_native.py",
     "tools/resolve_layout.py",
 )
 PACKAGE_DIRECTORIES = (

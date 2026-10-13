@@ -15,7 +15,36 @@ Version 2.0.0 uses a unified Qt workspace with dockable, tabbed, detachable pane
 for Documents, Layouts, Fields, Clauses, Data and Content. The original Tkinter
 application remains available through the legacy launchers.
 
-## Requirements
+## Native application downloads
+
+GitHub Actions builds three native ZIPs for main and version releases:
+
+| Download | Computer | Launch |
+| --- | --- | --- |
+| `ATool-macos-arm64.zip` | Apple Silicon Mac | `ATool.app` |
+| `ATool-macos-x86_64.zip` | Intel Mac | `ATool.app` |
+| `ATool-windows-x86_64.zip` | 64-bit Windows | `ATool/ATool.exe` |
+
+Get the matching ZIP from [GitHub Releases](https://github.com/calittle/ATool/releases)
+once a release containing native builds is published. Main builds are available
+from the successful **Build main artifact** run in GitHub Actions.
+Extract the ZIP, then double-click the application. On macOS you can move
+`ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
+folder. macOS identifies the native application as **ATool** in the Dock and
+Cmd-Tab.
+
+These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
+its npm dependencies. No Python/Node installation, virtual environment,
+dependency installation, or terminal launcher is needed. Configure your OCCS
+connection and credentials in ATool after launching. Existing settings and
+sessions remain in your user profile. An explicitly configured CLI path still
+overrides the bundled CLI; clear that setting to use the included version.
+
+The native apps are not currently Developer ID signed/notarized on macOS or
+Authenticode signed on Windows. Standard operating-system trust checks may
+apply to downloaded builds. SHA-256 checksum files accompany the ZIPs.
+
+## Requirements for running from source
 
 - Python 3.10–3.15 (required by the pinned PySide6 version)
 - PySide6 (installed from `requirements.txt`)
@@ -27,7 +56,7 @@ installed it. Installing `requirements.txt` installs PySide6 (the Python Qt
 bindings) and its Qt runtime automatically. You do not need to install the Qt
 SDK or Qt Creator separately. Dependency installation requires internet access.
 
-## Installation
+## Installation from source
 
 Download the ATool application ZIP from the **Assets** section of the
 [2.0.0 release](https://github.com/calittle/ATool/releases/tag/v2.0.0) and extract

@@ -41,6 +41,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         self.layout_clipboard_kind = None
         comms_settings = UserSettings()
         self.comms = CommsService(comms_settings, self)
+        self.comms.submitted.connect(self.activity.track_operation)
         if comms_settings.load_error:
             self.log('Could not read User Settings: ' + comms_settings.load_error)
         file_menu = self.menuBar().actions()[0].menu()

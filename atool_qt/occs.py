@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from .runtime import bundled_runtime
 
 
 class CommsSettings:
@@ -27,8 +29,10 @@ class CommsSettings:
 
     @property
     def cli(self):
+        runtime = bundled_runtime()
+        default = runtime / 'occs-cli' / 'bin' / 'occs.js' if runtime else None
         sibling = Path(__file__).resolve().parents[2] / 'ccs-tools' / 'OCCS-CLI' / 'bin' / 'occs.js'
-        return str(Path(self.get('cli_path') or (sibling if sibling.exists() else 'occs')).expanduser())
+        return str(Path(self.get('cli_path') or default or (sibling if sibling.exists() else 'occs')).expanduser())
 
     @property
     def timeout_ms(self):
@@ -42,10 +46,16 @@ class CommsSettings:
         alias = str(self.get('session_alias', '') or '').strip()
         if args and alias and '--session' not in args and args[0] in {'package', 'content', 'preview', 'convertxml', 'list-configs', 'create-config'}:
             args = [args[0], '--session', alias, *args[1:]]
-        return ['node', self.cli, *args] if self.cli.endswith('.js') else [self.cli, *args]
+        runtime = bundled_runtime()
+        node = str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'
+        return [node, self.cli, *args] if self.cli.endswith('.js') else [self.cli, *args]
 
     @property
     def cwd(self):
+        if bundled_runtime():
+            path = Path.home() / '.atool' / 'cli-work'
+            path.mkdir(parents=True, exist_ok=True)
+            return str(path)
         path = Path(self.cli)
         if not path.exists():
             return None
@@ -102,6 +112,8 @@ class CommandJob(QObject):
         self.stdout = bytearray()
         self.stderr = bytearray()
         self.cancelled = self.timed_out = self.done = False
+        self.started_at = None
+        self.duration = None
         self.phase = 'original'
         self.login_attempted = self.read_retried = False
         self.login_alias = None
@@ -114,7 +126,15 @@ class CommandJob(QObject):
         self.timer.timeout.connect(self.timeout)
 
     def start(self):
+        if self.started_at is None and not self.done and not self.cancelled:
+            self.started_at = time.monotonic()
         self.start_command(self.args)
+
+    @property
+    def elapsed_seconds(self):
+        if self.duration is not None:
+            return self.duration
+        return max(0.0, time.monotonic() - self.started_at) if self.started_at is not None else 0.0
 
     def start_command(self, args, timeout_ms=None):
         if self.done:
@@ -217,6 +237,7 @@ class CommandJob(QObject):
                 QTimer.singleShot(2000, self.start)
                 return
         self.done = True
+        self.duration = self.elapsed_seconds
         self.completed.emit(result)
 
     def start_login(self):
@@ -239,6 +260,7 @@ def transient_error(message):
 class CommsService(QObject):
     """Bounded command queue; job-specific and all-job cancellation."""
     changed = Signal()
+    submitted = Signal(object)
 
     def __init__(self, settings=None, parent=None, concurrency=4):
         super().__init__(parent)
@@ -259,6 +281,7 @@ class CommsService(QObject):
             job.completed.connect(callback)
         job.completed.connect(lambda result: self.finished(job))
         self.pending.append(job)
+        self.submitted.emit(job)
         logging.getLogger('atool_qt').debug('Comms operation queued: %s (%s)', str(args[0]) if args else '(empty)', channel)
         QTimer.singleShot(0, self.drain)
         self.changed.emit()

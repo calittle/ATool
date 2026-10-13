@@ -21,9 +21,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native:
+    name: Native applications
+    uses: ./.github/workflows/native-build.yml
+    with:
+      source_ref: ${{ inputs.tag || github.ref }}
+
   release:
     name: Package and publish ATool
     runs-on: ubuntu-latest
+    needs: native
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
 
@@ -40,6 +47,13 @@ jobs:
 
       - name: Build distribution ZIP
         run: python3 tools/build_artifact.py --source head
+
+      - name: Download tested native distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: atool-native-*
+          path: dist
+          merge-multiple: true
 
       - name: Prepare version release notes
         run: |
@@ -59,8 +73,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.zip --clobber
+            gh release upload "$TAG" dist/*.zip dist/*.sha256 --clobber
             gh release edit "$TAG" --notes-file dist/release-notes.md
           else
-            gh release create "$TAG" dist/*.zip --title "ATool $TAG" --notes-file dist/release-notes.md
+            gh release create "$TAG" dist/*.zip dist/*.sha256 --title "ATool $TAG" --notes-file dist/release-notes.md
           fi

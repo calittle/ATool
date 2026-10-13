@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
+from atool_qt.activity import ActivityLog, duration_text
 from atool_qt.occs import CommsSettings, CommsService
 from atool_qt.package_documents import CatalogDialog, catalog_documents
 
@@ -75,6 +77,66 @@ print(json.dumps({'success': True, 'args': args}))
         self.until(lambda: len(results) == 3)
         self.assertTrue(results[2].timed_out)
         self.assertFalse(results[2].successful)
+
+    def activity_log(self):
+        activity = ActivityLog()
+        self.addCleanup(activity.close)
+        self.service.submitted.connect(activity.track_operation)
+        return activity
+
+    def test_activity_timer_runs_without_adding_lines_and_freezes_on_cancel(self):
+        activity = self.activity_log()
+        job = self.service.submit(['package', 'slow'])
+        activity.appendPlainText('Other activity while the CLI runs')
+        self.until(lambda: job.started_at is not None)
+        self.until(lambda: 'Elapsed 00:00:01' in activity.toPlainText())
+        text = activity.toPlainText()
+        self.assertIn('OCCS #1 · package slow · Running · Elapsed 00:00:01', text)
+        self.assertEqual(2, activity.document().blockCount())
+        self.assertIn('Other activity while the CLI runs', text)
+        job.cancel()
+        self.until(lambda: job.done)
+        self.assertIn('Cancelled · Total 00:00:01', activity.toPlainText())
+        duration = job.elapsed_seconds
+        text = activity.toPlainText()
+        QTest.qWait(300)
+        self.assertEqual(duration, job.elapsed_seconds)
+        self.assertEqual(text, activity.toPlainText())
+        self.assertFalse(activity.timer.isActive())
+        self.assertFalse(activity.operations)
+
+    def test_activity_tracks_concurrent_and_queued_operations_independently(self):
+        activity = self.activity_log()
+        running = self.service.submit(['package', 'slow'])
+        queued = self.service.submit(['package', 'queued'])
+        concurrent = self.service.submit(['content', 'slow'], channel='read')
+        self.until(lambda: len(self.service.active) == 2)
+        QTest.qWait(300)
+        self.assertIn('OCCS #1 · package slow · Running', activity.toPlainText())
+        self.assertIn('OCCS #2 · package queued · Queued', activity.toPlainText())
+        self.assertIn('OCCS #3 · content slow · Running', activity.toPlainText())
+        queued.cancel()
+        self.assertIsNone(queued.started_at)
+        self.assertIn('OCCS #2 · package queued · Cancelled · Total 00:00:00', activity.toPlainText())
+        self.service.cancel_all()
+        self.until(lambda: running.done and concurrent.done)
+        self.assertEqual(3, activity.document().blockCount())
+        self.assertFalse(activity.timer.isActive())
+
+    def test_activity_retains_success_failure_timeout_and_failed_start_totals(self):
+        activity = self.activity_log()
+        for args, status, timeout in [(['package', 'open'], 'Completed', None),
+                                      (['fail'], 'Failed', None),
+                                      (['slow'], 'Timed out', 30)]:
+            job = self.service.submit(args, timeout_ms=timeout)
+            self.until(lambda: job.done)
+            self.assertIn(f'{status} · Total {duration_text(job.elapsed_seconds)}', activity.toPlainText())
+        self.settings.payload['occs']['cli_path'] = str(Path(self.temp.name) / 'missing-cli')
+        job = self.service.submit(['package', 'open'])
+        self.until(lambda: job.done)
+        self.assertIn('OCCS #4 · package open · Failed · Total', activity.toPlainText())
+        self.assertFalse(activity.operations)
+        self.assertEqual('01:01:01', duration_text(3661.9))
 
     def test_catalog_refresh_selection_and_associate_filter(self):
         path = Path(self.temp.name) / 'catalog.json'
@@ -156,6 +218,7 @@ if 'auth-always' in args:
         self.assertFalse(self.service.logins)
 
     def test_parallel_read_retries_transient_network_error_once(self):
+        activity = self.activity_log()
         script = self.cli.read_text()
         insertion = '''from pathlib import Path
 marker = Path(__file__).with_name('retried')
@@ -170,6 +233,9 @@ if 'network-once' in args and not marker.exists():
         self.until(lambda: bool(results))
         self.assertTrue(results[0].successful)
         self.assertTrue(job.read_retried)
+        self.assertGreaterEqual(job.elapsed_seconds, 2)
+        self.assertEqual(1, activity.document().blockCount())
+        self.assertIn('Completed · Total', activity.toPlainText())
 
     @unittest.skipIf(__import__('os').name == 'nt', 'Unix process group cancellation')
     def test_cancel_terminates_cli_child_processes(self):

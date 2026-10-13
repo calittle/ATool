@@ -1,0 +1,42 @@
+# Native release builds
+
+Both main builds and tagged releases call `.github/workflows/native-build.yml`.
+The matrix builds on macOS ARM64, macOS Intel and Windows x64 runners using
+Python 3.12, pinned PyInstaller/PySide6, and the Node/OCCS CLI versions in
+`runtime-versions.json`. Update the CLI revision deliberately to a tested commit;
+`npm ci --omit=dev` uses that commit's lockfile on each target OS.
+
+The builder stages only CLI runtime directories, manifests and license notices.
+It never copies a developer checkout's settings, sessions, `.env`, outputs or
+Git metadata. The resulting runtime versions and source commits are written to
+`RUNTIME_INFO.json`; About also receives `BUILD_INFO.txt`.
+
+Each job archives the app, extracts that ZIP into a temporary directory, and
+runs the extracted executable with isolated user settings and without installed
+Python or Node on PATH. The check exercises the real Qt workspace, embedded
+Qt WebEngine editor and bundled OCCS CLI's offline `--help`. Upload occurs only
+after success. The release publication job waits for all three matrix jobs,
+then uploads all native ZIPs/checksums along with the existing source ZIP.
+
+Windows is a folder distribution: `ATool.exe` and `_internal` must stay together.
+macOS is an application bundle with the name ATool and identifier
+`com.calittle.ATool`. `ditto` preserves its signed framework symlinks and modes
+when archiving and extracting. PyInstaller's default ad-hoc macOS signing is
+used; Developer ID/notarization and Windows Authenticode require signing
+credentials and are not configured by this workflow.
+
+Optional local validation, on the target operating system:
+
+1. Install `requirements-build.txt` in a development environment.
+2. Check out the pinned OCCS CLI revision and run `npm ci --omit=dev` there.
+3. Provide the target Node executable, its LICENSE, and `Python-LICENSE.txt`
+   and `Qt-LGPL-3.0.txt` beside the Node LICENSE (the workflow retrieves these
+   from the exact upstream Python and Qt versions).
+4. Run `tools/build_native.py --occs-dir PATH --node PATH --node-license PATH`.
+5. Run `tools/check_native_bundle.py dist/native/ATool.app` on macOS, or
+   `tools/check_native_bundle.py dist/native/ATool` on Windows.
+
+The optional CLI graph/smoke commands are not used by ATool and may require
+external tools such as Graphviz, Poppler or ImageMagick. All CLI operations
+exposed by ATool use the included runtime. OCCS service access still requires
+the user's network connection and credentials; these are not bundled.

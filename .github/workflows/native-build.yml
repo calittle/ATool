@@ -1,0 +1,134 @@
+name: Build native applications
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: ATool commit or tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Build and check ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-14
+            bundle: dist/native/ATool.app
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            bundle: dist/native/ATool.app
+          - platform: windows-x86_64
+            runner: windows-2022
+            bundle: dist/native/ATool
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out ATool
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Read pinned runtime versions
+        id: versions
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          values = json.loads(Path('packaging/runtime-versions.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in values.items():
+                  print(f'{key}={value}', file=output)
+          PY
+
+      - name: Check out OCCS CLI runtime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.versions.outputs.occs_repository }}
+          ref: ${{ steps.versions.outputs.occs_revision }}
+          path: build/inputs/occs
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.versions.outputs.node_version }}
+
+      - name: Install application and build dependencies
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Install locked OCCS CLI dependencies
+        working-directory: build/inputs/occs
+        run: npm ci --omit=dev
+
+      - name: Locate Node.js and retain its license notices
+        id: node
+        run: |
+          python - <<'PY'
+          import os, platform, shutil, subprocess, urllib.request
+          from pathlib import Path
+          node = Path(shutil.which('node')).resolve()
+          version = subprocess.check_output([str(node), '--version'], text=True).strip()
+          license_path = Path('build/inputs/Node-LICENSE.txt').resolve()
+          with urllib.request.urlopen(f'https://raw.githubusercontent.com/nodejs/node/{version}/LICENSE', timeout=60) as response:
+              license_path.write_bytes(response.read())
+          notices = {
+              'Python-LICENSE.txt': f'https://raw.githubusercontent.com/python/cpython/v{platform.python_version()}/LICENSE',
+              'Qt-LGPL-3.0.txt': 'https://raw.githubusercontent.com/qt/qtbase/v6.12.0/LICENSES/LGPL-3.0-only.txt',
+          }
+          for name, url in notices.items():
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  (license_path.parent / name).write_bytes(response.read())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'executable={node}', file=output)
+              print(f'license={license_path}', file=output)
+          PY
+
+      - name: Test native runtime selection and packaging
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -p 'test_native_*.py'
+
+      - name: Build native application
+        env:
+          NODE_EXECUTABLE: ${{ steps.node.outputs.executable }}
+          NODE_LICENSE: ${{ steps.node.outputs.license }}
+        run: >-
+          python tools/build_native.py --occs-dir build/inputs/occs
+          --node "$NODE_EXECUTABLE" --node-license "$NODE_LICENSE"
+
+      - name: Archive tested application
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+          PLATFORM: ${{ matrix.platform }}
+        run: python tools/archive_native.py "$BUNDLE" --name "ATool-$PLATFORM"
+
+      - name: Check extracted UI, WebEngine, and OCCS CLI without installed runtimes
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+        run: python tools/check_native_bundle.py "dist/ATool-$PLATFORM.zip"
+
+      - name: Upload native distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: atool-native-${{ matrix.platform }}
+          path: |
+            dist/ATool-*.zip
+            dist/ATool-*.zip.sha256
+          if-no-files-found: error

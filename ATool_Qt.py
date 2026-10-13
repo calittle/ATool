@@ -10,6 +10,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="ATool")
     parser.add_argument("--package", type=Path, help="Assembly Template JSON, manifest, or package folder")
     parser.add_argument("--data", type=Path, help="JSON data file to map after opening")
+    parser.add_argument("--bundle-check", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.data and not args.package:
         parser.error("--data requires --package.")
@@ -27,6 +28,9 @@ def main() -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("ATool")
     app.setOrganizationName("ATool")
+    if args.bundle_check:
+        from atool_qt.bundle_check import run_bundle_check
+        return run_bundle_check(app, args.bundle_check)
     window = WorkspaceWindow()
     window.show()
     if args.package:

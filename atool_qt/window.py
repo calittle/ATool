@@ -25,6 +25,7 @@ from .data_queries import DataQueries
 from .package_responses import PackageResponses
 from .package_documents import PackageDocumentTree
 from .clause_completion import ClauseComposeEdit
+from .activity import ActivityLog
 from .dialog_placement import DialogPlacement
 from .grids import configure_grid
 
@@ -990,7 +991,6 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         application = QApplication.instance()
         if not hasattr(application, '_atool_dialog_placement'):
             application._atool_dialog_placement = DialogPlacement(application)
-            application.installEventFilter(application._atool_dialog_placement)
         self.settings = settings if settings is not None else QSettings("ATool", "QtPrototype")
         self.session: PackageSession | None = None
         self.job: MappingJob | None = None
@@ -1013,7 +1013,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.data = DataPanel()
         self.layouts = LayoutPanel()
         self.clauses = ClausePanel()
-        self.activity = text_box()
+        self.activity = ActivityLog()
         self.add_panel("documents", "Document Manager", self.documents, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.add_panel("fields", "Field Manager", self.fields, Qt.DockWidgetArea.RightDockWidgetArea)
         self.add_panel("layouts", "Layout Manager", self.layouts, Qt.DockWidgetArea.LeftDockWidgetArea)

@@ -9,6 +9,12 @@ permissions:
   contents: read
 
 jobs:
+  native:
+    name: Native applications
+    uses: ./.github/workflows/native-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+
   build:
     name: Package ATool
     runs-on: ubuntu-latest

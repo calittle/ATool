@@ -1,27 +1,31 @@
 """Dialog placement for offscreen parents and multiple monitor arrangements."""
 import unittest
 from PySide6.QtCore import QRect, QSize
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QMainWindow, QVBoxLayout
 from atool_qt.dialog_placement import DialogPlacement, dialog_position
 
 
 class DialogPlacementTests(unittest.TestCase):
-    def test_new_dialog_is_positioned_before_display(self):
+    def test_new_dialog_is_positioned_when_it_receives_focus(self):
         app = QApplication.instance() or QApplication([])
         workspace = QMainWindow()
         workspace.setObjectName('atool-qt-workspace')
         placement = DialogPlacement(app)
-        app.installEventFilter(placement)
         try:
             workspace.move(3500, 700)
             dialog = QDialog(workspace)
+            layout = QVBoxLayout(dialog)
+            edit = QLineEdit(dialog)
+            layout.addWidget(edit)
             dialog.resize(480, 120)
             dialog.show()
+            edit.setFocus()
             app.processEvents()
+            self.assertIn(dialog, placement.placed)
             self.assertTrue(app.primaryScreen().availableGeometry().contains(dialog.frameGeometry()))
             dialog.close()
         finally:
-            app.removeEventFilter(placement)
+            app.focusChanged.disconnect(placement.focus_changed)
             workspace.close()
 
     def test_partly_offscreen_parent_keeps_dialog_on_visible_monitor(self):
