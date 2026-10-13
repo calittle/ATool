@@ -365,7 +365,7 @@ class ResolveDialog(QDialog):
         self.tree.clear()
         def add_node(node, parent=None):
             kind = node.get('kind', 'condition' if 'expression' in node else 'item')
-            name = str(node.get('name') or node.get('expression') or node.get('raw') or kind)
+            name = str(node.get('name') or node.get('target') or node.get('expression') or node.get('raw') or kind)
             passed = node.get('passed')
             match = 'PASS' if passed is True else 'FAIL' if passed is False else 'Unknown'
             value = str(node.get('rendered', ''))
