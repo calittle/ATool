@@ -16898,33 +16898,36 @@ class AToolApp:
         cancellation_requested: object | None = None,
     ) -> dict[str, object]:
         """Run an OCCS resource command with its own process and cancellation state."""
-        command_args = [str(arg) for arg in args]
-        login_attempted = False
-        while True:
-            completed = self._run_occs_cli(
-                command_args,
-                track_active_process=False,
-                honor_cancellation=False,
-                process_slot=process_slot,
-                cancellation_requested=cancellation_requested,
-            )
-            stdout = (completed.stdout or "").strip()
-            stderr = (completed.stderr or "").strip()
-            if completed.returncode == 0:
-                return {"stdout": stdout, "stderr": stderr, "returnCode": completed.returncode}
-            message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
-            if not login_attempted and self._should_retry_occs_after_login(command_args, message):
-                self._run_occs_login_for_retry(
+        from atool_core.resource_cache import ResourceDownload
+        with ResourceDownload([str(arg) for arg in args]) as download:
+            command_args = download.args
+            login_attempted = False
+            while True:
+                completed = self._run_occs_cli(
                     command_args,
-                    message,
                     track_active_process=False,
-                    update_status=False,
+                    honor_cancellation=False,
                     process_slot=process_slot,
                     cancellation_requested=cancellation_requested,
                 )
-                login_attempted = True
-                continue
-            raise RuntimeError(message)
+                stdout = (completed.stdout or "").strip()
+                stderr = (completed.stderr or "").strip()
+                if completed.returncode == 0:
+                    download.commit(stdout, stderr)
+                    return {"stdout": stdout, "stderr": stderr, "returnCode": completed.returncode}
+                message = stderr or stdout or f"OCCS CLI exited with status {completed.returncode}."
+                if not login_attempted and self._should_retry_occs_after_login(command_args, message):
+                    self._run_occs_login_for_retry(
+                        command_args,
+                        message,
+                        track_active_process=False,
+                        update_status=False,
+                        process_slot=process_slot,
+                        cancellation_requested=cancellation_requested,
+                    )
+                    login_attempted = True
+                    continue
+                raise RuntimeError(message)
 
     def _run_occs_json_command_async(
         self,

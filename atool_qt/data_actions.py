@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QFileDialog, QForm
 from atool_core.layout_resolver import LayoutResolver, format_report
 from .sample_data import SampleBuilder
 from .grids import configure_grid
+from .resource_actions import RESOURCE_TYPES
 
 
 def xml_bill_ids(path):
@@ -239,6 +240,9 @@ class ResolveDialog(QDialog):
         self.package = session.name
         self.template, self.data = copy.deepcopy(session.payload), copy.deepcopy(session.data)
         self.result, self.job = None, None
+        self.refresh_job = None
+        self.closed = False
+        self.refreshed_item = None
         self.setWindowTitle(f"Resolve Layout — {self.document['name']}")
         self.resize(930, 680)
         layout = QVBoxLayout(self)
@@ -279,6 +283,10 @@ class ResolveDialog(QDialog):
         collapse, expand = QPushButton('Collapse All'), QPushButton('Expand All')
         tree_controls.addWidget(collapse)
         tree_controls.addWidget(expand)
+        self.refresh_item_button = QPushButton('Refresh Item')
+        self.refresh_item_button.setEnabled(False)
+        self.refresh_item_button.clicked.connect(self.refresh_item)
+        tree_controls.addWidget(self.refresh_item_button)
         tree_controls.addStretch()
         layout.addLayout(tree_controls)
         self.tree = QTreeWidget()
@@ -288,6 +296,7 @@ class ResolveDialog(QDialog):
             self.tree.setColumnWidth(column, width)
         self.tree.setAlternatingRowColors(True)
         self.tree.currentItemChanged.connect(self.show_resolved_node)
+        self.tree.itemSelectionChanged.connect(self.update_refresh_item)
         collapse.clicked.connect(self.tree.collapseAll)
         expand.clicked.connect(self.tree.expandAll)
         self.report = QPlainTextEdit()
@@ -308,7 +317,53 @@ class ResolveDialog(QDialog):
         layout.addLayout(row)
         self.date.dateChanged.connect(self.refresh_layouts)
         self.cache.editingFinished.connect(self.refresh_layouts)
+        self.finished.connect(self.close_refresh)
         self.refresh_layouts()
+
+    def selected_resource(self):
+        selected = self.tree.selectedItems()
+        node = selected[0].data(0, Qt.ItemDataRole.UserRole) if len(selected) == 1 else None
+        if isinstance(node, dict) and node.get('kind') in ('document', 'layout', 'content') and node.get('name'):
+            return node['kind'], node['name']
+        return None
+
+    def update_refresh_item(self):
+        self.refresh_item_button.setEnabled(bool(self.selected_resource()) and self.refresh_job is None and self.job is None)
+
+    def close_refresh(self):
+        self.closed = True
+        if self.refresh_job is not None and not self.refresh_job.done:
+            self.refresh_job.cancel()
+
+    def refresh_item(self):
+        resource = self.selected_resource()
+        if resource is None or self.refresh_job is not None or self.job is not None:
+            return
+        kind, name = resource
+        cache = Path(self.cache.text().strip()).expanduser()
+        if not self.cache.text().strip() or not cache.is_dir():
+            self.status.setText('Choose a valid Comms cache directory.')
+            return
+        spec = next(row for row in RESOURCE_TYPES if row[0].casefold() == kind)
+        self.status.setText(f'Refreshing {kind} {name}…')
+        self.run_button.setEnabled(False)
+        self.refresh_item_button.setEnabled(False)
+        self.refresh_job = self.workspace.comms.submit(
+            [spec[1], name, '--output', str(cache / spec[3])],
+            lambda result: self.item_refreshed(result, resource), channel='resources')
+
+    def item_refreshed(self, result, resource):
+        self.refresh_job = None
+        if self.closed:
+            return
+        self.run_button.setEnabled(True)
+        self.update_refresh_item()
+        if not result.successful:
+            self.status.setText(result.message)
+            return
+        self.refreshed_item = resource
+        self.refresh_layouts()
+        self.resolve()
 
     def browse(self):
         path = QFileDialog.getExistingDirectory(self, 'Choose Comms Cache Directory', self.cache.text())
@@ -337,7 +392,7 @@ class ResolveDialog(QDialog):
             self.status.setText(f'Layout choices unavailable: {error}')
 
     def resolve(self):
-        if self.job and self.job.isRunning():
+        if self.refresh_job is not None or (self.job and self.job.isRunning()):
             return
         try:
             resolver = self.resolver()
@@ -354,16 +409,21 @@ class ResolveDialog(QDialog):
         self.report.clear()
         self.status.setText(f'Resolving {name}…')
         self.job = self.workspace.run_local_job(lambda: resolver.resolve(name), self.resolved)
+        self.update_refresh_item()
 
     def resolved(self, result, error):
         self.job = None
+        if self.closed:
+            return
         self.run_button.setEnabled(True)
         if error:
             self.status.setText(error)
             return
         self.result = result
         self.tree.clear()
+        refreshed = None
         def add_node(node, parent=None):
+            nonlocal refreshed
             kind = node.get('kind', 'condition' if 'expression' in node else 'item')
             name = str(node.get('name') or node.get('target') or node.get('expression') or node.get('raw') or kind)
             passed = node.get('passed')
@@ -373,6 +433,8 @@ class ResolveDialog(QDialog):
                 value = json.dumps(node['values'], ensure_ascii=False)
             item = QTreeWidgetItem([name, kind.title(), match, ' '.join(value.split())])
             item.setData(0, Qt.ItemDataRole.UserRole, node)
+            if refreshed is None and (kind, node.get('name')) == self.refreshed_item:
+                refreshed = item
             for column in range(4):
                 item.setToolTip(column, value if column == 3 else str(node.get('warning') or node.get('path') or item.text(column)))
                 if passed is not None:
@@ -390,7 +452,8 @@ class ResolveDialog(QDialog):
         if result.get('warnings'):
             add_node(dict(kind='warnings', name='Warnings', children=[dict(kind='warning', name=warning, warning=warning) for warning in result['warnings']]))
         self.tree.expandToDepth(1)
-        self.tree.setCurrentItem(root)
+        self.tree.setCurrentItem(refreshed if refreshed is not None else root)
+        self.refreshed_item = None
         self.save_button.setEnabled(True)
         self.status.setText(f"Resolved; {len(result.get('warnings', []))} warnings.")
 

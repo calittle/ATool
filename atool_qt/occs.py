@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from atool_core.resource_cache import ResourceDownload
 from .runtime import bundled_runtime
 
 
@@ -118,6 +119,7 @@ class CommandJob(QObject):
         self.login_attempted = self.read_retried = False
         self.login_alias = None
         self.original_failure = None
+        self.resource_download = None
         self.service = parent
         self.process.readyReadStandardOutput.connect(self.read_stdout)
         self.process.readyReadStandardError.connect(self.read_stderr)
@@ -144,6 +146,15 @@ class CommandJob(QObject):
             return
         self.stdout.clear()
         self.stderr.clear()
+        if args is self.args:
+            try:
+                if self.resource_download is None:
+                    self.resource_download = ResourceDownload(args)
+                args = self.resource_download.args
+            except (OSError, ValueError) as error:
+                self.stderr.extend(str(error).encode())
+                self.finish(-1)
+                return
         command = self.settings.command(args)
         if self.settings.cwd:
             self.process.setWorkingDirectory(self.settings.cwd)
@@ -236,6 +247,14 @@ class CommandJob(QObject):
                 self.read_retried = True
                 QTimer.singleShot(2000, self.start)
                 return
+        if self.resource_download is not None:
+            try:
+                if result.successful:
+                    self.resource_download.commit(stdout, stderr)
+            except (OSError, ValueError) as error:
+                result = CommandResult(-1, stdout, str(error), None)
+            finally:
+                self.resource_download.cleanup()
         self.done = True
         self.duration = self.elapsed_seconds
         self.completed.emit(result)
