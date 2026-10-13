@@ -25,15 +25,11 @@ GitHub Actions builds three native ZIPs for main and version releases:
 | `ATool-macos-x86_64.zip` | Intel Mac | `ATool.app` |
 | `ATool-windows-x86_64.zip` | 64-bit Windows | `ATool/ATool.exe` |
 
-Get the matching ZIP from [GitHub Releases](https://github.com/calittle/ATool/releases)
-once a release containing native builds is published. Pushing a version tag
-(`v*`) builds and publishes the release; commits to `main` do not trigger builds.
-Native applications bundle the latest published stable OCCS CLI release selected
-when the build starts.
+Get the matching ZIP from [GitHub Releases](https://github.com/calittle/ATool/releases).
+Native applications bundle the latest published stable OCCS CLI release at the time of the build.
 Extract the ZIP, then double-click the application. On macOS you can move
 `ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
-folder. macOS identifies the native application as **ATool** in the Dock and
-Cmd-Tab.
+folder. 
 
 These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
 its npm dependencies. No Python/Node installation, virtual environment,
