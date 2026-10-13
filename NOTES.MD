@@ -1,5 +1,18 @@
 # ATool Release Notes
 
+## v2.0.1
+
+- Add Refresh Item beside Expand All in Resolve Layout. Document, Layout and
+  Content selections can retrieve the latest cached resource and update the
+  resolved tree while retaining the selected item.
+- Preserve neighboring cached resources during single-item downloads and keep
+  the previous resource when a download fails or is cancelled.
+- Provide self-contained native applications for Apple Silicon Mac, Intel Mac
+  and Windows, including Python, Qt, Node.js and OCCS CLI.
+- Bundle the latest published stable OCCS CLI release in native applications.
+  Build and publish releases on version tag pushes; main commits do not build.
+- Fix native Windows runtime paths and clause composer autocomplete activation.
+
 ## v2.0.0
 
 - The default application is now the unified PySide6/Qt workspace. Documents,
