@@ -16,7 +16,7 @@ class ClauseComposeEdit(QPlainTextEdit):
         self.completer.setWidget(self)
         self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.completer.activated.connect(self.insert_completion)
+        self.completer.activated[str].connect(self.insert_completion)
 
     def set_clauses(self, entries):
         self.names = sorted({entry['name'] for entry in entries if entry.get('name')}, key=str.casefold)
@@ -56,13 +56,30 @@ class ClauseComposeEdit(QPlainTextEdit):
             rectangle = self.cursorRect()
             rectangle.setWidth(max(220, self.completer.popup().sizeHintForColumn(0) + 30))
             self.completer.complete(rectangle)
+            self.completer.popup().setCurrentIndex(self.completer.completionModel().index(0, 0))
         else:
             self.completer.popup().hide()
 
     def keyPressEvent(self, event):
-        if self.completer.popup().isVisible() and event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Escape):
-            event.ignore()
-            return
+        popup = self.completer.popup()
+        if popup.isVisible():
+            if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
+                name = popup.currentIndex().data()
+                if name:
+                    self.insert_completion(name)
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_Escape:
+                popup.hide()
+                event.accept()
+                return
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                model = self.completer.completionModel()
+                step = 1 if event.key() == Qt.Key.Key_Down else -1
+                row = max(0, min(model.rowCount() - 1, popup.currentIndex().row() + step))
+                popup.setCurrentIndex(model.index(row, 0))
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_Space and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.show_completions()
             return
