@@ -31,10 +31,11 @@ class NativeRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / 'settings.json'
-            path.write_text(json.dumps({'occs': {'cli_path': '/custom/occs.js', 'session_alias': 'chosen'}}))
+            custom_cli = root / 'custom CLI' / 'occs.js'
+            path.write_text(json.dumps({'occs': {'cli_path': str(custom_cli), 'session_alias': 'chosen'}}))
             settings = CommsSettings(path)
             with patch('atool_qt.occs.bundled_runtime', return_value=root / 'runtime'):
-                self.assertEqual('/custom/occs.js', settings.cli)
+                self.assertEqual(str(custom_cli), settings.cli)
                 self.assertEqual(['package', '--session', 'chosen', 'list'], settings.command(['package', 'list'])[2:])
             with patch('atool_qt.occs.bundled_runtime', return_value=None):
                 self.assertEqual('node', settings.command(['package'])[0])
