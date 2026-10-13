@@ -17,7 +17,7 @@ application remains available through the legacy launchers.
 
 ## Native application downloads
 
-GitHub Actions builds three native ZIPs for main and version releases:
+GitHub Actions builds three native ZIPs for version releases:
 
 | Download | Computer | Launch |
 | --- | --- | --- |
@@ -25,11 +25,11 @@ GitHub Actions builds three native ZIPs for main and version releases:
 | `ATool-macos-x86_64.zip` | Intel Mac | `ATool.app` |
 | `ATool-windows-x86_64.zip` | 64-bit Windows | `ATool/ATool.exe` |
 
-Get the matching ZIP from [GitHub Releases](https://github.com/calittle/ATool/releases).
-Native applications bundle the latest published stable OCCS CLI release at the time of the build.
+Get the ZIP matching your computer from
+[GitHub Releases](https://github.com/calittle/ATool/releases).
 Extract the ZIP, then double-click the application. On macOS you can move
 `ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
-folder. 
+folder.
 
 These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
 its npm dependencies. No Python/Node installation, virtual environment,
@@ -41,6 +41,209 @@ overrides the bundled CLI; clear that setting to use the included version.
 The native apps are not currently Developer ID signed/notarized on macOS or
 Authenticode signed on Windows. Standard operating-system trust checks may
 apply to downloaded builds. SHA-256 checksum files accompany the ZIPs.
+
+### Using the bundled OCCS CLI directly
+
+You can run OCCS CLI from a native ATool download without installing a separate
+Node.js or OCCS CLI. The bundle includes the CLI's JavaScript dependencies.
+Some optional CLI commands also need external programs, which you install
+separately:
+
+| External tool | Required for |
+| --- | --- |
+| Graphviz (`dot`) | Generating SVG graphs with `graph` |
+| Poppler (`pdftoppm`, `pdfinfo`) | PDF smoke-test thumbnails, page counts, and rasterizing PDF pages for visual comparisons |
+| ImageMagick (`identify`, `compare`) | Visual comparisons of PDF or HTML outputs in two-tenancy smoke tests |
+| Chrome or Chromium | HTML smoke-test thumbnails and HTML visual comparisons |
+
+Follow the [OCCS CLI prerequisite installation instructions](https://github.com/calittle/OCCS-CLI#prerequisites)
+for your operating system. When using ATool's bundled CLI, skip the separate
+Node.js/npm installation and the CLI's `npm install`/`npm link` steps; those
+runtime dependencies are already included. Install only the external tools
+needed by your commands. Add the
+folders containing the Graphviz, Poppler and ImageMagick executables to the
+terminal's `PATH`. The CLI invokes the names listed above directly; an
+ImageMagick installation providing only `magick` does not provide the
+`identify` and `compare` commands it expects. Verify the tools you installed:
+
+```text
+dot -V
+pdftoppm -v
+pdfinfo -v
+identify -version
+compare -version
+```
+
+The CLI checks common Chrome/Chromium installation locations. For a browser in
+another location, set `OCCS_SMOKE_BROWSER` to its executable's full path, as in
+the examples below. ATool's embedded Qt WebEngine includes Chromium for the
+editor, but does not supply the standalone browser executable these CLI
+commands need.
+
+**macOS — Terminal**
+
+Set this up once if you want to run OCCS CLI commands directly, for example to
+generate graphs, run smoke tests or automate work outside ATool's interface.
+Using ATool's normal buttons and menus does not require this setup.
+
+The setup gives you an `occs` command in every new Terminal window. It runs
+ATool's bundled CLI with its bundled Node.js, so you do not need a separate
+CLI or Node.js installation.
+
+1. Open the **Terminal** app. For the standard macOS zsh shell, enter:
+
+   ```bash
+   nano ~/.zshrc
+   ```
+
+   This opens your shell startup file, creating it if it does not exist.
+2. Add the following at the end of that file, below any existing settings.
+   Adjust the first path if ATool is installed somewhere other than Applications.
+   These lines belong in `~/.zshrc`, not in an ATool file:
+
+   ```bash
+   ATOOL_RUNTIME="/Applications/ATool.app/Contents/Frameworks/runtime"
+   occs() {
+     "$ATOOL_RUNTIME/node/node" "$ATOOL_RUNTIME/occs-cli/bin/occs.js" "$@"
+   }
+   ```
+
+3. If the CLI needs an explicit browser location for HTML smoke tests, add this
+   line to the **same file**, using the path to your installed browser:
+
+   ```bash
+   export OCCS_SMOKE_BROWSER="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+   ```
+
+4. In nano, press **Control+O**, then **Return** to save, and **Control+X** to exit.
+   Open a new Terminal window and run `occs --help` to check the setup.
+
+You only edit `~/.zshrc` once. From then on, enter `occs` commands in Terminal.
+Work from a writable folder so generated files are saved outside the application.
+For example, run the following **in Terminal**, not in `~/.zshrc`:
+
+```bash
+mkdir -p "$HOME/Documents/occs-cli-work"
+cd "$HOME/Documents/occs-cli-work"
+occs graph --help
+occs smoke --help
+```
+
+**Windows — PowerShell**
+
+For direct CLI use on Windows, save the command in your PowerShell profile once.
+PowerShell loads this file when you open a new window, making `occs` available
+without repeating the setup. ATool's normal buttons and menus do not need it.
+
+For external PDF and comparison tools, follow the
+[Poppler installation steps](https://github.com/calittle/OCCS-CLI#poppler-on-windows)
+and [ImageMagick installation steps](https://github.com/calittle/OCCS-CLI#imagemagick-on-windows).
+Poppler's executables are in its extracted `Library\bin` folder. ImageMagick
+must provide `identify.exe` and `compare.exe`; enable its legacy utilities
+option if offered. The instructions include user `PATH` setup and verification
+commands. Open a new PowerShell window after changing `PATH`.
+
+1. Open **PowerShell** and run these commands to open your profile in Notepad,
+   creating it if necessary:
+
+   ```powershell
+   New-Item -ItemType Directory -Force (Split-Path -Parent $PROFILE) | Out-Null
+   if (!(Test-Path -LiteralPath $PROFILE)) {
+     New-Item -ItemType File -Path $PROFILE | Out-Null
+   }
+   notepad $PROFILE
+   ```
+
+2. Add the following to the end of the profile file. Replace the example path
+   with the extracted folder containing `ATool.exe`:
+
+   ```powershell
+   $AToolRuntime = "C:\path\to\ATool\_internal\runtime"
+   function occs {
+     & "$AToolRuntime\node\node.exe" "$AToolRuntime\occs-cli\bin\occs.js" @args
+   }
+   ```
+
+3. If the CLI needs an explicit browser location, add this to the **same profile
+   file**, using your browser's executable path:
+
+   ```powershell
+   $env:OCCS_SMOKE_BROWSER = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+   ```
+
+4. Save the file and close Notepad. Open a new window in the same PowerShell
+   application and run `occs --help`. Windows PowerShell and PowerShell 7 have
+   separate profiles; configure the one you intend to use.
+
+Run your commands from a writable working folder. Enter the following **in
+PowerShell**, not in the profile file:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\Documents\occs-cli-work" | Out-Null
+Set-Location "$HOME\Documents\occs-cli-work"
+occs graph --help
+occs smoke --help
+```
+
+Both setups persist across terminal sessions. If you move ATool, update its
+runtime path in the startup/profile file. If you want to keep an existing
+standalone `occs` command as well, name the function `atool-occs` instead and use
+that name for the bundled CLI.
+
+Use `occs graph --help`, `occs smoke --help`, and `occs login --help` for command
+options. CLI sessions are stored in your user profile; use a saved session or
+log in through the CLI for commands accessing OCCS. See the
+[OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for cache,
+graph and smoke-suite setup.
+
+Installing these tools enables the corresponding CLI commands; it does not add
+graph or smoke-test controls to ATool's interface. Run the bundled CLI using
+the bundled Node.js shown above, and keep the application's runtime files
+together. Each ATool download retains its own bundled CLI version.
+
+## Moving an older ATool installation to the native app
+
+Users of ATool 1.x or source-based 2.0.0 can move to the 2.0.1 native download
+without setting up Python, a `.venv`, Node.js or a separate OCCS CLI. Existing
+native-app users can use the same steps to replace an older native download.
+
+1. Save your work and close ATool. Back up your packages, templates, input files,
+   and user settings. Check for working files saved inside the old application
+   or standalone CLI folder, including smoke suites, `.env` files and outputs.
+2. Extract the native ZIP for your computer into a new location. Launch
+   `ATool.app` on macOS or `ATool.exe` on Windows. Keep the old installation until
+   you have verified the new one. Native downloads use these executables;
+   source-download scripts such as `Run_ATool.command` and `Run_ATool.bat` still
+   require their Python environment.
+3. In **Settings → User Settings**, clear **CLI Path** and save to use the
+   bundled OCCS CLI. An existing custom path overrides the bundle, even after
+   upgrading. Keep a custom path only if you deliberately want a standalone CLI.
+4. Verify your local package, shared storage, Comms cache and model folder paths.
+   If any are inside the old installation folder, keep that folder or move the
+   working files and update the settings before removing it. Remap input files
+   if their saved locations change.
+5. Reopen a package or session, map your input, and verify the operations you
+   normally use, such as a resource download and Preview. Existing user-profile
+   settings and saved CLI sessions are reused; log in again if the session has
+   expired. Update desktop shortcuts, Dock/taskbar pins and scripts to launch
+   the new native application.
+
+### Optional cleanup after migration
+
+| Old component | What to do |
+| --- | --- |
+| The old source installation's `.venv` | Remove it after validating the native app if you no longer need to run the old source or legacy interface. Native ATool does not use it. |
+| An old source or native application folder | Remove it once you have moved or preserved any working files and updated shortcuts and configured paths. |
+| A standalone OCCS CLI folder or global `occs` command | Keep it if other scripts, terminal commands or users need it. It can coexist with the bundled CLI. Remove it only after checking those dependencies and clearing ATool's custom CLI path. |
+| System Python or Node.js | Native ATool does not need these installations, but other software may. Removing them is not required for migration. |
+| Graphviz, Poppler, ImageMagick, Chrome/Chromium | Keep them if you use the bundled or standalone CLI's graph or smoke-test features. |
+
+Keep the user-profile `.atool` directory and all configured package, cache,
+model and shared-storage folders. Also retain `.occs-session.json` and the
+`.occs-cli` directory in your user profile: the latter contains the key used
+to read saved CLI credentials. On macOS the user profile is your home folder;
+on Windows it is `%USERPROFILE%`. These are user data, not disposable
+application runtime files. ATool does not automatically delete old installations.
 
 ## Requirements for running from source
 
@@ -122,9 +325,12 @@ explicitly when creating the environment: for example, `python3.13 -m venv
 
 ## Upgrading from 1.x
 
-The main change is the unified Qt workspace. **Copying the new application
-files alone is not enough:** you must install the updated dependencies before
-launching 2.0. The default launchers now start the Qt application.
+For the native app, follow
+[Moving an older ATool installation to the native app](#moving-an-older-atool-installation-to-the-native-app)
+above. The steps below apply to the **source distribution**. Its main change
+is the unified Qt workspace: copying source files alone is not enough; install
+the updated dependencies before launching. The default source launchers now
+start the Qt application.
 
 1. Save your work and close ATool 1.x.
 2. Keep your existing ATool folder as a fallback. Back up your packages and

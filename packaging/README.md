@@ -45,7 +45,25 @@ Optional local validation, on the target operating system:
 5. Run `tools/check_native_bundle.py dist/native/ATool.app` on macOS, or
    `tools/check_native_bundle.py dist/native/ATool` on Windows.
 
-The optional CLI graph/smoke commands are not used by ATool and may require
-external tools such as Graphviz, Poppler or ImageMagick. All CLI operations
-exposed by ATool use the included runtime. OCCS service access still requires
-the user's network connection and credentials; these are not bundled.
+The bundle includes Node.js, OCCS CLI and its npm dependencies. It does not
+include Graphviz (`dot`), Poppler (`pdftoppm`, `pdfinfo`), ImageMagick (`identify`,
+`compare`), or a standalone Chrome/Chromium executable. Qt WebEngine's embedded
+Chromium supports ATool's editor and is not a browser executable for CLI smoke
+tests.
+
+Users can install these external tools and run the bundled CLI directly using
+the bundled Node.js. The
+[OCCS CLI prerequisites](https://github.com/calittle/OCCS-CLI#prerequisites)
+provide platform installation instructions; bundled-CLI users can skip the
+Node.js/npm and `npm install`/`npm link` steps. The CLI finds Graphviz, Poppler and ImageMagick through
+the terminal's `PATH`; Chrome/Chromium uses common installation locations or
+the `OCCS_SMOKE_BROWSER` executable path. Graphviz supports SVG graphs, Poppler
+supports PDF thumbnails/page counts and comparison rasterization, ImageMagick
+supports PDF/HTML visual comparisons, and Chrome/Chromium supports HTML
+thumbnails and comparisons. See
+[Using the bundled OCCS CLI directly](../README.md#using-the-bundled-occs-cli-directly)
+for Mac and Windows commands.
+
+The optional CLI graph/smoke commands are not used by ATool's interface. All CLI
+operations exposed by ATool use the included runtime. OCCS service access still
+requires the user's network connection and credentials; these are not bundled.
