@@ -10,7 +10,7 @@ from xml.etree import ElementTree
 
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
                               QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
                               QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 from atool_core.layout_resolver import LayoutResolver, format_report
@@ -287,6 +287,14 @@ class ResolveDialog(QDialog):
         self.refresh_item_button.setEnabled(False)
         self.refresh_item_button.clicked.connect(self.refresh_item)
         tree_controls.addWidget(self.refresh_item_button)
+        self.copy_item_name_button = QPushButton('Copy Item Name')
+        self.copy_item_name_button.setEnabled(False)
+        self.copy_item_name_button.clicked.connect(self.copy_item_name)
+        tree_controls.addWidget(self.copy_item_name_button)
+        self.copy_item_name_timer = QTimer(self)
+        self.copy_item_name_timer.setSingleShot(True)
+        self.copy_item_name_timer.setInterval(1500)
+        self.copy_item_name_timer.timeout.connect(self.reset_copy_item_name)
         tree_controls.addStretch()
         layout.addLayout(tree_controls)
         self.tree = QTreeWidget()
@@ -297,6 +305,7 @@ class ResolveDialog(QDialog):
         self.tree.setAlternatingRowColors(True)
         self.tree.currentItemChanged.connect(self.show_resolved_node)
         self.tree.itemSelectionChanged.connect(self.update_refresh_item)
+        self.tree.itemSelectionChanged.connect(self.update_copy_item_name)
         collapse.clicked.connect(self.tree.collapseAll)
         expand.clicked.connect(self.tree.expandAll)
         self.report = QPlainTextEdit()
@@ -329,6 +338,23 @@ class ResolveDialog(QDialog):
 
     def update_refresh_item(self):
         self.refresh_item_button.setEnabled(bool(self.selected_resource()) and self.refresh_job is None and self.job is None)
+
+    def reset_copy_item_name(self):
+        self.copy_item_name_timer.stop()
+        self.copy_item_name_button.setText('Copy Item Name')
+
+    def update_copy_item_name(self):
+        self.reset_copy_item_name()
+        selected = self.tree.selectedItems()
+        self.copy_item_name_button.setEnabled(len(selected) == 1 and bool(selected[0].text(0)))
+
+    def copy_item_name(self):
+        selected = self.tree.selectedItems()
+        if len(selected) != 1 or not selected[0].text(0):
+            return
+        QApplication.clipboard().setText(selected[0].text(0))
+        self.copy_item_name_button.setText('Copied')
+        self.copy_item_name_timer.start()
 
     def close_refresh(self):
         self.closed = True
