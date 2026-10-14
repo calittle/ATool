@@ -212,6 +212,70 @@ class SharedPackageInterfaceTests(unittest.TestCase):
             self.window.editor.saved=self.window.editor.snapshot()
         self.window.close()
 
+    def second_window(self):
+        from PySide6.QtCore import QSettings
+        from atool_qt.window import WorkspaceWindow
+        window = WorkspaceWindow(QSettings(str(self.root/'second.ini'), QSettings.Format.IniFormat))
+        window.comms.settings = self.window.comms.settings
+        self.addCleanup(window.close)
+        return window
+
+    def test_second_window_cannot_open_same_package_via_shared_local_raw_or_download(self):
+        from PySide6.QtWidgets import QMessageBox
+        window = self.window
+        with patch.object(window, 'require_shared_sync', return_value=True):
+            self.assertTrue(window.open_shared_entry(self.entry, 'edit'))
+        lock_path = window.shared_store().lock_path(self.entry['package_dir'])
+        original_lock = lock_path.read_bytes()
+        other = self.second_window()
+        with patch.object(other, 'report_error') as errors, \
+                patch.object(other, 'prepare_shared_exit') as exit_previous, \
+                patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.No):
+            self.assertFalse(other.open_shared_entry(self.entry, 'edit'))
+            self.assertFalse(other.open_shared_entry(self.entry, 'testing'))
+            for path in (self.root/'original', self.root/'original'/'occs-package.json', window.session.source):
+                self.assertFalse(other.open_package(path))
+            self.assertEqual(errors.call_count, 5)
+            self.assertIn('already open', errors.call_args.args[1])
+            with self.assertRaisesRegex(ValueError, 'already open'):
+                other.install_download({}, self.root/'original', True)
+            exit_previous.assert_not_called()
+        self.assertIsNone(other.session)
+        self.assertEqual(original_lock, lock_path.read_bytes())
+
+    def test_package_close_allows_another_window_to_open_it(self):
+        window = self.window
+        self.assertTrue(window.open_package(self.root/'original'))
+        other = self.second_window()
+        with patch.object(other, 'report_error'):
+            self.assertFalse(other.open_package(self.root/'original'))
+        self.assertTrue(window.close_package())
+        self.assertTrue(other.open_package(self.root/'original'))
+
+    def test_cancelled_switch_keeps_current_package_and_releases_new_reservation(self):
+        window = self.window
+        self.assertTrue(window.open_package(self.root/'original'))
+        different = self.root/'other.json'
+        different.write_bytes(encode({'$$Id':'Other', 'Documents':[], 'Fields':[]}))
+        with patch.object(window, 'prepare_shared_exit', return_value=False):
+            self.assertFalse(window.open_package(different))
+        self.assertEqual(window.session.name, 'Invoice')
+        other = self.second_window()
+        with patch.object(other, 'report_error'):
+            self.assertFalse(other.open_package(self.root/'original'))
+        self.assertTrue(other.open_package(different))
+
+    def test_cancelled_window_close_keeps_reservation_until_window_really_closes(self):
+        window = self.window
+        self.assertTrue(window.open_package(self.root/'original'))
+        other = self.second_window()
+        with patch.object(window, 'confirm_discard', return_value=False):
+            self.assertFalse(window.close())
+        with patch.object(other, 'report_error'):
+            self.assertFalse(other.open_package(self.root/'original'))
+        self.assertTrue(window.close())
+        self.assertTrue(other.open_package(self.root/'original'))
+
     def test_reopening_same_bundle_refreshes_file_baseline_after_external_format_change(self):
         window=self.window
         root=self.root/'original'

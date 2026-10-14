@@ -81,6 +81,20 @@ class MenuParityTests(unittest.TestCase):
             window.about_action.trigger()
             info.assert_called_once_with(window, 'About ATool', 'verified build info')
 
+    def test_new_window_launches_independent_instance_and_reports_start_failure(self):
+        window = self.window
+        self.assertIn(window.new_window_action, window.menuBar().actions()[0].menu().actions())
+        self.assertEqual(self.shortcuts(window.new_window_action), ['Ctrl+N'])
+        with patch('atool_qt.runtime.start_new_instance', return_value=True) as launch, \
+                patch.object(QMessageBox, 'warning') as warning:
+            window.new_window_action.trigger()
+            launch.assert_called_once_with()
+            warning.assert_not_called()
+        with patch('atool_qt.runtime.start_new_instance', return_value=False), \
+                patch.object(QMessageBox, 'warning') as warning:
+            window.new_window_action.trigger()
+            self.assertEqual(warning.call_args.args[:2], (window, 'New Window'))
+
     def test_open_keyboard_shortcut_opens_shared_picker(self):
         window = self.window
         window.show()

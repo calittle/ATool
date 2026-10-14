@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageB
 
 from .package_responses import PackageResponses
 from .session import PackageSession
+from .package_guard import session_package_name
 from .shared_packages import json_object, manifest, names, segment, timestamp
 
 
@@ -220,36 +221,38 @@ class PackageDownloadActions:
         root=Path(str(result.get('bundlePath') or requested)).expanduser().resolve()
         value=manifest(root)
         session=PackageSession.open(root)
-        store=self.shared_store()
-        if shared:
-            package_dir=store.package_dir(value)
-            lock_path=store.lock_path(package_dir)
-            lock=json_object(lock_path) if lock_path.exists() else None
-            if lock and not store.owned(lock,store.owner):
-                if QMessageBox.question(self,'Shared Package Locked','The downloaded version is locked by another user. Open the downloaded bundle locally instead?',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
-                    shared=False
-                else:
+        with self.package_guard.reserve(session_package_name(session)) as commit:
+            store=self.shared_store()
+            if shared:
+                package_dir=store.package_dir(value)
+                lock_path=store.lock_path(package_dir)
+                lock=json_object(lock_path) if lock_path.exists() else None
+                if lock and not store.owned(lock,store.owner):
+                    if QMessageBox.question(self,'Shared Package Locked','The downloaded version is locked by another user. Open the downloaded bundle locally instead?',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+                        shared=False
+                    else:
+                        return
+                elif lock and QMessageBox.question(self,'Replace Shared Package','You hold the edit lock for this version. Retrieving it from Comms replaces the shared copy. Continue?',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
                     return
-            elif lock and QMessageBox.question(self,'Replace Shared Package','You hold the edit lock for this version. Retrieving it from Comms replaces the shared copy. Continue?',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
+            if not self.prepare_shared_exit():
                 return
-        if not self.prepare_shared_exit():
-            return
-        if shared:
-            if not self.require_shared_sync('write this package to the shared folder'):
-                return
-            entry=store.publish(root,initial=True,reason='retrievedFromComms')
-            local=store.open_copy(entry,'edit')
-            session=PackageSession.open(local)
-            context,mode=entry['package_dir'],'edit'
-        else:
-            context,mode=store.restore_context(root)
-        self.editor=None
-        self.set_session(session)
-        self.shared_package_dir,self.shared_mode=context,mode
-        self.remember_package_session()
-        self.settings.setValue('lastDirectory',str(session.bundle['root']))
-        self.update_shared_actions()
-        self.statusBar().showMessage('Retrieved '+names(value)[0]+' '+names(value)[1]+(' for shared editing.' if shared else ' locally.'),5000)
+            if shared:
+                if not self.require_shared_sync('write this package to the shared folder'):
+                    return
+                entry=store.publish(root,initial=True,reason='retrievedFromComms')
+                local=store.open_copy(entry,'edit')
+                session=PackageSession.open(local)
+                context,mode=entry['package_dir'],'edit'
+            else:
+                context,mode=store.restore_context(root)
+            self.editor=None
+            self.set_session(session)
+            commit()
+            self.shared_package_dir,self.shared_mode=context,mode
+            self.remember_package_session()
+            self.settings.setValue('lastDirectory',str(session.bundle['root']))
+            self.update_shared_actions()
+            self.statusBar().showMessage('Retrieved '+names(value)[0]+' '+names(value)[1]+(' for shared editing.' if shared else ' locally.'),5000)
 
     def record_package_mru(self,package,version):
         if not package or not version:

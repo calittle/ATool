@@ -270,20 +270,22 @@ class SharedPackageActions:
                     return self.open_package(resume)
             if mode is None:
                 mode='edit' if QMessageBox.question(self,'Open Shared Package','Lock this version for edit? Choose No to open a testing copy.',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes else 'testing'
-            if not self.confirm_discard() or not self.prepare_shared_exit():
-                return False
-            if mode=='edit' and not self.require_shared_sync('create this shared package lock'):
-                return False
-            local=store.open_copy(entry,mode)
-            session=PackageSession.open(local)
-            self.editor=None
-            self.set_session(session)
-            self.shared_package_dir,self.shared_mode=entry['package_dir'],mode
-            self.remember_package_session()
-            self.settings.setValue('lastDirectory',str(local))
-            self.update_shared_actions()
-            self.statusBar().showMessage('Opened '+entry['package_name']+' '+entry['version_name']+' ('+mode+')',5000)
-            return True
+            with self.package_guard.reserve(entry['package_name']) as commit:
+                if not self.confirm_discard() or not self.prepare_shared_exit():
+                    return False
+                if mode=='edit' and not self.require_shared_sync('create this shared package lock'):
+                    return False
+                local=store.open_copy(entry,mode)
+                session=PackageSession.open(local)
+                self.editor=None
+                self.set_session(session)
+                commit()
+                self.shared_package_dir,self.shared_mode=entry['package_dir'],mode
+                self.remember_package_session()
+                self.settings.setValue('lastDirectory',str(local))
+                self.update_shared_actions()
+                self.statusBar().showMessage('Opened '+entry['package_name']+' '+entry['version_name']+' ('+mode+')',5000)
+                return True
         except (OSError,ValueError) as error:
             self.report_error('Open Shared Package',str(error))
             return False
@@ -389,6 +391,7 @@ class SharedPackageActions:
         empty=PackageSession.from_payload({'$$Id':'(none)','Documents':[],'Fields':[]})
         self.set_session(empty)
         self.session=self.editor=None
+        self.package_guard.release()
         self.shared_package_dir,self.shared_mode=None,'local'
         self.content.refresh_fields()
         self.setWindowTitle('ATool Qt[*]')

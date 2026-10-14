@@ -7,10 +7,37 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atool_qt.occs import CommsSettings
-from atool_qt.runtime import bundled_runtime
+from atool_qt.runtime import bundled_runtime, start_new_instance
 
 
 class NativeRuntimeTests(unittest.TestCase):
+    def test_new_native_instance_uses_executable_and_independent_environment(self):
+        from PySide6.QtCore import QProcessEnvironment
+        environment = QProcessEnvironment()
+        environment.insert('ATOOL_TEST_SETTING', 'preserved')
+        with patch('sys.frozen', True, create=True), patch('sys.executable', '/Apps/ATool App/ATool'), \
+                patch('PySide6.QtCore.QProcess') as process_class, \
+                patch('PySide6.QtCore.QProcessEnvironment.systemEnvironment', return_value=environment):
+            process = process_class.return_value
+            process.startDetached.return_value = True
+            self.assertTrue(start_new_instance())
+            process.setProgram.assert_called_once_with('/Apps/ATool App/ATool')
+            process.setArguments.assert_not_called()
+            actual = process.setProcessEnvironment.call_args.args[0]
+            self.assertEqual(actual.value('PYINSTALLER_RESET_ENVIRONMENT'), '1')
+            self.assertEqual(actual.value('ATOOL_TEST_SETTING'), 'preserved')
+
+    def test_new_source_instance_uses_absolute_entrypoint_without_current_package_arguments(self):
+        with patch('sys.frozen', False, create=True), patch('sys.executable', '/Python Path/python'), \
+                patch('sys.argv', ['ATool_Qt.py', '--package', 'existing.json']), \
+                patch('PySide6.QtCore.QProcess') as process_class:
+            process = process_class.return_value
+            process.startDetached.return_value = False
+            self.assertFalse(start_new_instance())
+            process.setProgram.assert_called_once_with('/Python Path/python')
+            process.setArguments.assert_called_once_with([str(Path(__file__).resolve().parents[1] / 'ATool_Qt.py')])
+            process.setProcessEnvironment.assert_not_called()
+
     def test_frozen_cli_and_node_use_bundle_paths_with_spaces_and_writable_user_cwd(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

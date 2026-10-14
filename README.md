@@ -31,6 +31,13 @@ Extract the ZIP, then double-click the application. On macOS you can move
 `ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
 folder.
 
+Use **File → New Window** (**Cmd+N** on macOS, **Ctrl+N** on Windows) to open
+another independent copy of ATool. Each window can open its own package and map
+its own data, and closing one leaves the others running.
+Each package can be open in only one ATool window on your computer, including
+local copies, testing copies and other versions of that package. Close the
+package in its current window before opening it in another.
+
 These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
 its npm dependencies. No Python/Node installation, virtual environment,
 dependency installation, or terminal launcher is needed. Configure your OCCS

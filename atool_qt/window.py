@@ -28,6 +28,7 @@ from .clause_completion import ClauseComposeEdit
 from .activity import ActivityLog
 from .dialog_placement import DialogPlacement
 from .grids import configure_grid
+from .package_guard import PackageGuard, session_package_name
 
 ROLE = Qt.ItemDataRole.UserRole
 BLUE = "#0057d9"
@@ -994,6 +995,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.settings = settings if settings is not None else QSettings("ATool", "QtPrototype")
         self.session: PackageSession | None = None
         self.job: MappingJob | None = None
+        self.package_guard = PackageGuard()
         self.close_pending = False
         self.setObjectName("atool-qt-workspace")
         self.setWindowTitle("ATool")
@@ -1081,6 +1083,9 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
 
     def create_actions(self):
         file_menu = self.menuBar().addMenu("&File")
+        self.new_window_action = self.action("New Window", self.new_window, "Ctrl+N")
+        file_menu.addAction(self.new_window_action)
+        file_menu.addSeparator()
         self.open_action = self.action("Open Raw AT…", self.choose_package)
         self.bundle_action = self.action("Open Local Package…", self.choose_bundle)
         file_menu.addActions([self.open_action, self.bundle_action])
@@ -1216,10 +1221,16 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         except (OSError, ValueError, RecursionError) as error:
             self.report_error("Could not open package", str(error))
             return False
-        if not self.prepare_shared_exit():
+        try:
+            with self.package_guard.reserve(session_package_name(session)) as commit:
+                if not self.prepare_shared_exit():
+                    return False
+                self.editor = None
+                self.set_session(session)
+                commit()
+        except (OSError, ValueError) as error:
+            self.report_error('Could not open package', str(error))
             return False
-        self.editor = None
-        self.set_session(session)
         self.shared_package_dir, self.shared_mode = self.shared_store().restore_context(session.bundle['root']) if session.bundle else (None, 'local')
         self.update_shared_actions()
         self.log(f"Opened {session.name}: {session.source}")
@@ -1297,6 +1308,11 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.log(f"{title}: {message}")
         QMessageBox.warning(self, title, message)
 
+    def new_window(self):
+        from .runtime import start_new_instance
+        if not start_new_instance():
+            QMessageBox.warning(self, 'New Window', 'Could not start another ATool window. Try launching ATool again.')
+
     def about(self):
         from .build_info import about_text
         QMessageBox.information(self, 'About ATool', about_text())
@@ -1332,4 +1348,5 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
             self.settings.setValue(f"{key}/splitter", getattr(self, key).splitter.saveState())
         self.settings.setValue('clauses/stackedSplitter', self.clauses.splitter.saveState())
         self.settings.sync()
+        self.package_guard.release()
         event.accept()
