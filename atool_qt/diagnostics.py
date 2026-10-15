@@ -299,6 +299,8 @@ class ConditionDiagnostics(ConditionEvaluator):
     @staticmethod
     def _format_mapping_value_preview(value: object) -> object:
         """Keep mapping diagnostics useful without rendering entire mapped objects."""
+        if isinstance(value, re.Pattern):
+            return f"/{value.pattern}/"
         if isinstance(value, dict):
             return f"{{…}} ({len(value)} key(s))"
         if isinstance(value, list):

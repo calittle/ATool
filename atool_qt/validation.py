@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from atool_core.condition_evaluator import ConditionEvaluator
+
 class PayloadValidation:
 
     @staticmethod
@@ -122,7 +124,7 @@ class PayloadValidation:
         stack: list[str] = []
         quote = ""
         escaped = False
-        for char in expression:
+        for char in ConditionEvaluator._condition_syntax_text(expression):
             if quote:
                 if escaped:
                     escaped = False

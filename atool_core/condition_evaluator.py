@@ -185,9 +185,10 @@ class ConditionEvaluator:
     @staticmethod
     def _iter_condition_filter_bodies(path_expression: str):
         text = str(path_expression or "")
+        syntax = ConditionEvaluator._condition_syntax_text(text)
         index = 0
         while True:
-            start = text.find("[?(", index)
+            start = syntax.find("[?(", index)
             if start < 0:
                 return
             body_start = start + 3
@@ -196,7 +197,7 @@ class ConditionEvaluator:
             escaped = False
             pos = body_start
             while pos < len(text):
-                char = text[pos]
+                char = syntax[pos]
                 if quote:
                     if escaped:
                         escaped = False
@@ -388,6 +389,9 @@ class ConditionEvaluator:
 
     @staticmethod
     def _compare_single_condition_value(value: object, operator: str, rhs: object) -> bool:
+            if operator == "=~":
+                return (isinstance(value, str) and isinstance(rhs, re.Pattern)
+                        and rhs.fullmatch(value) is not None)
             if operator in (">", "<", ">=", "<="):
                 try:
                     left = float(value)
@@ -438,6 +442,20 @@ class ConditionEvaluator:
                 stripped.startswith('"') and stripped.endswith('"')
             ):
                 return stripped[1:-1], True
+            if stripped.startswith("/"):
+                match = re.fullmatch(r"/((?:\\.|[^/\\])*)/([A-Za-z]*)", stripped, re.DOTALL)
+                if not match:
+                    return None, True
+                flags = 0
+                for flag in match.group(2):
+                    if flag not in "imsux":
+                        return None, True
+                    flags |= {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL,
+                              "u": re.UNICODE, "x": re.VERBOSE}[flag]
+                try:
+                    return re.compile(match.group(1).replace(r"\/", "/"), flags), True
+                except re.error:
+                    return None, True
             lowered = stripped.lower()
             if lowered == "true":
                 return True, True
@@ -453,16 +471,60 @@ class ConditionEvaluator:
             return None, False
 
     @staticmethod
+    def _condition_syntax_text(text: str) -> str:
+        """Hide regex punctuation from structural scans, retaining source offsets."""
+        if "=~" not in text:
+            return text
+        masked = list(text)
+        quote = ""
+        escaped = False
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+            elif char in {"'", '"'}:
+                quote = char
+            elif text.startswith("=~", index):
+                start = index + 2
+                while start < len(text) and text[start].isspace():
+                    start += 1
+                if start < len(text) and text[start] == "/":
+                    end = start + 1
+                    while end < len(text):
+                        if text[end] == "\\":
+                            end += 2
+                            continue
+                        if text[end] == "/":
+                            end += 1
+                            while end < len(text) and text[end].isalpha():
+                                end += 1
+                            break
+                        end += 1
+                    end = min(end, len(text))
+                    masked[start:end] = " " * (end - start)
+                    index = end
+                    continue
+            index += 1
+        return "".join(masked)
+
+    @staticmethod
     def _find_top_level_comparison(expression: str) -> tuple[str, str, str] | None:
             text = expression
-            operators = ("==", "!=", "<=", ">=", "<", ">")
+            operators = ("=~", "==", "!=", "<=", ">=", "<", ">")
             paren_depth = 0
+            syntax = ConditionEvaluator._condition_syntax_text(text)
             bracket_depth = 0
             quote = ""
             escaped = False
             index = 0
             while index < len(text):
-                char = text[index]
+                char = syntax[index]
                 if quote:
                     if escaped:
                         escaped = False
@@ -511,12 +573,13 @@ class ConditionEvaluator:
                 return None
 
             paren_depth = 0
+            syntax = ConditionEvaluator._condition_syntax_text(text)
             bracket_depth = 0
             quote = ""
             escaped = False
             index = 0
             while index < len(text):
-                char = text[index]
+                char = syntax[index]
                 if quote:
                     if escaped:
                         escaped = False
@@ -549,7 +612,7 @@ class ConditionEvaluator:
                     continue
 
                 if paren_depth == 0 and bracket_depth == 0:
-                    candidate = text[index : index + len(operator_text)]
+                    candidate = syntax[index : index + len(operator_text)]
                     if candidate.lower() == operator_text.lower():
                         before = text[index - 1] if index > 0 else ""
                         after_index = index + len(operator_text)
@@ -564,6 +627,7 @@ class ConditionEvaluator:
 
     @staticmethod
     def _split_top_level_operator(expression: str, operator: str) -> list[str]:
+            syntax = ConditionEvaluator._condition_syntax_text(expression)
             parts: list[str] = []
             current: list[str] = []
             paren_depth = 0
@@ -572,9 +636,9 @@ class ConditionEvaluator:
             escaped = False
             index = 0
             while index < len(expression):
-                char = expression[index]
+                char = syntax[index]
                 if quote:
-                    current.append(char)
+                    current.append(expression[index])
                     if escaped:
                         escaped = False
                     elif char == "\\":
@@ -586,34 +650,34 @@ class ConditionEvaluator:
 
                 if char in {"'", '"'}:
                     quote = char
-                    current.append(char)
+                    current.append(expression[index])
                     index += 1
                     continue
                 if char == "(":
                     paren_depth += 1
-                    current.append(char)
+                    current.append(expression[index])
                     index += 1
                     continue
                 if char == ")":
                     paren_depth -= 1
-                    current.append(char)
+                    current.append(expression[index])
                     index += 1
                     continue
                 if char == "[":
                     bracket_depth += 1
-                    current.append(char)
+                    current.append(expression[index])
                     index += 1
                     continue
                 if char == "]":
                     bracket_depth -= 1
-                    current.append(char)
+                    current.append(expression[index])
                     index += 1
                     continue
 
                 is_split = (
                     paren_depth == 0
                     and bracket_depth == 0
-                    and expression[index : index + len(operator)] == operator
+                    and syntax[index : index + len(operator)] == operator
                 )
                 if is_split:
                     token = "".join(current).strip()
@@ -623,7 +687,7 @@ class ConditionEvaluator:
                     index += len(operator)
                     continue
 
-                current.append(char)
+                current.append(expression[index])
                 index += 1
 
             tail = "".join(current).strip()
@@ -655,7 +719,7 @@ class ConditionEvaluator:
                 valid = True
                 quote = ""
                 escaped = False
-                for index, char in enumerate(expression):
+                for index, char in enumerate(ConditionEvaluator._condition_syntax_text(expression)):
                     if quote:
                         if escaped:
                             escaped = False
@@ -850,7 +914,7 @@ class ConditionEvaluator:
             depth = 0
             quote = ""
             escaped = False
-            for index, char in enumerate(text):
+            for index, char in enumerate(ConditionEvaluator._condition_syntax_text(text)):
                 if quote:
                     if escaped:
                         escaped = False
@@ -876,11 +940,12 @@ class ConditionEvaluator:
             text = str(path_expression or "").strip()
             if not text:
                 return "", ""
+            syntax = ConditionEvaluator._condition_syntax_text(text)
             bracket_depth = 0
             paren_depth = 0
             quote = ""
             escaped = False
-            for index, char in enumerate(text):
+            for index, char in enumerate(syntax):
                 if quote:
                     if escaped:
                         escaped = False
@@ -930,9 +995,9 @@ class ConditionEvaluator:
             paren_depth = 0
             quote_char = ""
             escaped = False
-            for character in remaining:
+            for index, character in enumerate(ConditionEvaluator._condition_syntax_text(remaining)):
                 if quote_char:
-                    current.append(character)
+                    current.append(remaining[index])
                     if escaped:
                         escaped = False
                         continue
@@ -945,25 +1010,25 @@ class ConditionEvaluator:
 
                 if character in {"'", '"'}:
                     quote_char = character
-                    current.append(character)
+                    current.append(remaining[index])
                     continue
                 if character == "[":
                     bracket_depth += 1
-                    current.append(character)
+                    current.append(remaining[index])
                     continue
                 if character == "]":
                     if bracket_depth > 0:
                         bracket_depth -= 1
-                    current.append(character)
+                    current.append(remaining[index])
                     continue
                 if character == "(":
                     paren_depth += 1
-                    current.append(character)
+                    current.append(remaining[index])
                     continue
                 if character == ")":
                     if paren_depth > 0:
                         paren_depth -= 1
-                    current.append(character)
+                    current.append(remaining[index])
                     continue
                 if character == "." and bracket_depth == 0 and paren_depth == 0:
                     token = "".join(current).strip()
@@ -971,7 +1036,7 @@ class ConditionEvaluator:
                         segments.append(token)
                     current = []
                     continue
-                current.append(character)
+                current.append(remaining[index])
 
             tail = "".join(current).strip()
             if tail:
