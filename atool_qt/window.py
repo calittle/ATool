@@ -480,9 +480,11 @@ class LayoutPanel(QWidget):
         self.property_form = QFormLayout(form_widget)
         self.property_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.property_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.property_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.property_form.setVerticalSpacing(8)
         self.name, self.kind = line_box(), line_box()
         self.condition, self.path = text_box(), line_box()
-        self.condition.setMaximumHeight(65)
+        self.condition.setMinimumHeight(120)
         for label, box in (("Name", self.name), ("Item kind", self.kind), ("Condition", self.condition), ("Path", self.path)):
             self.property_form.addRow(label, box)
         self.property_controls = {}
