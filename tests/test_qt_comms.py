@@ -123,6 +123,19 @@ print(json.dumps({'success': True, 'args': args}))
         self.assertEqual(3, activity.document().blockCount())
         self.assertFalse(activity.timer.isActive())
 
+    def test_clearing_activity_during_operation_preserves_new_messages(self):
+        activity = self.activity_log()
+        job = self.service.submit(['package', 'slow'])
+        self.until(lambda: job.started_at is not None)
+        activity.clear()
+        self.assertEqual('', activity.toPlainText())
+        activity.appendPlainText('New activity after clearing')
+        activity.refresh_operations()
+        job.cancel()
+        self.until(lambda: job.done)
+        self.assertEqual('New activity after clearing', activity.toPlainText())
+        self.assertFalse(activity.timer.isActive())
+
     def test_activity_retains_success_failure_timeout_and_failed_start_totals(self):
         activity = self.activity_log()
         for args, status, timeout in [(['package', 'open'], 'Completed', None),

@@ -139,6 +139,37 @@ class AuthoringInterfaceTests(unittest.TestCase):
         window.undo_change()
         self.assertEqual("$[?(@.enabled == true)]", window.session.documents[0]["condition"])
 
+    def test_file_save_commits_new_clause_form_and_can_immediately_compose(self):
+        window = self.window
+        window.add_clause()
+        window.clauses.name.setText('Scn_Manual_isNot')
+        window.clauses.description.setText('Not a manual bill')
+        window.clauses.expression.setPlainText("@.scenario != 'Manual'")
+        path = Path(self.temp.name) / 'new-clause.json'
+        with patch('atool_qt.authoring.QFileDialog.getSaveFileName', return_value=(str(path), 'JSON')):
+            self.assertTrue(window.save_package())
+        expected = {'name':'Scn_Manual_isNot', 'description':'Not a manual bill',
+                    'expression':"@.scenario != 'Manual'"}
+        self.assertIn(expected, window.session.clauses)
+        self.assertIn(expected, PackageSession.open(path).clauses)
+        self.assertGreaterEqual(window.clauses.clause_picker.findText(expected['name']), 0)
+        window.clauses.compose.setPlainText('Scn_Manual_isNot + enabled')
+        with patch.object(window, 'report_error') as error:
+            window.apply_composed()
+            error.assert_not_called()
+        self.assertEqual("$[?(@.scenario != 'Manual' && @.enabled == true)]",
+                         window.session.documents[0]['condition'])
+
+    def test_known_empty_clause_reports_missing_expression(self):
+        window = self.window
+        window.add_clause()
+        name = window.selected_clause()['name']
+        window.clauses.compose.setPlainText(name)
+        with patch.object(window, 'report_error') as error:
+            window.apply_composed()
+        self.assertIn('has no expression', error.call_args.args[1])
+        self.assertNotIn('Unknown clause', error.call_args.args[1])
+
     def test_dirty_close_can_cancel_without_losing_changes(self):
         self.window.add_record("fields")
         with patch("atool_qt.authoring.QMessageBox.question", return_value=QMessageBox.StandardButton.Cancel):

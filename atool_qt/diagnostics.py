@@ -110,6 +110,8 @@ class ConditionDiagnostics(ConditionEvaluator):
             raise ValueError(f"Embedded clause cycle detected: {chain}")
         expression = cls._get_clause_expression_by_name_from_entries(entries, name)
         if not expression:
+            if any(str(item.get('name', '')).strip() == name for item in entries):
+                raise ValueError(f"Clause '{name}' has no expression.")
             raise ValueError(f"Unknown clause '{name}'.")
         return cls._resolve_clause_expression_text_from_entries(entries, expression, stack=(*stack, name))
 

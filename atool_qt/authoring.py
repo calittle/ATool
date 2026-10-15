@@ -164,7 +164,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         advanced = next(action for action in actions if action.menu() and action.text() == 'Advanced')
         for action in actions:
             self.package_menu.removeAction(action)
-        for title in ('Preview...', 'Send Email...', 'Cancel Preview', None,
+        for title in ('Preview...', 'Send Email...', 'Cancel All Previews', None,
                       'Open Shared Package...', 'Close Package', None, 'Get Packages from Comms...', None,
                       'Update Shared Package', 'Publish Package to Comms...', 'Check Shared Folder Sync...', None,
                       'Release Shared Package Lock', 'Manual Shared Package Unlock...', None, 'Advanced'):
@@ -598,6 +598,10 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         doc_values = {"$$Id": self.documents.name.text(), "Descr": self.documents.description.toPlainText()}
         field_values = {"Name": self.fields.name.text(), "Descr": self.fields.description.toPlainText(),
                         "Path": self.fields.expression.toPlainText(), "Mandatory": self.fields.required.isChecked()}
+        clause = self.selected_clause()
+        clause_values = {"name": self.clauses.name.text().strip(),
+                         "description": self.clauses.description.text(),
+                         "expression": self.clauses.expression.toPlainText().strip()}
         if document and document.get("in_at", True):
             values = self.changed_record_values(document, doc_values)
             if values:
@@ -611,6 +615,9 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
                       if value != getattr(self.layouts, "property_baseline", {}).get(key)}
             if values:
                 self.editor.update_layout(document, node["key"], values)
+        if clause and any(clause.get(key, '') != value for key, value in clause_values.items()):
+            self.editor.save_clause(clause['name'], clause_values['name'],
+                                    clause_values['description'], clause_values['expression'])
 
     def open_last_session(self):
         if self.package_busy():

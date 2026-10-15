@@ -1,7 +1,9 @@
 """Activity history with one live timing line per OCCS operation."""
+from pathlib import Path
+
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QPlainTextEdit
 
 
 def duration_text(seconds):
@@ -21,6 +23,34 @@ class ActivityLog(QPlainTextEdit):
         self.timer = QTimer(self)
         self.timer.setInterval(250)
         self.timer.timeout.connect(self.refresh_operations)
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        menu.addSeparator()
+        clear_action = menu.addAction('Clear Activity', self.clear)
+        save_action = menu.addAction('Save Activity…', self.save_contents)
+        clear_action.setEnabled(not self.document().isEmpty())
+        save_action.setEnabled(not self.document().isEmpty())
+        try:
+            menu.exec(event.globalPos())
+        finally:
+            menu.deleteLater()
+
+    def clear(self):
+        # Old timing blocks must not overwrite new messages after a clear.
+        self.operations.clear()
+        self.timer.stop()
+        super().clear()
+
+    def save_contents(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save Activity', 'activity.log', 'Log Files (*.log);;Text Files (*.txt);;All Files (*)')
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.toPlainText(), encoding='utf-8')
+        except OSError as error:
+            QMessageBox.warning(self, 'Save Activity', f'Could not save the activity log.\n\n{error}')
 
     def track_operation(self, job):
         self.operation_number += 1
@@ -54,6 +84,8 @@ class ActivityLog(QPlainTextEdit):
                 self.replace_line(job, f'{label} · Running · Elapsed {duration_text(job.elapsed_seconds)}')
 
     def finish_operation(self, job, result):
+        if job not in self.operations:
+            return
         _, label = self.operations[job]
         status = ('Cancelled' if result.cancelled else 'Timed out' if result.timed_out
                   else 'Completed' if result.successful else 'Failed')

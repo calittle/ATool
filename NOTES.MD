@@ -1,5 +1,21 @@
 # ATool Release Notes
 
+## v2.0.2
+
+- Allow multiple package previews to share the regular four-operation queue.
+  Queue additional previews, keep output files separate, and support individual
+  cancellation or Cancel All Previews.
+- Include preview execution IDs and available response context in Activity when
+  Debug Logging is enabled, including failed, cancelled and timed-out previews.
+- Add right-click options to clear Activity or save its contents to a log or
+  text file. Clearing during an operation preserves subsequent log messages.
+- Save clause-form edits with File → Save so newly added or edited clauses can
+  be used immediately. Report empty clause expressions accurately.
+- Allow independent application windows while preventing the same package
+  from being opened in multiple windows.
+- Add Copy Item Name to Resolve Layout and improve native migration and
+  bundled CLI setup instructions.
+
 ## v2.0.1
 
 - Add Refresh Item beside Expand All in Resolve Layout. Document, Layout and

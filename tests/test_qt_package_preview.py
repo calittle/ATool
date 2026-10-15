@@ -56,8 +56,9 @@ class PreviewTests(unittest.TestCase):
         self.addCleanup(self.close)
 
     def close(self):
-        if self.window.preview_job and not self.window.preview_job.done:
-            self.complete(CommandResult(-1,'','',None,cancelled=True))
+        for index, call in enumerate(self.calls):
+            if not call['job'].done:
+                self.complete(CommandResult(-1,'','',None,cancelled=True), index)
         self.window.close()
 
     def command(self, title, args, callback=None, **kwargs):
@@ -65,8 +66,8 @@ class PreviewTests(unittest.TestCase):
         self.calls.append(dict(args=args,callback=callback,options=kwargs,job=job))
         return job
 
-    def complete(self,result):
-        call=self.calls[-1]
+    def complete(self,result,index=-1):
+        call=self.calls[index]
         call['job'].done=True
         if result.successful:
             with patch.object(QMessageBox,'information'):
@@ -81,19 +82,76 @@ class PreviewTests(unittest.TestCase):
         args=self.calls[-1]['args']
         self.assertEqual(args[:5],['preview','--session','pre','--package','Bill'])
         self.assertEqual(args[args.index('--timeout')+1],'400000')
-        self.assertEqual(self.calls[-1]['options']['channel'],'preview')
+        self.assertEqual(self.calls[-1]['options']['channel'],'regular')
         self.assertTrue(self.calls[-1]['options']['close_on_success'])
         self.assertEqual(self.calls[-1]['options']['timeout_ms'],430000)
         self.assertEqual(args[-3:],['--render-type','PDF','HTML'])
-        self.assertFalse(self.window.preview_action.isEnabled())
+        self.assertTrue(self.window.preview_action.isEnabled())
         self.assertTrue(self.window.cancel_preview_action.isEnabled())
         self.assertEqual(self.window.comms.settings.get('last_preview_render_types'),['PDF','HTML'])
-        self.assertFalse(self.start())
         self.window.cancel_package_preview()
         self.assertTrue(self.calls[-1]['job'].cancelled)
         self.complete(CommandResult(-1,'','',None,cancelled=True))
         self.assertTrue(self.window.preview_action.isEnabled())
         self.assertFalse(self.window.cancel_preview_action.isEnabled())
+
+    def test_overlapping_previews_own_outputs_inputs_and_cancellation(self):
+        for _ in range(3):
+            self.assertTrue(self.start(exclude=True))
+        jobs = [call['job'] for call in self.calls]
+        outputs = [call['args'][call['args'].index('--output')+1] for call in self.calls]
+        inputs = [Path(call['args'][call['args'].index('--input')+1]) for call in self.calls]
+        self.assertEqual(len(set(outputs)), 3)
+        self.assertEqual(len(set(inputs)), 3)
+        self.complete(CommandResult(0,'','',None), 1)
+        self.assertFalse(inputs[1].exists())
+        self.assertTrue(inputs[0].exists())
+        self.assertTrue(inputs[2].exists())
+        self.assertEqual(self.window.preview_jobs, [jobs[0], jobs[2]])
+        self.assertTrue(self.window.cancel_preview_action.isEnabled())
+        self.window.cancel_package_preview()
+        self.assertTrue(jobs[0].cancelled)
+        self.assertFalse(jobs[1].cancelled)
+        self.assertTrue(jobs[2].cancelled)
+        for index in (2, 0):
+            self.complete(CommandResult(-1,'','',None,cancelled=True), index)
+        self.assertFalse(any(path.exists() for path in inputs))
+        self.assertEqual(self.window.preview_jobs, [])
+        self.assertFalse(self.window.cancel_preview_action.isEnabled())
+
+    def test_previews_share_four_slots_with_regular_operations_and_queue_excess(self):
+        executable = self.root/'slow-preview'
+        executable.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n')
+        executable.chmod(0o755)
+        self.window.comms.settings.payload['occs']['cli_path'] = str(executable)
+        self.runner.stop()
+        regular = self.window.comms.submit(['package', 'list'])
+        for _ in range(5):
+            self.assertTrue(self.start(exclude=True))
+        jobs = list(self.window.preview_jobs)
+        deadline = time.monotonic()+5
+        while len(self.window.comms.active) < 4 and time.monotonic() < deadline:
+            self.app.processEvents()
+            QTest.qWait(10)
+        self.assertEqual(self.window.comms.active, [regular, *jobs[:3]])
+        self.assertEqual(self.window.comms.pending, jobs[3:])
+        jobs[1].cancel()
+        deadline = time.monotonic()+5
+        while jobs[3] not in self.window.comms.active and time.monotonic() < deadline:
+            self.app.processEvents()
+            QTest.qWait(10)
+        self.assertTrue(jobs[1].cancelled)
+        self.assertIn(jobs[3], self.window.comms.active)
+        self.assertEqual(len(self.window.comms.active), 4)
+        self.assertFalse(jobs[0].done)
+        self.window.cancel_package_preview()
+        deadline = time.monotonic()+5
+        while self.window.preview_jobs and time.monotonic() < deadline:
+            self.app.processEvents()
+            QTest.qWait(10)
+        self.assertEqual(self.window.preview_jobs, [])
+        self.assertFalse(regular.done)
+        regular.cancel()
 
     def test_chart_removal_preserves_input_and_cleans_on_every_result(self):
         for result in [CommandResult(0,'','',None),CommandResult(1,'','failed',None),CommandResult(-1,'','',None,cancelled=True)]:
@@ -118,6 +176,50 @@ class PreviewTests(unittest.TestCase):
         with patch.object(self.window,'preview_unpublished_reasons',return_value=['Unsaved changes']),patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.No):
             self.assertFalse(self.start())
         self.assertEqual(self.calls,[])
+
+    def test_debug_preview_captures_response_context_on_every_result(self):
+        self.window.comms.settings.payload['diagnostics']['debug_logging'] = True
+        response = self.root/'preview.response.json'
+        response.write_text(json.dumps({'executionId':'exec-123', 'duration':42,
+            'CommunicationAssemblyInfo':{'AssemblyRenderOutput':'encoded-document', 'status':'done'}}))
+        stdout = f'\x1b[90m→ Response JSON[PDF]: {response}\x1b[0m\n'
+        for result in [CommandResult(0,stdout,'server context',None),
+                       CommandResult(1,stdout,'server context',None),
+                       CommandResult(-1,stdout,'server context',None,cancelled=True),
+                       CommandResult(-1,stdout,'server context',None,timed_out=True)]:
+            self.window.activity.clear()
+            self.assertTrue(self.start(pre=True, exclude=True))
+            self.assertIn('--verbose', self.calls[-1]['args'])
+            self.complete(result)
+            activity = self.window.activity.toPlainText()
+            for text in ['exec-123', '"duration": 42', '"status": "done"', 'server context',
+                         '"session": "pre"', '"exclude_charts": true', f'exit_code={result.code}']:
+                self.assertIn(text, activity)
+            self.assertNotIn('encoded-document', activity)
+
+    def test_preview_diagnostics_are_disabled_by_default(self):
+        self.window.activity.clear()
+        self.assertTrue(self.start())
+        self.assertNotIn('--verbose', self.calls[-1]['args'])
+        self.complete(CommandResult(0,'Preview written [PDF] to /tmp/a.pdf','debug-only stderr',None))
+        activity = self.window.activity.toPlainText()
+        self.assertIn('Preview complete.', activity)
+        self.assertNotIn('Preview debug', activity)
+        self.assertNotIn('debug-only stderr', activity)
+
+    def test_debug_preview_reads_error_response_and_handles_missing_sidecar(self):
+        self.window.comms.settings.payload['diagnostics']['debug_logging'] = True
+        response = self.root/'preview.response.error.500.json'
+        response.write_text(json.dumps({'executionId':'failed-123', 'error':{'message':'Render failed'}}))
+        self.assertTrue(self.start())
+        self.complete(CommandResult(1,'',f'Saved detailed preview error response to {response}',None))
+        self.assertIn('failed-123', self.window.activity.toPlainText())
+        response.unlink()
+        self.assertTrue(self.start(exclude=True))
+        path = Path(self.calls[-1]['args'][self.calls[-1]['args'].index('--input')+1])
+        self.complete(CommandResult(1,'',f'Saved detailed preview error response to {response}',None))
+        self.assertIn('Could not read preview response context', self.window.activity.toPlainText())
+        self.assertFalse(path.exists())
 
     def test_parses_output_and_uses_configured_opener(self):
         stdout='\x1b[32mPreview written [HTML] [main] to /tmp/a b.html\x1b[0m\nPreview written [PDF] to /tmp/a.pdf\nPreview written [PDF] to /tmp/a.pdf'

@@ -4,6 +4,7 @@ import re
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
@@ -30,6 +31,16 @@ def preview_outputs(stdout):
             seen.add(match.groups())
             outputs.append(dict(renderType=match[1], path=match[2].strip()))
     return outputs
+
+
+def preview_response_context(value):
+    """Keep response diagnostics without copying the encoded rendered document."""
+    if isinstance(value, dict):
+        return {key: preview_response_context(item) for key, item in value.items()
+                if key != 'AssemblyRenderOutput'}
+    if isinstance(value, list):
+        return [preview_response_context(item) for item in value]
+    return value
 
 
 class PreviewDialog(QDialog):
@@ -104,10 +115,10 @@ class PreviewDialog(QDialog):
 
 class PackagePreviewActions:
     def install_preview_actions(self):
-        self.preview_job = None
+        self.preview_jobs = []
         self.preview_effective_date = date.today().isoformat()
         self.preview_action = self.action('Preview…', self.preview_package, 'Ctrl+P')
-        self.cancel_preview_action = self.action('Cancel Preview', self.cancel_package_preview, 'Ctrl+.')
+        self.cancel_preview_action = self.action('Cancel All Previews', self.cancel_package_preview, 'Ctrl+.')
         self.package_menu.insertAction(self.publish_action, self.preview_action)
         self.package_menu.insertAction(self.publish_action, self.cancel_preview_action)
         self.package_menu.aboutToShow.connect(self.update_preview_actions)
@@ -126,12 +137,12 @@ class PackagePreviewActions:
 
     def update_preview_actions(self):
         if hasattr(self, 'preview_action'):
-            running = bool(self.preview_job and not self.preview_job.done)
-            self.preview_action.setEnabled(bool(self.current_bundle_dir()) and not running and not self.package_busy())
+            running = any(not job.done for job in self.preview_jobs)
+            self.preview_action.setEnabled(bool(self.current_bundle_dir()) and not self.package_busy())
             self.cancel_preview_action.setEnabled(running)
 
     def preview_package(self):
-        if not self.current_bundle_dir() or self.package_busy() or (self.preview_job and not self.preview_job.done):
+        if not self.current_bundle_dir() or self.package_busy():
             return
         self.preview_dialog = PreviewDialog(self)
         self.preview_dialog.show()
@@ -157,7 +168,7 @@ class PackagePreviewActions:
 
     def start_package_preview(self, input_path, renders, seconds, effective, *, pre=False, exclude=False, open_after=True):
         temporary = None
-        if not self.current_bundle_dir() or self.package_busy() or (self.preview_job and not self.preview_job.done):
+        if not self.current_bundle_dir() or self.package_busy():
             return False
         try:
             source = Path(input_path).expanduser()
@@ -175,7 +186,7 @@ class PackagePreviewActions:
             if reasons and QMessageBox.question(self, 'Preview Package', 'Local and/or Shared Changes have not been published to Comms; preview anyway?\n\n' + '\n'.join(reasons)) != QMessageBox.StandardButton.Yes:
                 return False
             package = names(self.session.bundle['manifest'])[0]
-            output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}"
+            output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}-{uuid4().hex[:8]}"
             args = ['preview', '--package', package, '--input', str(source), '--output', str(output),
                     '--timeout', str(int(seconds) * 1000), '--effective-date', effective, '--render-type', *renders]
             if pre:
@@ -187,6 +198,14 @@ class PackagePreviewActions:
                 path.write_text(json.dumps(exclude_charts(payload), ensure_ascii=False), encoding='utf-8')
                 args[args.index('--input') + 1] = str(path)
             settings = self.comms.settings
+            debug = bool(settings.payload.get('diagnostics', {}).get('debug_logging'))
+            if debug:
+                args.append('--verbose')
+                self.log('Preview debug context:\n' + json.dumps(dict(
+                    package=package, session=alias if pre else settings.get('session_alias'),
+                    input=str(source), preview_input=args[args.index('--input') + 1],
+                    output=str(output), render_types=renders, timeout_seconds=int(seconds),
+                    effective_date=effective, exclude_charts=exclude), indent=2))
             settings.payload.setdefault('occs', {}).update(last_preview_render_types=renders, last_preview_timeout_seconds=int(seconds))
             settings.save()
             self.preview_effective_date = effective
@@ -203,12 +222,17 @@ class PackagePreviewActions:
                             errors.append(str(error))
                 if errors:
                     QMessageBox.warning(self, 'Open Preview', 'Preview files were generated, but could not all be opened.\n\n' + '\n'.join(errors))
-            job = self.run_comms_operation('Preview Package', args, complete, channel='preview', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
-            self.preview_job = job
-            def finished(_):
-                if temporary:
-                    temporary.cleanup()
-                self.update_preview_actions()
+            job = self.run_comms_operation('Preview Package', args, complete, channel='regular', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
+            self.preview_jobs.append(job)
+            def finished(result):
+                try:
+                    if debug:
+                        self.log_preview_diagnostics(result)
+                finally:
+                    self.preview_jobs.remove(job)
+                    if temporary:
+                        temporary.cleanup()
+                    self.update_preview_actions()
             job.completed.connect(finished)
             self.update_preview_actions()
             return True
@@ -218,6 +242,30 @@ class PackagePreviewActions:
             self.report_error('Preview Package', str(error))
             return False
 
+    def log_preview_diagnostics(self, result):
+        self.log(f'Preview debug result: exit_code={result.code}, '
+                 f'cancelled={result.cancelled}, timed_out={result.timed_out}')
+        for label, text in [('stdout', result.stdout), ('stderr', result.stderr)]:
+            if text:
+                self.log(f'Preview {label}:\n{text}')
+        # Verbose preview writes the API wrapper separately from the rendered file.
+        seen = set()
+        for line in (result.stdout + '\n' + result.stderr).splitlines():
+            line = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
+            match = re.search(r'(?:Response JSON\[[A-Z]+\]: |Saved detailed preview error response to )(.+)$', line)
+            if not match or match[1] in seen:
+                continue
+            seen.add(match[1])
+            path = Path(match[1])
+            try:
+                text = path.read_text(encoding='utf-8-sig')
+                if path.suffix == '.json':
+                    text = json.dumps(preview_response_context(json.loads(text)), indent=2, ensure_ascii=False)
+                self.log(f'Preview response context ({path}):\n{text}')
+            except (OSError, ValueError) as error:
+                self.log(f'Could not read preview response context ({path}): {error}')
+
     def cancel_package_preview(self):
-        if self.preview_job and not self.preview_job.done:
-            self.preview_job.cancel()
+        for job in list(self.preview_jobs):
+            if not job.done:
+                job.cancel()

@@ -285,7 +285,7 @@ class CommsService(QObject):
         super().__init__(parent)
         self.settings = settings or CommsSettings()
         self.concurrency = concurrency
-        self.channel_limits = {'regular': concurrency, 'read': 4, 'resources': 4, 'download_all': 1, 'preview': 1}
+        self.channel_limits = {'regular': concurrency, 'read': 4, 'resources': 4, 'download_all': 1}
         self.active, self.pending = [], []
         self.logins = {}
         self.login_waiters = {}

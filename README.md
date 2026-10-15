@@ -11,7 +11,7 @@
 
 ATool (Assembly Template Tool) is a cross-platform Python desktop app for working with Oracle Communications Cloud Service (OCCS) Packages and Assembly Templates.
 
-Version 2.0.1 uses a unified Qt workspace with dockable, tabbed, detachable panels
+Version 2.0.2 uses a unified Qt workspace with dockable, tabbed, detachable panels
 for Documents, Layouts, Fields, Clauses, Data and Content. The original Tkinter
 application remains available through the legacy launchers.
 
@@ -210,7 +210,7 @@ together. Each ATool download retains its own bundled CLI version.
 
 ## Moving an older ATool installation to the native app
 
-Users of ATool 1.x or source-based 2.0.0 can move to the 2.0.1 native download
+Users of ATool 1.x or source-based 2.0.0 can move to the 2.0.2 native download
 without setting up Python, a `.venv`, Node.js or a separate OCCS CLI. Existing
 native-app users can use the same steps to replace an older native download.
 
@@ -267,7 +267,7 @@ SDK or Qt Creator separately. Dependency installation requires internet access.
 ## Installation from source
 
 Download the ATool application ZIP from the **Assets** section of the
-[2.0.1 release](https://github.com/calittle/ATool/releases/tag/v2.0.1) and extract
+[2.0.2 release](https://github.com/calittle/ATool/releases/tag/v2.0.2) and extract
 it to a folder where you can write files. Keep the extracted files together.
 If upgrading from 1.x, read [Upgrading from 1.x](#upgrading-from-1x) below first.
 
@@ -345,7 +345,7 @@ start the Qt application.
    live in `~/.atool` on macOS or `%USERPROFILE%\.atool` on Windows. The default
    local package folder is `occs-bundles` inside that directory; shared storage
    may be elsewhere, such as OneDrive.
-3. Download and extract the 2.0.1 application ZIP into a **separate folder**.
+3. Download and extract the 2.0.2 application ZIP into a **separate folder**.
    Follow the macOS or Windows installation steps above in that new folder.
    Create a fresh `.venv`; do not copy the old environment into the new folder.
    This also handles 1.x installations that used an older Python version.
