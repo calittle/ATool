@@ -1,5 +1,17 @@
 # ATool Release Notes
 
+## v2.0.3
+
+- Run selected Preview render types as independent jobs in the shared
+  four-operation queue. Open each file as soon as its render finishes, retain
+  individual and Cancel All Previews cancellation, and keep temporary input
+  available until all renders finish.
+- Remove redundant render type labels from Preview filenames. Keep metadata
+  identifiable and prevent output and diagnostic files from overwriting one another.
+- Fix regex matching in document JSONPath triggers, including compound conditions,
+  mapping results, validation and diagnostic explanations.
+- Give the condition editor more room in Layout Properties.
+
 ## v2.0.2
 
 - Allow multiple package previews to share the regular four-operation queue.
