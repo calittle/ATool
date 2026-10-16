@@ -187,7 +187,7 @@ class PackagePreviewActions:
             if reasons and QMessageBox.question(self, 'Preview Package', 'Local and/or Shared Changes have not been published to Comms; preview anyway?\n\n' + '\n'.join(reasons)) != QMessageBox.StandardButton.Yes:
                 return False
             package = names(self.session.bundle['manifest'])[0]
-            output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}-{uuid4().hex[:8]}"
+            output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}"
             args = ['preview', '--package', package, '--input', str(source), '--output', str(output),
                     '--timeout', str(int(seconds) * 1000), '--effective-date', effective]
             if pre:
@@ -226,9 +226,10 @@ class PackagePreviewActions:
                     if errors:
                         QMessageBox.warning(self, 'Open Preview', 'Preview files were generated, but could not all be opened.\n\n' + '\n'.join(errors))
                 title = f'Preview Package ({render})' if len(renders) > 1 else 'Preview Package'
-                # Separate basenames also isolate CLI response/error sidecars.
+                # Per-render IDs also isolate CLI response/error sidecars.
                 render_args = [*args, '--render-type', render]
-                render_args[render_args.index('--output') + 1] = f'{output}-{render.lower()}{RENDER_EXTENSIONS[render]}'
+                label = '-metadata' if render == 'METADATA' else ''
+                render_args[render_args.index('--output') + 1] = f'{output}-{uuid4().hex[:8]}{label}{RENDER_EXTENSIONS[render]}'
                 job = self.run_comms_operation(title, render_args, complete,
                     channel='regular', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
                 self.preview_jobs.append(job)

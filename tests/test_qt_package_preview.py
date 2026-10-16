@@ -160,6 +160,9 @@ class PreviewTests(unittest.TestCase):
         outputs = [Path(job.args[job.args.index('--output')+1]) for job in jobs]
         self.assertEqual(len({path.stem for path in outputs}), 6)
         self.assertEqual([path.suffix for path in outputs], ['.pdf','.html','.txt','.csv','.json','.json'])
+        for path in outputs[:5]:
+            self.assertRegex(path.name, r'-[0-9a-f]{8}\.(pdf|html|txt|csv|json)$')
+        self.assertRegex(outputs[5].name, r'-[0-9a-f]{8}-metadata\.json$')
         deadline = time.monotonic()+5
         while len(self.window.comms.active) < 4 and time.monotonic() < deadline:
             self.app.processEvents()
