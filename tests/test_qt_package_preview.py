@@ -63,7 +63,7 @@ class PreviewTests(unittest.TestCase):
 
     def command(self, title, args, callback=None, **kwargs):
         job = FakeJob()
-        self.calls.append(dict(args=args,callback=callback,options=kwargs,job=job))
+        self.calls.append(dict(title=title,args=args,callback=callback,options=kwargs,job=job))
         return job
 
     def complete(self,result,index=-1):
@@ -74,26 +74,55 @@ class PreviewTests(unittest.TestCase):
                 call['callback'](result)
         call['job'].completed.emit(result)
 
-    def start(self, **kwargs):
-        return self.window.start_package_preview(str(self.source),['PDF','HTML'],400,'2026-10-08',open_after=False,**kwargs)
+    def start(self, renders=None, **kwargs):
+        return self.window.start_package_preview(str(self.source),renders or ['PDF'],400,'2026-10-08',open_after=False,**kwargs)
 
     def test_preview_contract_alias_timeout_preferences_and_menu_states(self):
-        self.assertTrue(self.start(pre=True))
+        self.assertTrue(self.start(renders=['PDF','HTML'], pre=True))
+        self.assertEqual(len(self.calls), 2)
         args=self.calls[-1]['args']
         self.assertEqual(args[:5],['preview','--session','pre','--package','Bill'])
         self.assertEqual(args[args.index('--timeout')+1],'400000')
         self.assertEqual(self.calls[-1]['options']['channel'],'regular')
         self.assertTrue(self.calls[-1]['options']['close_on_success'])
         self.assertEqual(self.calls[-1]['options']['timeout_ms'],430000)
-        self.assertEqual(args[-3:],['--render-type','PDF','HTML'])
+        self.assertEqual([call['args'][-2:] for call in self.calls],
+                         [['--render-type','PDF'], ['--render-type','HTML']])
+        self.assertEqual([call['title'] for call in self.calls],
+                         ['Preview Package (PDF)', 'Preview Package (HTML)'])
         self.assertTrue(self.window.preview_action.isEnabled())
         self.assertTrue(self.window.cancel_preview_action.isEnabled())
         self.assertEqual(self.window.comms.settings.get('last_preview_render_types'),['PDF','HTML'])
         self.window.cancel_package_preview()
-        self.assertTrue(self.calls[-1]['job'].cancelled)
+        self.assertTrue(all(call['job'].cancelled for call in self.calls))
         self.complete(CommandResult(-1,'','',None,cancelled=True))
+        self.assertTrue(self.window.cancel_preview_action.isEnabled())
+        self.complete(CommandResult(-1,'','',None,cancelled=True), 0)
         self.assertTrue(self.window.preview_action.isEnabled())
         self.assertFalse(self.window.cancel_preview_action.isEnabled())
+
+    def test_render_jobs_finish_independently_and_keep_shared_input_until_all_done(self):
+        self.assertTrue(self.window.start_package_preview(str(self.source), ['PDF','HTML','TEXT'],
+            400, '2026-10-08', pre=True, exclude=True, open_after=True))
+        self.assertEqual(len(self.calls), 3)
+        inputs = [Path(call['args'][call['args'].index('--input')+1]) for call in self.calls]
+        outputs = [call['args'][call['args'].index('--output')+1] for call in self.calls]
+        self.assertEqual(len(set(inputs)), 1)
+        self.assertEqual(len(set(outputs)), 3)
+        path = inputs[0]
+        with patch.object(self.window, 'open_output_file') as opener:
+            self.complete(CommandResult(0, 'Preview written [HTML] to /tmp/fast.html', '', None), 1)
+            opener.assert_called_once_with('HTML', '/tmp/fast.html')
+            self.assertTrue(path.exists())
+            self.assertEqual(len(self.window.preview_jobs), 2)
+            self.complete(CommandResult(1, '', 'PDF render failed', None), 0)
+            self.assertTrue(path.exists())
+            self.window.cancel_package_preview()
+            self.assertTrue(self.calls[2]['job'].cancelled)
+            self.complete(CommandResult(-1, '', '', None, cancelled=True), 2)
+            self.assertFalse(path.exists())
+            self.assertEqual(self.window.preview_jobs, [])
+            self.assertEqual(json.loads(self.source.read_text()), self.payload)
 
     def test_overlapping_previews_own_outputs_inputs_and_cancellation(self):
         for _ in range(3):
@@ -126,9 +155,11 @@ class PreviewTests(unittest.TestCase):
         self.window.comms.settings.payload['occs']['cli_path'] = str(executable)
         self.runner.stop()
         regular = self.window.comms.submit(['package', 'list'])
-        for _ in range(5):
-            self.assertTrue(self.start(exclude=True))
+        self.assertTrue(self.start(renders=['PDF','HTML','TEXT','CSV','JSON','METADATA'], exclude=True))
         jobs = list(self.window.preview_jobs)
+        outputs = [Path(job.args[job.args.index('--output')+1]) for job in jobs]
+        self.assertEqual(len({path.stem for path in outputs}), 6)
+        self.assertEqual([path.suffix for path in outputs], ['.pdf','.html','.txt','.csv','.json','.json'])
         deadline = time.monotonic()+5
         while len(self.window.comms.active) < 4 and time.monotonic() < deadline:
             self.app.processEvents()

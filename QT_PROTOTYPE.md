@@ -97,7 +97,9 @@ Data provides mapping/remapping, XML conversion, generated editable samples and
 cached layout resolution with text/JSON report saves.
 
 Preview supports render types, mapped/file input, effective date, timeout, Pre-Prod,
-chart exclusion and configured output openers. Email requires a current Dry Run
+chart exclusion and configured output openers. Selected render types run as independent
+jobs in the shared four-operation queue, with separate output files and cancellation;
+each file opens as soon as its render finishes. Email requires a current Dry Run
 before Generate and invalidates that validation when its inputs change.
 
 Settings edits a draft of the original ATool preferences at `~/.atool/.settings.json`.

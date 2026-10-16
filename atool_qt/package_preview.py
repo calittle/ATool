@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QForm
 from .shared_packages import bundle_hashes, manifest, names, segment
 
 RENDER_TYPES = ('PDF', 'HTML', 'TEXT', 'CSV', 'JSON', 'METADATA')
+RENDER_EXTENSIONS = dict(zip(RENDER_TYPES, ('.pdf', '.html', '.txt', '.csv', '.json', '.json')))
 
 
 def exclude_charts(payload):
@@ -188,7 +189,7 @@ class PackagePreviewActions:
             package = names(self.session.bundle['manifest'])[0]
             output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}-{uuid4().hex[:8]}"
             args = ['preview', '--package', package, '--input', str(source), '--output', str(output),
-                    '--timeout', str(int(seconds) * 1000), '--effective-date', effective, '--render-type', *renders]
+                    '--timeout', str(int(seconds) * 1000), '--effective-date', effective]
             if pre:
                 args[1:1] = ['--session', alias]
             if exclude:
@@ -209,31 +210,42 @@ class PackagePreviewActions:
             settings.payload.setdefault('occs', {}).update(last_preview_render_types=renders, last_preview_timeout_seconds=int(seconds))
             settings.save()
             self.preview_effective_date = effective
-            def complete(result):
-                self.log('Preview complete.\n' + (result.stdout or ', '.join(renders)))
-                self.statusBar().showMessage('Preview complete.', 7000)
-                outputs = preview_outputs(result.stdout)
-                errors = []
-                if open_after:
-                    for item in outputs:
-                        try:
-                            self.open_output_file(item['renderType'], item['path'])
-                        except OSError as error:
-                            errors.append(str(error))
-                if errors:
-                    QMessageBox.warning(self, 'Open Preview', 'Preview files were generated, but could not all be opened.\n\n' + '\n'.join(errors))
-            job = self.run_comms_operation('Preview Package', args, complete, channel='regular', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
-            self.preview_jobs.append(job)
-            def finished(result):
-                try:
-                    if debug:
-                        self.log_preview_diagnostics(result)
-                finally:
-                    self.preview_jobs.remove(job)
-                    if temporary:
-                        temporary.cleanup()
-                    self.update_preview_actions()
-            job.completed.connect(finished)
+            remaining = len(renders)
+            def launch(render):
+                def complete(result):
+                    self.log('Preview complete.\n' + (result.stdout or render))
+                    self.statusBar().showMessage(f'Preview complete ({render}).', 7000)
+                    outputs = preview_outputs(result.stdout)
+                    errors = []
+                    if open_after:
+                        for item in outputs:
+                            try:
+                                self.open_output_file(item['renderType'], item['path'])
+                            except OSError as error:
+                                errors.append(str(error))
+                    if errors:
+                        QMessageBox.warning(self, 'Open Preview', 'Preview files were generated, but could not all be opened.\n\n' + '\n'.join(errors))
+                title = f'Preview Package ({render})' if len(renders) > 1 else 'Preview Package'
+                # Separate basenames also isolate CLI response/error sidecars.
+                render_args = [*args, '--render-type', render]
+                render_args[render_args.index('--output') + 1] = f'{output}-{render.lower()}{RENDER_EXTENSIONS[render]}'
+                job = self.run_comms_operation(title, render_args, complete,
+                    channel='regular', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
+                self.preview_jobs.append(job)
+                def finished(result):
+                    nonlocal remaining
+                    try:
+                        if debug:
+                            self.log_preview_diagnostics(result)
+                    finally:
+                        self.preview_jobs.remove(job)
+                        remaining -= 1
+                        if temporary and remaining == 0:
+                            temporary.cleanup()
+                        self.update_preview_actions()
+                job.completed.connect(finished)
+            for render in renders:
+                launch(render)
             self.update_preview_actions()
             return True
         except (ValueError, OSError) as error:
