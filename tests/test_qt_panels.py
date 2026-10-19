@@ -189,6 +189,25 @@ class PanelTests(unittest.TestCase):
         self.assertEqual("RAW{@.enabled == true}", panel.compose.toPlainText())
         self.assertIn("No saved clause library", panel.count.text())
 
+    def test_data_browser_search_and_errors_are_reported_in_activity(self):
+        session = PackageSession.from_payload({'Documents': []})
+        session.map_data({'language': 'CHINESE'}, 'data.json')
+        self.window.set_session(session)
+        browser = self.window.data
+        self.window.activity.clear()
+        browser.mode.setCurrentText('Full Text')
+        browser.search.setText('CHINESE')
+        browser.run_search()
+        self.assertIn('Data Manager: Full text returned 1 result(s).', self.window.activity.toPlainText())
+        browser.mode.setCurrentText('JSONPath')
+        browser.search.setText('$[')
+        browser.run_search()
+        self.assertIn('Data Manager: Invalid JSONPath:', self.window.activity.toPlainText())
+        browser.clear_search()
+        self.app.clipboard().setText('invalid json')
+        browser.paste_value()
+        self.assertIn('Data Manager: Could not paste JSON:', self.window.activity.toPlainText())
+
     def test_data_browser_paths_and_default_docks(self):
         session = PackageSession.from_payload({"Documents": []})
         data = {"odd.key": [{"value": False}, {"value": 0}], "null": None, "huge": 10**30}
@@ -202,12 +221,14 @@ class PanelTests(unittest.TestCase):
             self.assertFalse(self.window.docks[key].isFloating())
         browser = self.window.data
         root = browser.tree.topLevelItem(0)
-        self.assertEqual('$["odd.key"]', root.child(0).text(0))
+        self.assertEqual('odd.key', root.child(0).text(0))
         array = root.child(0)
         array.setExpanded(True)
         first = array.child(0)
+        self.assertEqual('[0]', first.text(0))
         first.setExpanded(True)
         leaf = first.child(0)
+        self.assertEqual('value', leaf.text(0))
         browser.tree.setCurrentItem(leaf)
         self.assertEqual('$["odd.key"][0]["value"]', browser.path.text())
         self.assertEqual(False, json.loads(browser.value.toPlainText()))

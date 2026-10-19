@@ -981,7 +981,7 @@ class AToolApp:
             command=self.show_package_documents_manager,
         )
         window_menu.add_command(
-            label="Show Data Browser",
+            label="Show Data Manager",
             accelerator="Shift+Cmd+D" if self._is_macos() else "Shift+Ctrl+D",
             command=self._show_data_browser_window,
         )
@@ -1482,7 +1482,7 @@ class AToolApp:
             command=self._open_selected_layout_condition_in_data_browser,
         )
         self.layout_condition_tool_button.grid(row=0, column=1, sticky="e")
-        self._attach_tooltip(self.layout_condition_tool_button, "Evaluate condition in Data Browser")
+        self._attach_tooltip(self.layout_condition_tool_button, "Evaluate condition in Data Manager")
         row += 1
         self.layout_condition_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_condition_edit_var)
         self.layout_condition_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
@@ -1510,7 +1510,7 @@ class AToolApp:
             state=tk.DISABLED,
         )
         self.open_layout_path_in_data_browser_button.grid(row=0, column=1, sticky="e")
-        self._attach_tooltip(self.open_layout_path_in_data_browser_button, "Open path in Data Browser")
+        self._attach_tooltip(self.open_layout_path_in_data_browser_button, "Open path in Data Manager")
         row += 1
         self.layout_path_entry = ttk.Entry(layout_properties_content, textvariable=self.layout_path_edit_var)
         self.layout_path_entry.grid(row=row, column=0, sticky="ew", pady=(0, 8))
@@ -1739,7 +1739,7 @@ class AToolApp:
             state=tk.DISABLED,
         )
         self.open_field_path_in_data_browser_button.grid(row=5, column=1, sticky="e")
-        self._attach_tooltip(self.open_field_path_in_data_browser_button, "Open path in Data Browser")
+        self._attach_tooltip(self.open_field_path_in_data_browser_button, "Open path in Data Manager")
         path_value = ttk.Entry(content, textvariable=self.edit_field_path_var)
         path_value.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         path_value.bind("<FocusOut>", self._on_field_path_commit)
@@ -2271,7 +2271,7 @@ class AToolApp:
         if self.data_browser_window is not None and self.data_browser_window.winfo_exists():
             return
         self.data_browser_window = self._create_toplevel(self.root)
-        self.data_browser_window.title("ATool - Data Browser")
+        self.data_browser_window.title("ATool - Data Manager")
         self.data_browser_window.minsize(680, 440)
         self._attach_app_menu(self.data_browser_window)
         self.data_browser_window.protocol("WM_DELETE_WINDOW", self._hide_data_browser_window)

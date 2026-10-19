@@ -10,7 +10,7 @@
   "requirements": [
     {
       "id": "unified_workspace",
-      "requirement": "One drag/dock/tab/hide/detach IDE; Layouts in the middle and narrower Documents; Clause Manager/Data Browser tabbed with Fields",
+      "requirement": "One drag/dock/tab/hide/detach IDE; Layouts in the middle and narrower Documents; Clause Manager/Data Manager tabbed with Fields",
       "status": "verified",
       "evidence": [
         "tests/test_qt_prototype.py",

@@ -227,7 +227,7 @@ class AuthoringInterfaceTests(unittest.TestCase):
         browser.mode.setCurrentText("Condition")
         browser.search.setText("@.amount == 0")
         controls['Search'].click()
-        self.assertEqual("Condition: PASS", browser.status.text())
+        self.assertIn("Data Manager: Condition: PASS", window.activity.toPlainText())
         self.assertEqual("true", browser.value.toPlainText())
         window.browse_field_path()
         self.assertEqual("JSONPath", browser.mode.currentText())

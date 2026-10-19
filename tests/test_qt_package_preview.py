@@ -77,6 +77,71 @@ class PreviewTests(unittest.TestCase):
     def start(self, renders=None, **kwargs):
         return self.window.start_package_preview(str(self.source),renders or ['PDF'],400,'2026-10-08',open_after=False,**kwargs)
 
+    def test_data_save_as_switches_source_and_preview_input(self):
+        session = self.window.session
+        session.map_data(self.payload, self.source.name)
+        self.window.settings.setValue('lastDataFile', str(self.source))
+        self.window.set_session(session)
+        edited = {'changed': True, 'amount': 42}
+        self.window.data.replace_value(edited)
+        revision = session.mapping_revision
+        saved = (self.root / 'saved' / 'edited.json').resolve()
+        saved.parent.mkdir()
+        with patch('atool_qt.data_editing.QFileDialog.getSaveFileName', return_value=(str(saved), '')):
+            self.window.data.save_json()
+        self.assertEqual(json.loads(saved.read_text()), edited)
+        self.assertEqual(json.loads(self.source.read_text()), self.payload)
+        self.assertEqual(session.data_name, saved.name)
+        self.assertEqual(self.window.data_label.text(), 'Data: edited.json')
+        self.assertEqual(self.window.data_label.toolTip(), str(saved))
+        self.assertEqual(self.window.settings.value('lastDataFile'), str(saved))
+        self.assertEqual(self.window.settings.value('lastMappingDirectory'), str(saved.parent))
+        self.assertEqual(self.window.mapped_data_path(), saved)
+        self.assertEqual(session.mapping_revision, revision)
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertEqual(dialog.input.text(), str(saved))
+        dialog.open_after.setChecked(False)
+        dialog.submit()
+        args = self.calls[-1]['args']
+        self.assertEqual(args[args.index('--input') + 1], str(saved))
+        self.window.data.undo_data()
+        self.assertEqual(session.data, self.payload)
+        self.assertEqual(session.data_name, saved.name)
+        self.assertEqual(self.window.mapped_data_path(), saved)
+
+    def test_save_current_updates_the_file_used_by_preview(self):
+        session = self.window.session
+        session.map_data(self.payload, self.source.name)
+        self.window.settings.setValue('lastDataFile', str(self.source))
+        self.window.set_session(session)
+        edited = {'language': 'CHINESE'}
+        self.window.data.replace_value(edited)
+        revision = session.mapping_revision
+        with patch('atool_qt.data_editing.QFileDialog.getSaveFileName') as picker:
+            self.window.data.edit_actions['Save'].trigger()
+            picker.assert_not_called()
+        self.assertEqual(json.loads(self.source.read_text()), edited)
+        self.assertEqual(session.mapping_revision, revision)
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertEqual(Path(dialog.input.text()).resolve(), self.source.resolve())
+        self.assertIn('Saved mapped data:', self.window.activity.toPlainText())
+        self.assertEqual(self.window.activity.toPlainText().count('Saved mapped data:'), 1)
+
+    def test_cancelled_or_failed_save_keeps_original_source(self):
+        session = self.window.session
+        session.map_data(self.payload, self.source.name)
+        self.window.settings.setValue('lastDataFile', str(self.source))
+        self.window.set_session(session)
+        for filename in ('', str(self.root / 'missing' / 'edited.json')):
+            with patch('atool_qt.data_editing.QFileDialog.getSaveFileName', return_value=(filename, '')):
+                self.window.data.save_json()
+            self.assertEqual(session.data_name, self.source.name)
+            self.assertEqual(self.window.settings.value('lastDataFile'), str(self.source))
+            self.assertEqual(self.window.mapped_data_path(), self.source)
+        self.assertIn('Data Manager: Could not save JSON:', self.window.activity.toPlainText())
+
     def test_preview_contract_alias_timeout_preferences_and_menu_states(self):
         self.assertTrue(self.start(renders=['PDF','HTML'], pre=True))
         self.assertEqual(len(self.calls), 2)

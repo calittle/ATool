@@ -457,13 +457,38 @@ The Tkinter troubleshooting below applies to that legacy application.
 
 Drag panel titles to dock, tab, detach or rearrange the managers. Use
 **View → Panels** to show hidden panels and **View → Reset Layout** to restore
-the default arrangement. Clause Manager and Data Browser initially share tabs
+the default arrangement. Clause Manager and Data Manager initially share tabs
 with Field Manager.
 
 Every grid supports column resizing and header-click sorting. Selected rows use
 a lavender background and purple outline; PASS/mapped values are blue and
 FAIL/unmapped values are red. An asterisk marks changed items. Field Manager
 supports multi-field copy/paste with Cmd/Ctrl+C and Cmd/Ctrl+V.
+
+Expanded containers in Data Manager show child property names and array indices
+without repeating the parent path. Standalone search results show compact paths
+with ancestor context when needed to distinguish matches. The full path remains
+above the grid, on hover, and in Copy Path.
+
+Double-click a simple value in the Data Manager's **Value** column to edit it
+in place for values up to 50 characters. Text needs no surrounding quotes;
+numbers and booleans keep their types. Press Enter to apply or Escape to cancel.
+Longer values, objects, and arrays open the JSON editor on double-click.
+Compact icons with tooltips provide **Add…** and
+**Remove** for mapped JSON. Select an object to add a named property or an array
+to append an item; enter JSON values, objects (`{}`), or arrays (`[]`). **Copy**
+and **Paste…** (Cmd/Ctrl+C and Cmd/Ctrl+V while the tree is focused) copy whole
+branches as JSON and insert them into the selected object or array. Object
+pastes ask for a new property name and never overwrite an existing property.
+Edits refresh mapped fields and document matches and report the result in Activity.
+**Save** (Cmd/Ctrl+S while the tree is focused) writes to the current data file;
+if there is no current file, it opens Save As. **Undo** and **Redo** restore
+data changes; mapping another file clears this history. **Save JSON As…** saves
+the current data to a JSON file and makes that file the mapped data source for
+subsequent previews and remapping. The displayed data filename updates to match.
+Editing leaves the original input file unchanged
+until you use Save or explicitly save over it; save a copy before mapping another file or
+closing the app to keep your changes. These controls apply to the native Qt app.
 
 The Layout Resolver displays a collapsible evidence tree with resolved values,
 condition results and iteration rows. Expand or collapse branches to inspect

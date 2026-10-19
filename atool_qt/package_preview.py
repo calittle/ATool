@@ -127,13 +127,13 @@ class PackagePreviewActions:
     def mapped_data_path(self):
         if self.session and self.session.mapped:
             path = Path(self.session.data_name).expanduser()
-            if path.is_file():
-                return path
             loaded = str(self.settings.value('lastDataFile', '') or '')
             if loaded:
                 loaded_path = Path(loaded).expanduser()
                 if loaded_path.name == path.name and loaded_path.is_file():
                     return loaded_path
+            if path.is_file():
+                return path
         return None
 
     def update_preview_actions(self):

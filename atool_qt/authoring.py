@@ -116,7 +116,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         window_menu = self.menuBar().addMenu("&Window")
         for key, title, shortcut in (("documents", "Document Manager", "Ctrl+Shift+P"), ("fields", "Field Manager", "Ctrl+Shift+F"),
                                      ("clauses", "Clause Manager", "Ctrl+Shift+C"), ("layouts", "Layout Manager", "Ctrl+Shift+L"),
-                                     ("data", "Data Browser", "Ctrl+Shift+D")):
+                                     ("data", "Data Manager", "Ctrl+Shift+D")):
             window_menu.addAction(self.action(title, lambda checked=False, key=key: self.show_panel(key), shortcut))
         window_menu.addAction(self.action("Arrange", self.reset_layout))
         for panel in (self.documents, self.fields, self.layouts, self.clauses, self.data):
@@ -217,7 +217,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         self.update_preview_actions()
         self.update_email_actions()
         self.update_manager_controls()
-        for panel in (self.documents,self.fields,self.layouts,self.clauses):
+        for panel in (self.documents,self.fields,self.layouts,self.clauses,self.data):
             panel.setEnabled(not self.package_busy())
         if self.session:
             self.setWindowTitle(f"{self.session.name} — ATool[*]")

@@ -50,7 +50,7 @@
 ## v2.0.0
 
 - The default application is now the unified PySide6/Qt workspace. Documents,
-  Layouts, Fields, Clauses, Data Browser and Content Manager are dockable,
+  Layouts, Fields, Clauses, Data Manager and Content Manager are dockable,
   tabbed, detachable panels. Windows and macOS launchers are included, with
   separate legacy launchers retaining the original Tkinter application.
 - Integrated package document ordering and associations, editing controls,
@@ -76,7 +76,7 @@
 - Package Preview now lets you choose an effective date with a calendar or by
   entering `YYYY-MM-DD`. The selected date is sent to OCCS; it defaults to today
   when ATool starts and stays selected for later previews in the same session.
-- Opening a layout field in Data Browser now includes its parent iteration path
+- Opening a layout field in Data Manager now includes its parent iteration path
   in the search, so fields inside repeated data resolve in the right context.
 
 ## v1.1.3
@@ -88,8 +88,8 @@
   addition to layouts. Pasted items keep their nested data, and pasted content
   or fields receive unique identities when needed.
 - Added `Shift+Cmd/Ctrl+C`, `D`, `L`, and `P` shortcuts for Clause Manager,
-  Data Browser, Layouts, and Package Documents, respectively.
-- A layout item's Condition button now opens that expression in Data Browser's
+  Data Manager, Layouts, and Package Documents, respectively.
+- A layout item's Condition button now opens that expression in Data Manager's
   new Condition mode and shows whether it passes against the mapped data.
 - Moving a layout item up or down now keeps that item selected and preserves
   the expanded tree state.

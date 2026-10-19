@@ -156,7 +156,7 @@ class MenuParityTests(unittest.TestCase):
         window.show()
         menu = next(action.menu() for action in window.menuBar().actions() if action.text() == '&Window')
         actions = {action.text(): action for action in menu.actions()}
-        for name, key in [('Document Manager', 'documents'), ('Field Manager', 'fields'), ('Clause Manager', 'clauses'), ('Layout Manager', 'layouts'), ('Data Browser', 'data'), ('Content Manager', 'content')]:
+        for name, key in [('Document Manager', 'documents'), ('Field Manager', 'fields'), ('Clause Manager', 'clauses'), ('Layout Manager', 'layouts'), ('Data Manager', 'data'), ('Content Manager', 'content')]:
             dock = window.docks[key]
             dock.hide()
             actions[name].trigger()

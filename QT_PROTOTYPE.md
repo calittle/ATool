@@ -38,7 +38,7 @@ session exists, it can read the original app's saved session.
 ## Workspace and managers
 
 The default layout puts Documents on the left, Layouts in the middle, and Fields
-on the right. Clause Manager and Data Browser are tabs alongside Fields. Content
+on the right. Clause Manager and Data Manager are tabs alongside Fields. Content
 Manager opens as a central tab alongside Layouts. Managers can be dragged, docked,
 tabbed, hidden and detached. Window menu controls reopen managers; Arrange restores
 the default. View offers panel visibility and alternative layouts. Qt stores
@@ -68,7 +68,7 @@ composition, clause-name completion, Help, usage searches, raw-condition searche
 and trigger-update review. Usage results navigate to owners; update review supports
 Apply Current, Skip and Apply All with changed-source checks and undo.
 
-Data Browser supports JSONPath, full text and condition searches, lazy expansion,
+Data Manager supports JSONPath, full text and condition searches, lazy expansion,
 complete value inspection and exact-path copying. Clear restores the mapped tree.
 
 Content Manager supports Comms listing/filtering, versions, metadata, scoped fields,

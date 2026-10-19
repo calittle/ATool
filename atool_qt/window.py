@@ -22,6 +22,7 @@ from .diagnostics import ConditionDiagnostics
 from .clauses import ClauseComposer
 from .authoring import AuthoringActions
 from .data_queries import DataQueries
+from .data_editing import DataEditing, display_path, display_paths
 from .package_responses import PackageResponses
 from .package_documents import PackageDocumentTree
 from .clause_completion import ClauseComposeEdit
@@ -835,7 +836,9 @@ class ClausePanel(QWidget):
         self.expression.setPlainText(record["expression"])
 
 
-class DataPanel(QWidget):
+class DataPanel(DataEditing, QWidget):
+    message = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.values = {}
@@ -874,12 +877,16 @@ class DataPanel(QWidget):
         self.value = text_box()
         splitter.addWidget(self.tree)
         splitter.addWidget(self.value)
-        layout.addWidget(splitter)
-        self.status = QLabel("Map data to inspect it.")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        layout.addWidget(splitter, 1)
+        self.install_editing(layout)
+
+    def report_message(self, message):
+        self.message.emit(f"Data Manager: {message}")
 
     def set_data(self, value: object, *, mapped=True, fields=None):
+        if value is not self.payload or not mapped:
+            self.undo_stack.clear()
+            self.redo_stack.clear()
         self.payload, self.mapped = value, mapped
         self.fields = fields or []
         self.tree.clear()
@@ -888,13 +895,12 @@ class DataPanel(QWidget):
         self.path.clear()
         if not mapped:
             self.value.setPlainText("Map JSON data to browse its contents.")
-            self.status.setText("Map data to inspect it.")
+            self.update_edit_actions()
             return
         root = self.node("$", value)
         self.tree.addTopLevelItem(root)
         self.tree.setCurrentItem(root)
         root.setExpanded(True)
-        self.status.setText("Mapped data loaded. Expand nodes or search by path, text, or condition.")
 
     def clear_search(self):
         self.search.clear()
@@ -903,7 +909,7 @@ class DataPanel(QWidget):
     def run_search(self):
         query = self.search.text().strip()
         if not self.mapped:
-            self.status.setText("Map a data file before searching.")
+            self.report_message("Map a data file before searching.")
             return
         if not query:
             self.clear_search()
@@ -921,12 +927,12 @@ class DataPanel(QWidget):
             color_item(item, passed)
             self.tree.addTopLevelItem(item)
             self.tree.setCurrentItem(item)
-            self.status.setText("Condition: " + ("PASS" if passed else "FAIL"))
+            self.report_message("Condition: " + ("PASS" if passed else "FAIL"))
             return
         if mode == "JSONPath" or (mode == "Auto" and query.startswith("$")):
             valid, reason = evaluator._validate_field_path(query)
             if not valid:
-                self.status.setText("Invalid JSONPath: " + reason)
+                self.report_message("Invalid JSONPath: " + reason)
                 return
             results = evaluator._extract_values_and_paths_by_path(self.payload, query)
             label = "JSONPath"
@@ -935,35 +941,52 @@ class DataPanel(QWidget):
             label = "Full text"
         for path, value in results:
             self.tree.addTopLevelItem(self.node(path, value))
+        self.relabel_nodes()
         self.tree.setCurrentItem(self.tree.topLevelItem(0))
-        self.status.setText(f"{label} returned {len(results)} result(s).")
+        self.report_message(f"{label} returned {len(results)} result(s).")
 
     def node(self, path: str, value: object) -> QTreeWidgetItem:
         preview = f"{len(value)} items" if isinstance(value, (dict, list)) else json.dumps(value, ensure_ascii=False)
-        item = QTreeWidgetItem([path, preview[:120]])
+        item = QTreeWidgetItem([display_path(path), preview[:120]])
+        item.setToolTip(0, path)
         # Keep Python values intact: QVariant conversion can reorder object keys.
         self.values[path] = value
         item.setData(0, ROLE + 1, path)
+        if path.startswith('$') and not isinstance(value, (dict, list)):
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            item.setToolTip(1, 'Double-click to edit. Enter applies; Escape cancels.')
         if isinstance(value, (dict, list)) and value:
             item.addChild(QTreeWidgetItem(["Loading…"]))
         return item
+
+    def relabel_nodes(self):
+        items = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        labels = display_paths([item.data(0, ROLE + 1) for item in items])
+        for item in items:
+            item.setText(0, labels[item.data(0, ROLE + 1)])
 
     def expand_node(self, item):
         if item.data(0, ROLE + 2):
             return
         item.setData(0, ROLE + 2, True)
         path = item.data(0, ROLE + 1)
+        if path not in self.values:
+            return
         value = self.values[path]
         item.takeChildren()
         pairs = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
         for key, child in pairs:
             # Bracket notation also handles keys containing punctuation.
             child_path = f"{path}[{json.dumps(key, ensure_ascii=False)}]"
-            item.addChild(self.node(child_path, child))
+            node = self.node(child_path, child)
+            node.setText(0, (key or '\"\"') if isinstance(value, dict) else f'[{key}]')
+            item.addChild(node)
 
     def show_value(self, current, *_):
-        self.value.setPlainText(pretty(self.values[current.data(0, ROLE + 1)]) if current else "")
-        self.path.setText(current.data(0, ROLE + 1) if current else "")
+        path = current.data(0, ROLE + 1) if current else None
+        self.value.setPlainText(pretty(self.values[path]) if path in self.values else "")
+        self.path.setText(path or "")
+        self.update_edit_actions()
 
 
 class MappingJob(QThread):
@@ -1015,13 +1038,17 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.documents = ManagerPanel("documents")
         self.fields = ManagerPanel("fields")
         self.data = DataPanel()
+        self.data.on_change = self.apply_data_edit
+        self.data.on_saved = self.data_saved
+        self.data.save_target = self.mapped_data_path
         self.layouts = LayoutPanel()
         self.clauses = ClausePanel()
         self.activity = ActivityLog()
+        self.data.message.connect(self.log)
         self.add_panel("documents", "Document Manager", self.documents, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.add_panel("fields", "Field Manager", self.fields, Qt.DockWidgetArea.RightDockWidgetArea)
         self.add_panel("layouts", "Layout Manager", self.layouts, Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.add_panel("data", "Data Browser", self.data, Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.add_panel("data", "Data Manager", self.data, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.add_panel("clauses", "Clause Manager", self.clauses, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.add_panel("activity", "Activity", self.activity, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.active_document = None
@@ -1193,6 +1220,32 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.update_package_status()
         self.setWindowTitle(f"{session.name} — ATool[*]")
         self.update_actions()
+
+    def data_saved(self, path):
+        self.session.data_name = path.name
+        self.settings.setValue('lastDataFile', str(path))
+        self.settings.setValue('lastMappingDirectory', str(path.parent))
+        self.update_package_status()
+        self.update_actions()
+
+    def apply_data_edit(self, payload):
+        if self.session is None or self.package_busy():
+            raise ValueError("Wait for the current operation to finish before editing data.")
+        self.flush_properties()
+        self.session.map_data(payload, self.session.data_name)
+        previous = self.refreshing
+        self.refreshing = True
+        try:
+            self.clauses.set_session(self.session)
+            self.documents.set_session(self.session, preserve_selection=True)
+            self.fields.set_session(self.session, preserve_selection=True)
+            self.update_package_status()
+            self.update_actions()
+        finally:
+            self.refreshing = previous
+        matched = sum(bool(doc.get("triggered")) for doc in self.session.documents)
+        self.log(f"Data updated; refreshed field values and document matches: "
+                 f"{matched} of {len(self.session.documents)} documents matched. Changes are in memory until saved.")
 
     def document_selected(self, record):
         self.active_document = record

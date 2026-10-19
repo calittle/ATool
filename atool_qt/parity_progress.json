@@ -10,7 +10,7 @@
     "Document/field create, edit and remove buttons",
     "Layout/content/iteration/field add, edit, remove, move and layout copy/paste",
     "Clause library add/save/delete and compose/apply controls",
-    "JSONPath, full-text and condition data-browser searches",
+    "JSONPath, full-text and condition data-manager searches",
     "Save, Save As, Open Session, local storage, Undo/Redo, Remap and panel menus",
     "Property focus-out commits, checkbox commits, and save-time form flush",
     "Transactional bundle saves for AT, helper, master and manifest, with original-byte backups and external-change detection",

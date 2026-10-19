@@ -1,4 +1,4 @@
-"""Layout conditions can be evaluated from the Data Browser."""
+"""Layout conditions can be evaluated from the Data Manager."""
 
 import unittest
 from unittest.mock import Mock

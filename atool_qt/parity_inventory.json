@@ -884,7 +884,7 @@
     "owner": "_build_app_menu",
     "line": 983,
     "kind": "add_command",
-    "label": "Show Data Browser",
+    "label": "Show Data Manager",
     "command": "self._show_data_browser_window",
     "status": "verified_equivalent_in_qt",
     "evidence": "Window menu opens integrated docks; Arrange restores requested default layout. Final source/wiring and behavior audit complete; full 234-test suite and four native editor checks passed. See qt_implementation and verification_tests for reproducible evidence.",

@@ -47,6 +47,10 @@ class ReviewPresentationTests(unittest.TestCase):
                         expected.append(label.value)
             labels = [a.text().replace('…','...') for a in actual[title].actions() if not a.isSeparator()]
             for label in expected:
+                # Qt supports overlapping preview jobs; its label makes the
+                # cancellation scope explicit compared with the legacy menu.
+                if title == 'Package' and label == 'Cancel Preview':
+                    label = 'Cancel All Previews'
                 self.assertIn(label, labels, title)
             self.assertTrue(actual[title].menuAction().isVisible())
         self.assertFalse(self.window.menuBar().isNativeMenuBar())

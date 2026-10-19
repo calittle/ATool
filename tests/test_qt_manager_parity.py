@@ -339,7 +339,7 @@ class ManagerInterfaceTests(unittest.TestCase):
         toolbar.widgetForAction(actions['Evaluate Condition']).click()
         self.assertEqual(window.data.mode.currentText(),'Condition')
         self.assertEqual(window.data.search.text(),'@.enabled == true')
-        self.assertEqual(window.data.status.text(),'Condition: FAIL')
+        self.assertIn('Data Manager: Condition: FAIL', window.activity.toPlainText())
         self.assertEqual(window.data.value.toPlainText(),'false')
 
     def test_clause_toolbar_add_save_rename_delete_and_undo(self):
