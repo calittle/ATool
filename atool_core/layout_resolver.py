@@ -225,7 +225,13 @@ class LayoutResolver:
         if wrapper:
             operation, arguments = wrapper.group(1), self._arguments(wrapper.group(2))
             if operation == "length":
-                return [len(self._path_values(arguments[0]))]
+                argument = arguments[0].strip()
+                # Comms field definitions can wrap a terminal length() in
+                # $.length(...). Count the selected nodes once; applying the
+                # terminal call to each filtered object discards those nodes.
+                while argument.endswith('.length()'):
+                    argument = argument[:-len('.length()')].rstrip()
+                return [len(self._path_values(argument))]
             pieces: list[str] = []
             for argument in arguments:
                 literal, is_literal = self.evaluator._parse_condition_literal(argument)

@@ -420,6 +420,27 @@ class LayoutResolverTests(unittest.TestCase):
         self.assertEqual(["Alpha"], loop["children"][0]["children"][0]["values"])
         self.assertNotIn("Iteration context", "\n".join(result["warnings"]))
 
+    def test_wrapped_filtered_length_counts_matches_in_nested_bill_arrays(self) -> None:
+        path = "$.length($..billCalcLineList[?(@.cmElements.chargeType=='EC')].length())"
+        template = {
+            'Documents': [{'$$Id': 'Doc'}],
+            'Fields': [{'Name': 'hasEC', 'Path': path}],
+        }
+        blob = self.cache / 'contents/header-content/versions/1.0/header-content.blob'
+        blob.write_text('<comms-cond>$Cond{"Condition":"hasEC > 0","Text":"Energy Charge"}</comms-cond>')
+        for charge_groups, expected in (([['EC']], 1), ([['EC', 'OTHER'], ['EC']], 2),
+                                         ([['OTHER']], 0), ([[]], 0), ([], 0)):
+            with self.subTest(charge_groups=charge_groups):
+                payload = {'billPrint': {'premises': [
+                    {'billCalcLineList': [{'cmElements': {'chargeType': charge}} for charge in charges]}
+                    for charges in charge_groups]}}
+                resolver = LayoutResolver(self.cache, 'Pkg', 'Doc', payload, assembly_template=template)
+                check = resolver._condition('hasEC > 0')
+                self.assertEqual(check['operands'][0]['values'], [expected])
+                self.assertEqual(check['passed'], expected > 0)
+                rendered = resolver.resolve('header')['layout']['children'][0]['rendered']
+                self.assertEqual(rendered, 'Energy Charge' if expected else '')
+
     def test_open_package_template_and_cached_layout_choices(self) -> None:
         template = {
             "Documents": [{"$$Id": "Doc", "Condition": "$[?(@.show == true)]"}],
