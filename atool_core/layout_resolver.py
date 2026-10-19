@@ -335,37 +335,55 @@ class LayoutResolver:
             return None
         return iterations[0]
 
-    def _operand(self, token: str) -> tuple[list[Any], dict[str, Any] | None, bool]:
+    def _operand(
+        self, token: str, iteration_context: dict[str, Any] | None = None,
+        embedded_fields: dict[str, dict[str, Any]] | None = None,
+    ) -> tuple[list[Any], dict[str, Any] | None, bool]:
         token = token.strip()
         literal, is_literal = self.evaluator._parse_condition_literal(token)
         if is_literal:
+            if isinstance(literal, str) and embedded_fields:
+                used = [field for key, field in embedded_fields.items() if key in literal]
+                if used:
+                    for key, field in embedded_fields.items():
+                        literal = literal.replace(key, _display(field['values']))
+                    evidence = {'name': token, 'path': '(embedded content)', 'values': [literal], 'inputs': used}
+                    return [literal], evidence, any(field.get('unknown') for field in used)
             return [literal], None, False
+        if embedded_fields and token in embedded_fields:
+            field = embedded_fields[token]
+            return field['values'], field, bool(field.get('unknown'))
         if token.startswith(("$", "@")):
             values = self.evaluator._extract_values_by_path(self.payload, "$" + token[1:] if token.startswith("@") else token)
             return values, {"name": token, "path": token, "values": values}, False
-        field = self._field(token)
+        field = self._iteration_field(token, iteration_context)
+        if field is None:
+            field = self._field(token)
         return field["values"], field, bool(field.get("unknown"))
 
-    def _condition(self, expression: str) -> dict[str, Any]:
+    def _condition(
+        self, expression: str, iteration_context: dict[str, Any] | None = None,
+        embedded_fields: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         expr = self.evaluator._strip_outer_parens(expression)
         or_parts = self.evaluator._split_top_level_operator(expr, "||")
         if len(or_parts) > 1:
-            parts = [self._condition(part) for part in or_parts]
+            parts = [self._condition(part, iteration_context, embedded_fields) for part in or_parts]
             status = True if any(part["passed"] is True for part in parts) else None if any(part["passed"] is None for part in parts) else False
             return {"expression": expression, "passed": status, "parts": parts}
         and_parts = self.evaluator._split_top_level_operator(expr, "&&")
         if len(and_parts) > 1:
-            parts = [self._condition(part) for part in and_parts]
+            parts = [self._condition(part, iteration_context, embedded_fields) for part in and_parts]
             status = False if any(part["passed"] is False for part in parts) else None if any(part["passed"] is None for part in parts) else True
             return {"expression": expression, "passed": status, "parts": parts}
         negated = self.evaluator._unwrap_condition_negation(expr)
         if negated is not None:
-            child = self._condition(negated)
+            child = self._condition(negated, iteration_context, embedded_fields)
             return {"expression": expression, "passed": None if child["passed"] is None else not child["passed"], "parts": [child]}
         not_empty = re.fullmatch(r"(.+?)\s+not\s+empty", expr, re.IGNORECASE | re.DOTALL)
         empty = re.fullmatch(r"(.+?)\s+empty\s+(true|false)", expr, re.IGNORECASE | re.DOTALL)
         if not_empty:
-            values, field, unknown = self._operand(not_empty.group(1))
+            values, field, unknown = self._operand(not_empty.group(1), iteration_context, embedded_fields)
             is_empty = not any(value is not None and value != "" and value != [] and value != {} for value in values)
             return {
                 "expression": expression,
@@ -373,15 +391,15 @@ class LayoutResolver:
                 "operands": [field] if field else [],
             }
         if empty:
-            values, field, unknown = self._operand(empty.group(1))
+            values, field, unknown = self._operand(empty.group(1), iteration_context, embedded_fields)
             is_empty = not any(value is not None and value != "" and value != [] and value != {} for value in values)
             passed = None if unknown else is_empty == (empty.group(2).lower() == "true")
             return {"expression": expression, "passed": passed, "operands": [field] if field else []}
         comparison = self.evaluator._find_top_level_comparison(expr)
         if comparison:
             left, operator, right = comparison
-            lhs, lhs_field, lhs_unknown = self._operand(left)
-            rhs, rhs_field, rhs_unknown = self._operand(right)
+            lhs, lhs_field, lhs_unknown = self._operand(left, iteration_context, embedded_fields)
+            rhs, rhs_field, rhs_unknown = self._operand(right, iteration_context, embedded_fields)
             if not lhs:
                 lhs = [None]
             if not rhs:
@@ -413,6 +431,73 @@ class LayoutResolver:
             if depth == 0:
                 return match.start(), match.end()
         raise ValueError(f"Unclosed comms-{kind} tag")
+
+    def _mask_embedded_markup(self, text: str) -> tuple[str, dict[str, str]]:
+        """Protect complete nested tags from the surrounding expression parser."""
+        prefix = '__atool_embedded_'
+        while prefix in text:
+            prefix += '_'
+        fragments = {}
+        pieces = []
+        cursor = 0
+        while match := _COMMS_TAG.search(text, cursor):
+            _, end = self._tag_end(text, match.group(1).lower(), match.start())
+            token = f'{prefix}{len(fragments)}__'
+            fragments[token] = text[match.start():end]
+            pieces.extend((text[cursor:match.start()], token))
+            cursor = end
+        pieces.append(text[cursor:])
+        return ''.join(pieces), fragments
+
+    def _conditional_fragment(self, inner: str) -> tuple[str, str, str]:
+        # Some blobs contain valid JSON strings, others contain unescaped
+        # nested Comms markup with its own JSON quotes inside those strings.
+        marker = re.match(r'^\s*\$Cond\s*(\{.*)', inner, re.DOTALL)
+        if marker:
+            try:
+                data = json.loads(marker.group(1))
+                kind = 'Text' if 'Text' in data else 'Content'
+                if all(isinstance(data.get(key), str) for key in ('Condition', kind)):
+                    return data['Condition'], kind, data[kind]
+            except (ValueError, TypeError):
+                pass
+        masked, fragments = self._mask_embedded_markup(inner)
+        head = _COND_HEAD.match(masked)
+        tail = re.search(r'"\s*\}\s*$', masked)
+        if not head or not tail or tail.start() < head.end():
+            raise ValueError('Could not parse a conditional content fragment')
+        condition = json.loads('"' + head.group('condition') + '"')
+        target = masked[head.end():tail.start()]
+        for token, fragment in fragments.items():
+            condition = condition.replace(token, fragment)
+            target = target.replace(token, fragment)
+        return condition, head.group('kind'), target
+
+    def _embedded_condition(
+        self, expression: str, iteration_context: dict[str, Any] | None,
+        layout_context: str | None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        masked, fragments = self._mask_embedded_markup(expression)
+        fields, inputs = {}, []
+        def unknown(node):
+            return (node.get('unknown', False) or node.get('passed') is None
+                    or any(unknown(child) for child in [*node.get('children', []), *node.get('parts', [])]))
+        for token, fragment in fragments.items():
+            children, rendered = self._markup(fragment, iteration_context, layout_context)
+            inputs.extend(children)
+            fields[token] = {'name': fragment, 'path': '(embedded content)',
+                             'values': [rendered], 'unknown': any(unknown(child) for child in children),
+                             'inputs': children}
+        check = self._condition(masked, iteration_context, fields)
+        def restore(node):
+            for token, fragment in fragments.items():
+                node['expression'] = node['expression'].replace(token, fragment)
+                for operand in node.get('operands', []):
+                    operand['name'] = operand['name'].replace(token, fragment)
+            for part in node.get('parts', []):
+                restore(part)
+        restore(check)
+        return check, inputs
 
     def _markup(
         self,
@@ -469,27 +554,27 @@ class LayoutResolver:
                 children.append({"kind": "field", **field, "passed": bool(field["values"]) and not field.get("unknown", False), "rendered": value, "barcode_type": data.get("BarcodeType")})
                 output.append(value)
             else:
-                head = _COND_HEAD.match(inner)
-                tail = re.search(r'"\s*\}\s*$', inner)
-                if not head or not tail or tail.start() < head.end():
-                    self._warn("Could not parse a conditional content fragment")
+                try:
+                    condition_text, target_kind, target = self._conditional_fragment(inner)
+                    check, inputs = self._embedded_condition(condition_text, iteration_context, layout_context)
+                except ValueError as error:
+                    self._warn(str(error))
                     children.append({"kind": "condition", "passed": None, "raw": inner[:300]})
                 else:
-                    condition_text = json.loads('"' + head.group("condition") + '"')
-                    check = self._condition(condition_text)
-                    target = inner[head.end():tail.start()]
-                    branch: dict[str, Any] = {"kind": "condition", **check, "target_kind": head.group("kind")}
-                    if head.group("kind") == "Content":
+                    branch: dict[str, Any] = {"kind": "condition", **check, "target_kind": target_kind,
+                                              "children": inputs}
+                    if target_kind == "Content":
                         branch["target"] = target
                         if check["passed"] is True:
                             iteration = self._relationship_iteration(layout_context, target) if layout_context else None
                             child = self._content(target, iteration=iteration, layout_context=layout_context)
-                            branch["children"] = [child]
+                            branch["children"].append(child)
                             branch["rendered"] = child.get("rendered", "")
                             if branch["rendered"]:
                                 output.append("\n" + branch["rendered"] + "\n")
                     elif check["passed"] is True:
-                        branch["children"], branch["rendered"] = self._markup(target, iteration_context, layout_context)
+                        targets, branch["rendered"] = self._markup(target, iteration_context, layout_context)
+                        branch["children"].extend(targets)
                         output.append(branch["rendered"])
                     children.append(branch)
             cursor = tag_end

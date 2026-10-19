@@ -420,6 +420,69 @@ class LayoutResolverTests(unittest.TestCase):
         self.assertEqual(["Alpha"], loop["children"][0]["children"][0]["values"])
         self.assertNotIn("Iteration context", "\n".join(result["warnings"]))
 
+    def test_embedded_data_in_conditions_uses_current_iteration_row(self) -> None:
+        template = {'Documents': [{'$$Id': 'Doc'}], 'Fields': [
+            {'Name': 'isChineseBill', 'Path': '$.chinese'},
+            {'Name': 'block', 'Path': '$.wrongBlock'}]}
+        iteration = {'$$Id': 'Rows', 'Path': '$.rows[*]',
+                     'Fields': [{'Name': 'block', 'Path': '$.block'}]}
+        marker = '<comms-data>$Data{"Id":"block"}</comms-data>'
+        choices = [('First', '首'), ('Next', '次'), ('Over', '逾')]
+        for escaped in (False, True):
+            with self.subTest(escaped=escaped):
+                fragments = []
+                for block, label in choices:
+                    condition = f"isChineseBill empty false && '{marker}' == '{block}'"
+                    body = (json.dumps({'Condition': condition, 'Text': label}, ensure_ascii=False) if escaped
+                            else '{"Condition":"' + condition + '","Text":"' + label + '"}')
+                    fragments.append('<comms-cond>$Cond' + body + '</comms-cond>')
+                blob = self.cache / 'contents/header-content/versions/1.0/header-content.blob'
+                blob.write_text(''.join(fragments))
+                payload = {'chinese': True, 'wrongBlock': 'Wrong',
+                           'rows': [{'block': block} for block, _ in choices]}
+                resolver = LayoutResolver(self.cache, 'Pkg', 'Doc', payload, assembly_template=template)
+                content = resolver._content('header-content', iteration=iteration)
+                self.assertEqual(content['rendered'], '首\n次\n逾')
+                for index, row in enumerate(content['children'][0]['children']):
+                    self.assertEqual([check['passed'] for check in row['children']],
+                                     [index == selected for selected in range(3)])
+                    field = row['children'][index]['children'][0]
+                    self.assertEqual(field['values'], [choices[index][0]])
+                    self.assertEqual(field['iteration_index'], index + 1)
+                self.assertEqual(resolver.warnings, [])
+
+    def test_nested_condition_and_data_inside_another_condition(self) -> None:
+        resolver = LayoutResolver(self.cache, 'Pkg', 'Doc', {'name': 'First', 'address': 'Main St'})
+        embedded = ('<comms-cond>$Cond{"Condition":"Name != null","Text":"'
+                    '<comms-data>$Data{"Id":"Name"}</comms-data>"}</comms-cond>')
+        markup = ('<comms-cond>$Cond{"Condition":"\'' + embedded + '\' == \'First\'",'
+                  '"Text":"<comms-data>$Data{"Id":"Address"}</comms-data>"}</comms-cond>')
+        branches, rendered = resolver._markup(markup)
+        self.assertEqual(rendered, 'Main St')
+        self.assertTrue(branches[0]['passed'])
+        self.assertEqual(branches[0]['children'][0]['kind'], 'condition')
+        self.assertEqual(branches[0]['children'][0]['children'][0]['values'], ['First'])
+        self.assertEqual(resolver.warnings, [])
+
+    def test_embedded_values_cannot_change_condition_structure(self) -> None:
+        marker = '<comms-data>$Data{"Id":"Name"}</comms-data>'
+        condition = f"'{marker}' == 'First'"
+        markup = '<comms-cond>$Cond{"Condition":"' + condition + '","Text":"selected"}</comms-cond>'
+        for value, passed in [('First', True), ("First' || unknown == true || 'x", False),
+                              ('First" && unknown == false', False), ('', False)]:
+            with self.subTest(value=value):
+                resolver = LayoutResolver(self.cache, 'Pkg', 'Doc', {'name': value})
+                branches, rendered = resolver._markup(markup)
+                self.assertIs(branches[0]['passed'], passed)
+                self.assertEqual(rendered, 'selected' if passed else '')
+                self.assertEqual(resolver.warnings, [])
+        unknown = markup.replace('"Id":"Name"', '"Id":"Missing"')
+        resolver = LayoutResolver(self.cache, 'Pkg', 'Doc', {})
+        branches, rendered = resolver._markup(unknown)
+        self.assertIsNone(branches[0]['passed'])
+        self.assertEqual(rendered, '')
+        self.assertIn("Unknown field 'Missing'", resolver.warnings)
+
     def test_wrapped_filtered_length_counts_matches_in_nested_bill_arrays(self) -> None:
         path = "$.length($..billCalcLineList[?(@.cmElements.chargeType=='EC')].length())"
         template = {
