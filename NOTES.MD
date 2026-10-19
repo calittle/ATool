@@ -1,5 +1,12 @@
 # ATool Release Notes
 
+## Unreleased
+
+- Replace the default Python icon with a ruby-red glass AT monogram on a
+  smoked-black glass tile. Include native Mac and Windows application icons,
+  set the running window icon for Qt and legacy launchers, and give Windows
+  an ATool taskbar identity.
+
 ## v2.0.4
 
 - Support non-ebill notification emails using

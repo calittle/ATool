@@ -14,7 +14,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.data and not args.package:
         parser.error("--data requires --package.")
+    from atool_core.app_identity import icon_path, set_windows_app_id
+    set_windows_app_id()
     try:
+        from PySide6.QtGui import QIcon
         from PySide6.QtCore import QLoggingCategory
         from PySide6.QtWidgets import QApplication
         from atool_qt.window import WorkspaceWindow
@@ -28,6 +31,7 @@ def main() -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("ATool")
     app.setOrganizationName("ATool")
+    app.setWindowIcon(QIcon(str(icon_path())))
     if args.bundle_check:
         from atool_qt.bundle_check import run_bundle_check
         return run_bundle_check(app, args.bundle_check)

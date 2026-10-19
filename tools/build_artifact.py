@@ -36,6 +36,7 @@ PACKAGE_FILES = (
     "packaging/THIRD_PARTY.md",
     "packaging/README.md",
     "tools/build_native.py",
+    "tools/build_icons.py",
     "tools/check_native_bundle.py",
     "tools/archive_native.py",
     "tools/resolve_layout.py",

@@ -32,6 +32,8 @@ def run_bundle_check(app, report):
                 return
             timer.stop()
             try:
+                if app.windowIcon().isNull() or window.windowIcon().isNull():
+                    raise RuntimeError('The bundled ATool application icon is missing.')
                 if not bundled_runtime():
                     raise RuntimeError('This check must run from a native bundle.')
                 settings = CommsSettings(Path(directory) / 'unused.json')

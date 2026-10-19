@@ -24515,7 +24515,11 @@ class AToolApp:
 
 
 def main() -> None:
+    from atool_core.app_identity import icon_path, set_windows_app_id
+    set_windows_app_id()
     root = tk.Tk()
+    icon = tk.PhotoImage(file=str(icon_path()))
+    root.iconphoto(True, icon)
     AToolApp(root)
     root.mainloop()
 

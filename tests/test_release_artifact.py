@@ -19,6 +19,9 @@ class ReleaseArtifactTests(unittest.TestCase):
                 self.assertIn('atool_qt/content_editor.html', paths)
                 self.assertIn('atool_qt/content_chip_editors.js', paths)
                 self.assertIn('atool_qt/window.py', paths)
+                for extension in ('png', 'ico', 'icns'):
+                    self.assertIn(f'atool_qt/assets/atool.{extension}', paths)
+                self.assertIn('tools/build_icons.py', paths)
                 self.assertFalse(any('__pycache__' in path or path.endswith('.pyc') for path in paths))
                 self.assertIn('ATool_Qt.py', archive.read('Run_ATool.command').decode())
                 self.assertIn('ATool_Qt.py', archive.read('Run_ATool.bat').decode())

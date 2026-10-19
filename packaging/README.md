@@ -33,6 +33,14 @@ when archiving and extracting. PyInstaller's default ad-hoc macOS signing is
 used; Developer ID/notarization and Windows Authenticode require signing
 credentials and are not configured by this workflow.
 
+App artwork lives in `atool_qt/assets`. The ruby-red glass AT monogram sits
+on a smoked-black glass tile. `atool-source.png` is the master artwork;
+run `python tools/build_icons.py` with the Qt dependencies installed to regenerate
+`atool.png`, the multiple-size Windows `atool.ico`, and macOS `atool.icns`.
+The native build embeds the platform icon; both application launchers set the
+runtime window icon, and Windows sets the ATool taskbar identity before opening
+windows. The extracted-bundle check verifies that the running app has an icon.
+
 Optional local validation, on the target operating system:
 
 1. Install `requirements-build.txt` in a development environment.

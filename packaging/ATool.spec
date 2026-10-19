@@ -19,10 +19,11 @@ a = Analysis([str(root / 'ATool_Qt.py')], pathex=[str(root)],
              excludes=['tkinter', 'webview'], noarchive=False)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='ATool',
-          debug=False, strip=False, upx=False, console=False, icon='NONE')
+          debug=False, strip=False, upx=False, console=False, icon=str(root / 'atool_qt' / 'assets' / 'atool.ico'))
 collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='ATool')
 if sys.platform == 'darwin':
-    app = BUNDLE(collection, name='ATool.app', icon=None,
+    app = BUNDLE(collection, name='ATool.app',
+                 icon=str(root / 'atool_qt' / 'assets' / 'atool.icns'),
                  bundle_identifier='com.calittle.ATool',
                  info_plist={'CFBundleName': 'ATool', 'CFBundleDisplayName': 'ATool',
                              'NSHighResolutionCapable': True})
