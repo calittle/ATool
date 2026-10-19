@@ -1,20 +1,26 @@
 # ATool Release Notes
 
-## Unreleased
-
-- Support non-ebill notification email JSON using
-  `sendDetail.deliveryInfo.contactValue` in Send Email, including JSON wrapped
-  in `CommunicationInfo.CommunicationData`. Override the single recipient in
-  temporary input while preserving the mapped data and notification fields.
-  Requires the companion OCCS CLI fix for `sendDetail` recipient overrides.
-- Report a clear error when multiple recipient addresses are entered for a
-  `sendDetail` notification, which has one contact field.
-
 ## v2.0.4
 
-- Rebuild the current ATool application for Apple Silicon Mac, Intel Mac and
-  Windows, including all v2.0.3 improvements and the latest published stable
-  OCCS CLI release selected by the release workflow.
+- Support non-ebill notification emails using
+  `sendDetail.deliveryInfo.contactValue`, including input wrapped in
+  `CommunicationInfo.CommunicationData`. Override one recipient in temporary
+  input while preserving the original mapped JSON and notification fields;
+  explain when multiple addresses cannot be used for this format.
+- Bundle OCCS CLI v1.2.5, replacing v1.2.4. The CLI now supports recipient
+  overrides for `sendDetail` notifications, completing the non-ebill email fix.
+- Rename Data Browser to Data Manager and add editing of mapped JSON values,
+  properties, arrays and whole branches, with copy/paste and undo/redo. Save to
+  the current file or use Save JSON As to make a copy the source for subsequent
+  previews and remapping. Refresh mapped fields and document matches after edits.
+- Simplify Data Manager labels while retaining full paths in tooltips and Copy
+  Path. Use the mapped file's saved location when filenames match another file
+  in the working directory, so Preview reads the intended data.
+- Fix layout resolver counts for wrapped filtered length expressions so matches
+  in nested arrays are counted correctly.
+- Resolve fields and nested conditional content inside content conditions using
+  the current iteration row. Preserve condition structure when resolved values
+  contain quotes or operators, and show unknown fields in the resolution evidence.
 
 ## v2.0.3
 
