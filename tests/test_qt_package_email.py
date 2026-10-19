@@ -177,6 +177,38 @@ class EmailTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())['billPrint']['billDetails']['cmElements']['eBill']['recipientEmails'],[{'email':'one@example.test'}])
             temporary.cleanup()
 
+    def test_notification_dry_run_and_generate_use_overridden_contact(self):
+        payload = {'sendDetail': {
+            'deliveryInfo': {'contactValue': 'original@example.test', 'deliveryType': 'EMAI', 'templateName': 'test'},
+            'templateParm': [{'key': 'name', 'value': 'Example'}],
+        }}
+        original = copy.deepcopy(payload)
+        self.source.write_text(json.dumps(payload))
+        self.window.session.map_data(payload, str(self.source))
+        self.dialog.recipients.setText('test@example.test')
+        self.dialog.submit(False)
+        self.assertEqual(self.errors, [])
+        args = self.calls[0]['args']
+        path = Path(args[args.index('--input') + 1])
+        prepared = json.loads(path.read_text())
+        self.assertEqual(prepared['sendDetail']['deliveryInfo']['contactValue'], 'test@example.test')
+        self.assertEqual(args[args.index('--recipient') + 1], 'test@example.test')
+        self.assertNotIn('--send-email', args)
+        self.complete()
+        self.assertFalse(path.exists())
+        self.assertTrue(self.dialog.generate.isEnabled())
+        self.dialog.submit(True)
+        self.assertIn('--send-email', self.calls[1]['args'])
+        self.complete(1)
+        self.assertEqual(payload, original)
+        self.assertEqual(json.loads(self.source.read_text()), original)
+
+    def test_notification_multiple_recipients_never_start(self):
+        self.window.session.map_data({'sendDetail': {'deliveryInfo': {}}}, str(self.source))
+        self.dialog.submit(False)
+        self.assertEqual(self.calls, [])
+        self.assertIn('exactly one', self.errors[-1])
+
     def test_invalid_payload_and_missing_inputs_never_start(self):
         self.dialog.recipients.clear();self.dialog.submit(False)
         self.assertEqual(self.calls,[])

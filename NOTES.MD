@@ -1,5 +1,15 @@
 # ATool Release Notes
 
+## Unreleased
+
+- Support non-ebill notification email JSON using
+  `sendDetail.deliveryInfo.contactValue` in Send Email, including JSON wrapped
+  in `CommunicationInfo.CommunicationData`. Override the single recipient in
+  temporary input while preserving the mapped data and notification fields.
+  Requires the companion OCCS CLI fix for `sendDetail` recipient overrides.
+- Report a clear error when multiple recipient addresses are entered for a
+  `sendDetail` notification, which has one contact field.
+
 ## v2.0.4
 
 - Rebuild the current ATool application for Apple Silicon Mac, Intel Mac and

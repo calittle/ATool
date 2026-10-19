@@ -1,10 +1,10 @@
 """Mapped-data email requests with Dry Run before Generate."""
-import copy
 import hashlib
 import json
 import os
-import tempfile
 from pathlib import Path
+
+from atool_core.email_input import email_payload, email_recipients, prepare_email_input
 
 from PySide6.QtWidgets import QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
@@ -39,65 +39,6 @@ def email_defaults(settings, *, home=None, environ=None):
             [('config_uuid', 'OCCS_EMAIL_CONFIG_UUID'), ('recipients', 'OCCS_EMAIL_RECIPIENTS')]}
 
 
-def email_payload(payload):
-    if not isinstance(payload, dict):
-        raise ValueError('Mapped JSON must be an object to send email.')
-    info = payload.get('CommunicationInfo')
-    data = info.get('CommunicationData') if isinstance(info, dict) else None
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except ValueError as error:
-            raise ValueError('CommunicationData must contain a JSON object.') from error
-        if not isinstance(data, dict):
-            raise ValueError('CommunicationData must contain a JSON object.')
-    return data if isinstance(data, dict) else payload
-
-
-def email_elements(payload):
-    value = email_payload(payload)
-    path = []
-    for key in ('billPrint', 'billDetails', 'cmElements'):
-        path.append(key)
-        value = value.get(key)
-        if not isinstance(value, dict):
-            raise ValueError('Mapped JSON must contain a ' + '.'.join(path) + ' object to send email.')
-    return value
-
-
-def email_recipients(payload):
-    try:
-        bill = email_elements(payload).get('eBill')
-        values = bill.get('recipientEmails') if isinstance(bill, dict) else None
-    except ValueError:
-        return []
-    return [str(item.get('email', '')).strip() for item in values if isinstance(item, dict) and str(item.get('email', '')).strip()] if isinstance(values, list) else []
-
-
-def prepare_email_input(payload, source, recipients):
-    """Return input path plus an owned temporary directory, if one is needed."""
-    elements = email_elements(payload)
-    bill = elements.get('eBill')
-    if isinstance(bill, dict) and isinstance(bill.get('recipientEmails'), list):
-        return Path(source), None
-    addresses = [value.strip() for value in recipients.split(',') if value.strip()]
-    if not addresses:
-        raise ValueError('Recipient email is required.')
-    prepared = copy.deepcopy(email_payload(payload))
-    elements = email_elements(prepared)
-    if not isinstance(elements.get('eBill'), dict):
-        elements['eBill'] = {}
-    elements['eBill']['recipientEmails'] = [{'email': value} for value in addresses]
-    temporary = tempfile.TemporaryDirectory(prefix='atool-email-')
-    path = Path(temporary.name) / 'input.json'
-    try:
-        path.write_text(json.dumps(prepared, ensure_ascii=False), encoding='utf-8')
-    except OSError:
-        temporary.cleanup()
-        raise
-    return path, temporary
-
-
 class EmailDialog(QDialog):
     def __init__(self, workspace):
         super().__init__(workspace)
@@ -121,7 +62,13 @@ class EmailDialog(QDialog):
         defaults = email_defaults(workspace.comms.settings)
         self.recipients = QLineEdit(defaults['recipients'])
         self.config = QLineEdit(defaults['config_uuid'])
-        self.recipients.setToolTip('Separate multiple addresses with commas. Defaults to OCCS_EMAIL_RECIPIENTS when configured.')
+        try:
+            notification = 'sendDetail' in email_payload(self.session.data)
+        except ValueError:
+            notification = False
+        self.recipients.setToolTip(
+            ('Enter one address for sendDetail notifications. ' if notification else 'Separate multiple addresses with commas. ')
+            + 'Defaults to OCCS_EMAIL_RECIPIENTS when configured.')
         self.config.setToolTip('Defaults to OCCS_EMAIL_CONFIG_UUID when configured.')
         form.addRow('Recipient email(s)', self.recipients)
         form.addRow('Config UUID', self.config)

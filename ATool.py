@@ -27,6 +27,7 @@ from tkinter import colorchooser, filedialog, font as tkfont, messagebox, simple
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
+from atool_core.email_input import email_recipients, prepare_email_input
 from atool_core.condition_evaluator import ConditionEvaluator
 from atool_core.layout_resolver import LayoutResolver, format_report
 
@@ -14614,50 +14615,20 @@ class AToolApp:
         return payload
 
     def _occs_email_recipients_from_payload(self, payload: object) -> list[str]:
-        recipients = self._extract_values_by_path(
-            payload,
-            "$.billPrint.billDetails.cmElements.eBill.recipientEmails[?(@.email)]",
-        )
-        return [
-            str(recipient.get("email", "")).strip()
-            for recipient in recipients
-            if isinstance(recipient, dict) and str(recipient.get("email", "")).strip()
-        ]
+        return email_recipients(payload)
 
     def _build_occs_email_input(self, data_file_path: Path, recipients: str) -> Path:
-        """Add the recipient structure required by OCCS CLI without changing mapped JSON."""
-        email_source_payload = self._occs_email_payload_from_payload(self.current_data_payload)
-        if email_source_payload is None:
-            raise ValueError("Mapped JSON must be an object to send email.")
-        bill_print = email_source_payload.get("billPrint")
-        if not isinstance(bill_print, dict):
-            raise ValueError("Mapped JSON must contain a billPrint object to send email.")
-        bill_details = bill_print.get("billDetails")
-        if not isinstance(bill_details, dict):
-            raise ValueError("Mapped JSON must contain billPrint.billDetails to send email.")
-        cm_elements = bill_details.get("cmElements")
-        if not isinstance(cm_elements, dict):
-            raise ValueError("Mapped JSON must contain billPrint.billDetails.cmElements to send email.")
-        e_bill = cm_elements.get("eBill")
-        if isinstance(e_bill, dict) and isinstance(e_bill.get("recipientEmails"), list):
-            return data_file_path
-
-        recipient_list = [email.strip() for email in recipients.split(",") if email.strip()]
-        if not recipient_list:
-            raise ValueError("Recipient email is required.")
-        email_payload = copy.deepcopy(email_source_payload)
-        email_bill_details = email_payload["billPrint"]["billDetails"]
-        email_cm_elements = email_bill_details["cmElements"]
-        email_e_bill = email_cm_elements.get("eBill")
-        if not isinstance(email_e_bill, dict):
-            email_e_bill = {}
-            email_cm_elements["eBill"] = email_e_bill
-        email_e_bill["recipientEmails"] = [{"email": email} for email in recipient_list]
-
-        temp_path = Path(tempfile.gettempdir()) / f"atool-email-{time.time_ns()}.json"
-        with open(temp_path, "w", encoding="utf-8") as target:
-            json.dump(email_payload, target)
-        return temp_path
+        """Prepare email input; the caller owns cleanup of the returned temporary file."""
+        path, temporary = prepare_email_input(self.current_data_payload, data_file_path, recipients)
+        if temporary is None:
+            return path
+        # Legacy operations clean up a file rather than an owned directory.
+        try:
+            with tempfile.NamedTemporaryFile(prefix="atool-email-", suffix=".json", delete=False) as target:
+                target.write(path.read_bytes())
+                return Path(target.name)
+        finally:
+            temporary.cleanup()
 
     def save_occs_package(self) -> None:
         if self._occs_regular_operation_limit_reached():
