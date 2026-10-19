@@ -1,5 +1,11 @@
 # ATool Release Notes
 
+## v2.0.4
+
+- Rebuild the current ATool application for Apple Silicon Mac, Intel Mac and
+  Windows, including all v2.0.3 improvements and the latest published stable
+  OCCS CLI release selected by the release workflow.
+
 ## v2.0.3
 
 - Run selected Preview render types as independent jobs in the shared
