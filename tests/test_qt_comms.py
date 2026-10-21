@@ -8,7 +8,8 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 from atool_qt.activity import ActivityLog, duration_text
-from atool_qt.occs import CommsSettings, CommsService
+from atool_qt.occs import CommandResult, CommsSettings, CommsService
+from atool_core.activity_output import activity_text, sanitized_http_value, mask_email_address
 from atool_qt.package_documents import CatalogDialog, catalog_documents
 
 
@@ -83,6 +84,159 @@ print(json.dumps({'success': True, 'args': args}))
         self.addCleanup(activity.close)
         self.service.submitted.connect(activity.track_operation)
         return activity
+
+    def test_email_activity_retains_live_output_request_and_failure(self):
+        self.settings.payload['diagnostics'] = {'debug_logging': True}
+        script = self.cli.read_text()
+        insertion = '''if 'diagnostic-email' in args:
+    print('→ EMAIL POST https://example.invalid/api/Communication/v1/CommunicationRec', flush=True)
+    print('Authorization: Bearer SECRET_TOKEN', flush=True)
+    print('Waiting for Comms response...', flush=True)
+    time.sleep(0.25)
+    print('HTTP 400: Communication Email not found', file=sys.stderr, flush=True)
+    sys.exit(2)
+'''
+        self.cli.write_text(script.replace("if 'slow' in args:", insertion + "if 'slow' in args:"))
+        activity = self.activity_log()
+        job = self.service.submit(['preview', 'diagnostic-email', '--render-type', 'EMAIL',
+            '--email-config-uuid', 'EMAIL-PARENT', '--recipient', 'test@example.test', '--send-email'])
+        self.until(lambda: 'EMAIL POST' in activity.toPlainText())
+        self.assertFalse(job.done)
+        self.assertIn('Email UUID: EMAIL-PARENT', activity.toPlainText())
+        self.assertIn('Session: test', activity.toPlainText())
+        self.until(lambda: job.done)
+        text = activity.toPlainText()
+        self.assertIn('OCCS #1 · Send Email · Failed', text)
+        self.assertIn('Exit status 2', text)
+        self.assertIn('HTTP 400: Communication Email not found', text)
+        self.assertNotIn('SECRET_TOKEN', text)
+
+    def test_failure_detail_is_retained_without_debug(self):
+        activity = self.activity_log()
+        job = self.service.submit(['fail'])
+        self.until(lambda: job.done)
+        self.assertIn('Expected failure', activity.toPlainText())
+        self.assertIn('status: 403', activity.toPlainText())
+
+    def test_split_output_is_redacted_and_clear_drops_pending_output(self):
+        self.settings.payload['diagnostics'] = {'debug_logging': True}
+        activity = self.activity_log()
+        job = self.service.submit(['slow'])
+        job.output.emit('Authorization: Bearer SPLIT_')
+        job.output.emit('SECRET\n')
+        self.assertNotIn('SPLIT_SECRET', activity.toPlainText())
+        self.assertIn('[redacted]', activity.toPlainText())
+        activity.clear()
+        job.output.emit('late diagnostic\n')
+        self.assertEqual(activity.toPlainText(), '')
+        job.cancel()
+
+    def test_error_messages_and_activity_redaction(self):
+        self.assertEqual(CommandResult(1, '', '', {'ok': False, 'error': 'Lookup failed'}).message, 'Lookup failed')
+        self.assertEqual(CommandResult(1, 'API error on stdout', '', None).message, 'API error on stdout')
+        cleaned = activity_text('\x1b[31mHTTP 400\x1b[0m\nAuthorization: Bearer SECRET\n'
+            + json.dumps({'password': 'PASSWORD', 'CommunicationData': json.dumps({'name': 'customer'})}))
+        self.assertIn('HTTP 400', cleaned)
+        self.assertNotIn('SECRET', cleaned)
+        self.assertNotIn('PASSWORD', cleaned)
+        self.assertNotIn('customer', cleaned)
+
+    def test_debug_http_dumps_are_pretty_printed_and_sanitized_in_json_mode(self):
+        self.settings.payload['diagnostics'] = {'debug_logging': True}
+        events = [
+            {'id': 'HTTP-1', 'type': 'request', 'method': 'POST', 'url': 'https://example.invalid/api',
+             'headers': {'Authorization': 'Bearer SECRET'},
+             'body': {'CommunicationInfo': {'CommunicationConfigUuid': 'COMM-1',
+                 'CommunicationData': json.dumps({'sendDetail': {'deliveryInfo': {'firstName': 'Alice', 'contactValue': 'customer@example.test'}}})}}},
+            {'id': 'HTTP-1', 'type': 'response', 'status': 400, 'headers': {'Set-Cookie': 'COOKIE-SECRET'},
+             'body': {'messageCode': 'SFD0671', 'executionId': 'EXEC-ID', 'message': 'BucketNotFound'}},
+        ]
+        script = self.cli.read_text()
+        insertion = "import os\nif os.environ.get('OCCS_HTTP_DEBUG') == '1':\n"
+        for event in events:
+            insertion += f"    print('@OCCS_HTTP@' + json.dumps({event!r}), file=sys.stderr, flush=True)\n"
+        self.cli.write_text(script.replace("if 'slow' in args:", insertion + "if 'slow' in args:"))
+        activity = self.activity_log()
+        job = self.service.submit(['list-emails', '--json'])
+        self.until(lambda: job.done)
+        text = activity.toPlainText()
+        self.assertIn('HTTP Request', text)
+        self.assertIn('HTTP Response', text)
+        self.assertIn('"CommunicationConfigUuid": "COMM-1"', text)
+        self.assertIn('"messageCode": "SFD0671"', text)
+        self.assertIn('"executionId": "EXEC-ID"', text)
+        self.assertIn('"status": 400', text)
+        for secret in ('Bearer SECRET', 'COOKIE-SECRET', 'Alice', 'customer@example.test'):
+            self.assertNotIn(secret, text)
+        self.assertIn('cu***@example.test', text)
+        self.assertTrue(json.loads(job.stdout)['success'])
+        activity.clear()
+        self.settings.payload['diagnostics']['debug_logging'] = False
+        quiet = self.service.submit(['list-emails', '--json'])
+        self.until(lambda: quiet.done)
+        self.assertNotIn('HTTP Request', activity.toPlainText())
+        self.assertNotIn('@OCCS_HTTP@', quiet.stderr.decode())
+
+    def test_http_traces_do_not_replace_the_failure_message(self):
+        result = CommandResult(1, '', '@OCCS_HTTP@{"type":"response","status":400}\nActual server failure', None)
+        self.assertEqual(result.message, 'Actual server failure')
+
+    def test_address_diagnostics_remain_useful_through_both_sanitizers(self):
+        self.assertEqual(mask_email_address('customer@example.test'), 'cu***@example.test')
+        self.assertEqual(mask_email_address(''), '[empty address]')
+        self.assertIn('no @', mask_email_address('not-an-address'))
+        self.assertIsNone(mask_email_address(None))
+        payload = {'CommunicationData': json.dumps({'sendDetail': {
+            'deliveryInfo': {'contactValue': 'customer@example.test', 'templateName': 'CO-G10-CO63', 'deliveryType': 'EMAI', 'firstName': 'Alice'},
+            'templateParm': [{'key': 'SEND_AT_VALUE', 'value': '12'}],
+        }})}
+        masked = sanitized_http_value(payload)
+        data = json.loads(masked['CommunicationData'])['sendDetail']
+        self.assertEqual(data['deliveryInfo']['contactValue'], 'cu***@example.test')
+        self.assertEqual(data['deliveryInfo']['templateName'], 'CO-G10-CO63')
+        self.assertEqual(data['templateParm'][0]['key'], 'SEND_AT_VALUE')
+        self.assertEqual(data['templateParm'][0]['value'], '[masked: string, 2 chars]')
+        self.assertNotIn('Alice', json.dumps(masked))
+        self.assertEqual(sanitized_http_value(masked), masked)
+        self.assertIn('cu***@example.test', activity_text('Recipient: customer@example.test'))
+
+    def test_http_records_are_not_interleaved_with_machine_stdout(self):
+        self.settings.payload['diagnostics'] = {'debug_logging': True}
+        activity = self.activity_log()
+        job = self.service.submit(['list-emails', '--json'])
+        displayed = []
+        job.output.connect(displayed.append)
+        record = '@OCCS_HTTP@' + json.dumps({'id': 'split-http', 'type': 'response', 'status': 200,
+            'body': {'executionId': 'INTACT-RESPONSE', 'message': 'x' * 70000}})
+        job.display_stderr(record[:33000])
+        job.output.emit('{"ok":true,"emails":[]}\n')
+        job.display_stderr(record[33000:] + '\n')
+        self.assertIn('INTACT-RESPONSE', activity.toPlainText())
+        self.assertNotIn('Invalid HTTP diagnostic record', activity.toPlainText())
+        self.assertFalse(any('@OCCS_HTTP@' in line for line in displayed))
+        job.cancel()
+
+    def test_send_email_hides_legacy_discovery_dumps_and_keeps_send_pair(self):
+        self.settings.payload['diagnostics'] = {'debug_logging': True}
+        activity = self.activity_log()
+        job = self.service.submit(['preview', '--send-email'])
+        for number in range(37):
+            for kind in ('request', 'response'):
+                event = {'type': kind, 'method': 'GET', 'url': 'https://example.invalid/config',
+                         'body': {'UnrelatedMetadata': 'x' * 20000}}
+                job.http_trace.emit('@OCCS_HTTP@' + json.dumps(event))
+        for kind in ('request', 'response'):
+            event = {'type': kind, 'method': 'POST', 'url': 'https://example.invalid/api/Communication/v1/CommunicationRec',
+                     'status': 201, 'body': {'message': 'Relevant send result'}}
+            job.http_trace.emit('@OCCS_HTTP@' + json.dumps(event))
+        text = activity.toPlainText()
+        self.assertIn('Routing lookup: 37 configuration reads.', text)
+        self.assertNotIn('UnrelatedMetadata', text)
+        self.assertEqual(text.count('HTTP Request'), 1)
+        self.assertEqual(text.count('HTTP Response'), 1)
+        self.assertIn('Relevant send result', text)
+        self.assertLess(len(text), 5000)
+        job.cancel()
 
     def test_activity_timer_runs_without_adding_lines_and_freezes_on_cancel(self):
         activity = self.activity_log()

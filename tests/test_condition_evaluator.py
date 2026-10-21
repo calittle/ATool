@@ -7,6 +7,7 @@ from atool_core.condition_evaluator import ConditionEvaluator
 from atool_qt.diagnostics import ConditionDiagnostics
 from atool_qt.session import PackageSession
 from atool_qt.validation import PayloadValidation
+from atool_qt.layout_mapping import layout_nodes
 
 
 BILL_CHARS = '@.billPrint.billDetails.cmElements.billChars'
@@ -30,6 +31,48 @@ def bill_payload(*rows):
 
 
 class ConditionEvaluatorTests(unittest.TestCase):
+    def test_misplaced_root_marker_cannot_trigger_content_with_iterator_rows(self):
+        path = '$.billPrint.$.billPrint.billDetails.cmElements.consumptionRemarks'
+        payload = {'billPrint': {'billDetails': {'cmElements': {
+            'consumptionRemarks': 'Remarks: populated', 'proratedEnergyCharge': 'false',
+        }}}, 'rows': [{'amount': 1}]}
+        condition = f"$[?({path} empty true && $.billPrint.billDetails.cmElements.proratedEnergyCharge == 'false')]"
+        document = {'triggered': True, 'source': {'Layouts': [{'Contents': [{
+            'Condition': condition, 'Iteration': {'Path': '$.rows[*]'},
+        }]}]}}
+        content = layout_nodes(document, payload, True, [], [])[0]['children'][0]
+        self.assertFalse(content['state'])
+        self.assertFalse(content['children'][0]['state'])
+        self.assertIn('Invalid JSON path', content['details'][0]['details'][0])
+        self.assertTrue(PayloadValidation._payload_condition_validation_issues(document))
+
+    def test_malformed_paths_fail_before_negation_and_short_circuiting(self):
+        for atom in ('$.billPrint.$.value empty true', '@.billPrint.@.value empty true'):
+            for body in (atom, f'!({atom})', f'$.active == true || {atom}',
+                         f'$.rows[?({atom})] empty true', f'{atom} || $.active == true'):
+                with self.subTest(body=body):
+                    warnings = []
+                    condition = f'$[?({body})]'
+                    self.assertFalse(ConditionEvaluator()._evaluate_document_condition(
+                        condition, {'active': True, 'rows': [{}]}, warnings=warnings))
+                    self.assertIn('Invalid JSON path', warnings[0])
+                    self.assertTrue(PayloadValidation._at_condition_validation_messages(condition)[0])
+                    detail = ConditionDiagnostics().explain(condition, {'active': True})
+                    self.assertFalse(detail['passed'])
+                    self.assertIn('Invalid JSON path', detail['details'][0])
+
+    def test_path_validation_preserves_literals_quoted_keys_and_filter_roots(self):
+        payload = {'$': {'value': 'ok'}, '@': 'ok', 'value': '.$.',
+                   'rows': [{'enabled': True}]}
+        for body in ("$['$'].value == 'ok'", "$['@'] == 'ok'",
+                     "$.value == '.$.'", '$.value =~ /[.][$][.]/',
+                     '$.rows[?(@.enabled == true)] empty false',
+                     '$.rows[?($.enabled == true)] empty false'):
+            with self.subTest(body=body):
+                condition = f'$[?({body})]'
+                self.assertEqual([], PayloadValidation._at_condition_validation_messages(condition)[0])
+                self.assertTrue(ConditionEvaluator()._evaluate_document_condition(condition, payload))
+
     def test_insert_trigger_matches_either_value_in_any_cm_slot(self):
         for slot in ('CM-BDGT1', 'CM-BDGT2', 'CM-BDGT3', 'CM-BDGT4', 'CM-OTHER'):
             for value in ('TDInsert_1', 'TDInsert_2'):

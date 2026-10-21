@@ -40,6 +40,14 @@ class ConditionEvaluator:
             warnings: list[str] | None = None,
         ) -> bool:
             expr = self._strip_outer_parens(expression)
+            # Validate before short circuiting or negation: malformed paths must
+            # never become successful missing-value checks (or inverted failures).
+            issues = self._condition_path_syntax_issues(expr)
+            if issues:
+                if warnings is not None:
+                    for issue in issues:
+                        self._append_condition_warning(warnings, issue)
+                return False
             if not expr:
                 return True
 
@@ -166,6 +174,36 @@ class ConditionEvaluator:
 
             values = self._evaluate_condition_operand(data_payload, expr)
             return len(values) > 0
+
+    @staticmethod
+    def _condition_path_syntax_issues(expression: str) -> list[str]:
+        """Reject root/current markers used as unquoted path members."""
+        syntax = list(ConditionEvaluator._condition_syntax_text(expression))
+        quote = ""
+        escaped = False
+        for index, char in enumerate(syntax):
+            if quote:
+                syntax[index] = " "
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+            elif char in {"'", '"'}:
+                quote = char
+                syntax[index] = " "
+        issues = []
+        for match in re.finditer(r"\.\s*([$@])(?![\w$@])", "".join(syntax)):
+            marker = match.group(1)
+            issue = (
+                f"Invalid JSON path: '{marker}' cannot follow a dot as a path member. "
+                "Use $ or @ at the start of a path; remove the duplicated path prefix. "
+                f"For a property literally named '{marker}', use ['{marker}']."
+            )
+            if issue not in issues:
+                issues.append(issue)
+        return issues
 
     @classmethod
     def _condition_path_comms_filter_literal_parse_issue(cls, path_expression: str) -> str:

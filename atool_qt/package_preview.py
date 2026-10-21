@@ -5,6 +5,7 @@ import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from uuid import uuid4
+from atool_core.activity_output import activity_text, HTTP_TRACE_PREFIX, sanitized_http_value
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
@@ -259,8 +260,9 @@ class PackagePreviewActions:
         self.log(f'Preview debug result: exit_code={result.code}, '
                  f'cancelled={result.cancelled}, timed_out={result.timed_out}')
         for label, text in [('stdout', result.stdout), ('stderr', result.stderr)]:
+            text = '\n'.join(line for line in text.splitlines() if not line.startswith(HTTP_TRACE_PREFIX))
             if text:
-                self.log(f'Preview {label}:\n{text}')
+                self.log(f'Preview {label}:\n{activity_text(text)}')
         # Verbose preview writes the API wrapper separately from the rendered file.
         seen = set()
         for line in (result.stdout + '\n' + result.stderr).splitlines():
@@ -273,7 +275,9 @@ class PackagePreviewActions:
             try:
                 text = path.read_text(encoding='utf-8-sig')
                 if path.suffix == '.json':
-                    text = json.dumps(preview_response_context(json.loads(text)), indent=2, ensure_ascii=False)
+                    text = json.dumps(sanitized_http_value(preview_response_context(json.loads(text))), indent=2, ensure_ascii=False)
+                else:
+                    text = activity_text(text)
                 self.log(f'Preview response context ({path}):\n{text}')
             except (OSError, ValueError) as error:
                 self.log(f'Could not read preview response context ({path}): {error}')

@@ -1,5 +1,27 @@
 # ATool Release Notes
 
+## v2.0.5
+
+- Select email distribution routes by name from the Comms cache or refresh them
+  from Comms. Send the selected Communication UUID and transaction directly,
+  including routes without direct Email template relationships. Remember the
+  five most recent Distribution choices per environment.
+- Make recipients editable with recent-address suggestions and multiple selection
+  where the input format supports it. Make the mapped JSON path readable and
+  remove the Send Email dry-run and saved-name steps.
+- Show timed operation details and sanitized HTTP requests/responses in Activity
+  when Debug Logging is on. Preserve useful address prefixes and domains, routing
+  UUIDs, template names and error context while masking credentials and personal
+  values. Summarize large configuration lookups and keep trace output separate
+  from machine-readable command results.
+- Treat Comms business errors and manual-review responses as failures even with
+  HTTP 2xx, and report acceptance without claiming inbox delivery.
+- Reject malformed condition paths with duplicated root/current markers after a
+  dot, including during negation and short-circuit evaluation. Explain the path
+  error in validation and condition diagnostics.
+- Bundle OCCS CLI v1.2.6, replacing v1.2.5, for distribution-route enumeration,
+  explicit Communication routing, business-error handling and sanitized diagnostics.
+
 ## v2.0.4
 
 - Replace the default Python icon with a ruby-red glass AT monogram on a

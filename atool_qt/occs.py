@@ -1,6 +1,7 @@
 """Asynchronous OCCS CLI transport, using the original application's contracts."""
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 import os
@@ -9,7 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
+from atool_core.activity_output import HTTP_TRACE_PREFIX
 from atool_core.resource_cache import ResourceDownload
 from .runtime import bundled_runtime
 
@@ -45,7 +47,7 @@ class CommsSettings:
     def command(self, args):
         args = [str(arg) for arg in args]
         alias = str(self.get('session_alias', '') or '').strip()
-        if args and alias and '--session' not in args and args[0] in {'package', 'content', 'preview', 'convertxml', 'list-configs', 'create-config'}:
+        if args and alias and '--session' not in args and args[0] in {'package', 'content', 'preview', 'convertxml', 'list-configs', 'list-emails', 'list-email-routes', 'create-config'}:
             args = [args[0], '--session', alias, *args[1:]]
         runtime = bundled_runtime()
         node = str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'
@@ -84,6 +86,8 @@ class CommandResult:
             return 'The Comms request timed out.'
         if self.value:
             error = self.value.get('error')
+            if isinstance(error, str) and error.strip():
+                return error.strip()
             if isinstance(error, dict) and error.get('message'):
                 message = str(error['message'])
                 details = error.get('details')
@@ -92,12 +96,14 @@ class CommandResult:
                 return message
             if self.value.get('message'):
                 return str(self.value['message'])
-        return self.stderr.strip() or f'OCCS CLI exited with status {self.code}.'
+        stderr = '\n'.join(line for line in self.stderr.splitlines() if not line.startswith(HTTP_TRACE_PREFIX))
+        return stderr.strip() or self.stdout.strip() or f'OCCS CLI exited with status {self.code}.'
 
 
 class CommandJob(QObject):
     completed = Signal(object)
     output = Signal(str)
+    http_trace = Signal(str)
 
     def __init__(self, settings, args, parent=None, timeout_ms=None):
         super().__init__(parent)
@@ -112,6 +118,8 @@ class CommandJob(QObject):
         self.timeout_ms = timeout_ms or settings.timeout_ms + 30000
         self.stdout = bytearray()
         self.stderr = bytearray()
+        self.stderr_display_pending = ''
+        self.stderr_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.cancelled = self.timed_out = self.done = False
         self.started_at = None
         self.duration = None
@@ -146,6 +154,8 @@ class CommandJob(QObject):
             return
         self.stdout.clear()
         self.stderr.clear()
+        self.stderr_display_pending = ''
+        self.stderr_decoder.reset()
         if args is self.args:
             try:
                 if self.resource_download is None:
@@ -156,6 +166,10 @@ class CommandJob(QObject):
                 self.finish(-1)
                 return
         command = self.settings.command(args)
+        environment = QProcessEnvironment.systemEnvironment()
+        debug = bool(self.settings.payload.get('diagnostics', {}).get('debug_logging'))
+        environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] != ['login'] else '0')
+        self.process.setProcessEnvironment(environment)
         if self.settings.cwd:
             self.process.setWorkingDirectory(self.settings.cwd)
         self.process.start(command[0], command[1:])
@@ -175,8 +189,17 @@ class CommandJob(QObject):
             return
         chunk = bytes(self.process.readAllStandardError())
         self.stderr.extend(chunk)
+        self.display_stderr(self.stderr_decoder.decode(chunk))
+
+    def display_stderr(self, text, *, flush=False):
         if self.phase == 'original' and self.args[:1] != ['login']:
-            self.output.emit(chunk.decode('utf-8', errors='replace'))
+            lines = (self.stderr_display_pending + text).split('\n')
+            self.stderr_display_pending = '' if flush else lines.pop()
+            for line in lines:
+                if line.startswith(HTTP_TRACE_PREFIX):
+                    self.http_trace.emit(line)
+                elif line:
+                    self.output.emit(line + '\n')
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -214,6 +237,7 @@ class CommandJob(QObject):
         self.timer.stop()
         self.read_stdout()
         self.read_stderr()
+        self.display_stderr(self.stderr_decoder.decode(b'', final=True), flush=True)
         stdout = self.stdout.decode('utf-8', errors='replace')
         stderr = self.stderr.decode('utf-8', errors='replace')
         try:

@@ -32,6 +32,10 @@ class ConditionDiagnostics(ConditionEvaluator):
             warnings = []
             passed = self._evaluate_document_condition(body, data, warnings=warnings)
             name = lookup.get(logic_key(body))
+            issues = self._condition_path_syntax_issues(body)
+            if issues:
+                return {"label": name or body, "passed": False, "clause_name": name,
+                        "details": issues}
             if not body:
                 return {"label": "No condition — always triggers", "passed": True, "details": []}
             for operator, symbol in (("OR", "||"), ("AND", "&&")):

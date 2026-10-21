@@ -18060,6 +18060,7 @@ class AToolApp:
         balance_error = cls._condition_delimiter_error(body)
         if balance_error:
             issues.append(balance_error)
+        issues.extend(ConditionEvaluator._condition_path_syntax_issues(body))
         if "@" not in body and "$" not in body:
             warnings.append("Condition body does not reference a JSON path using @ or $.")
         if "==" in body and not re.search(r"[@$][A-Za-z0-9_.$@\\[\\]'\"*?()=<>!\\s-]*==", body):

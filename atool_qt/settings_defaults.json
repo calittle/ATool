@@ -34,6 +34,8 @@
     "static_xsd_path": "",
     "package_mru": [],
     "resource_cache_mru": [],
+    "email_recipient_mru": [],
+    "email_send_mru": {},
     "preview_open_programs": {
       "PDF": "",
       "HTML": "",

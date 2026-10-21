@@ -99,8 +99,8 @@ cached layout resolution with text/JSON report saves.
 Preview supports render types, mapped/file input, effective date, timeout, Pre-Prod,
 chart exclusion and configured output openers. Selected render types run as independent
 jobs in the shared four-operation queue, with separate output files and cancellation;
-each file opens as soon as its render finishes. Email requires a current Dry Run
-before Generate and invalidates that validation when its inputs change.
+each file opens as soon as its render finishes. Email validates inputs when Send Email
+is clicked and requires an email distribution route selected from the lookup.
 
 Settings edits a draft of the original ATool preferences at `~/.atool/.settings.json`.
 Cancel leaves active settings and the document view intact. Save validates and
@@ -145,6 +145,40 @@ settings/files and a local fake CLI; they do not publish to live Comms, send ema
 or alter user shared storage. Coverage includes authoring, save/conflict recovery,
 manager/menu controls, mapping/diagnostics, shared lifecycle, download/publish/preview/
 email contracts, transport cancellation/retries, settings and embedded editing.
+
+Send Email selects a Communication distribution route and its transaction together.
+It reads `<Comms Cache Folder>/email-routes/index.json`, populated by the CLI's
+`get-everything` command or `list-email-routes --output <cache>/email-routes`.
+**Refresh from Comms** runs `list-email-routes --json` for the configured session.
+The lookup includes active transactions with Email Creation or Email Distribution
+services, including configurations that choose Email templates through runtime rules
+without a direct Email UUID relationship. Each dropdown entry keeps its parent
+Communication UUID, transaction type and user-defined transaction together. Multiple
+transactions under one parent remain separate choices. The Distribution dropdown
+supplies its Communication UUID and transaction together, with no separate UUID
+entry. The five most recent Distribution choices are saved per environment when a
+send is submitted, including attempts that Comms rejects. The most recent available
+Distribution is restored on reopening. Obsolete manually entered UUID history is
+ignored. The transaction remains read-only. Caches from another environment are
+rejected; old Email-element caches are not used as routes.
+Sending passes the selected Distribution's UUID and transaction directly using the CLI's
+`--communication-config-uuid`, `--communication-transaction-type` and
+`--communication-user-defined-transaction-type` options. It does not scan configurations
+before posting. No UUIDs or transaction names are hardcoded. The CLI's existing
+`--email-config-uuid` relationship-discovery mode remains available to existing callers.
+
+With Debug Logging enabled, Activity shows correlated HTTP request/response dumps
+from the CLI's shared API transport and assembly/email preview calls. Dumps include
+method, URL, headers, body, status, elapsed milliseconds and error details. Credentials
+and common personal fields are masked. Email addresses retain a short local prefix
+and full domain; empty/malformed addresses are marked explicitly. Template names,
+delivery types and parameter keys remain readable; other mapped values show their
+type/length while retaining structure and JSON-string encoding. Rendered/binary content and oversized bodies
+are summarized. Diagnostics use stderr so `--json` stdout remains machine-readable.
+Route refresh omits master configuration dumps. Sending a selected distribution
+route shows only the actual send request/response pair.
+Comms business errors or manual-review requirements inside HTTP 2xx responses are
+failures. Accepted requests are reported as accepted, with delivery unconfirmed.
 Native Windows execution and live Comms operation have not been exercised on this
 macOS host. The completed requirement audit is recorded in `atool_qt/parity_completion_audit.json`, with all 217 original button/menu/checkbox call sites reconciled in the control inventory.
 
