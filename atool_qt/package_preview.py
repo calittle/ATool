@@ -88,6 +88,7 @@ class PreviewDialog(QDialog):
         self.effective.setDisplayFormat('yyyy-MM-dd')
         form.addRow('Effective date', self.effective)
         self.exclude = QCheckBox('Exclude Charts')
+        self.exclude.setChecked(bool(workspace.comms.settings.get('last_preview_exclude_charts', False)))
         self.open_after = QCheckBox('Open after generation')
         self.open_after.setChecked(True)
         form.addRow(self.exclude)
@@ -208,7 +209,8 @@ class PackagePreviewActions:
                     input=str(source), preview_input=args[args.index('--input') + 1],
                     output=str(output), render_types=renders, timeout_seconds=int(seconds),
                     effective_date=effective, exclude_charts=exclude), indent=2))
-            settings.payload.setdefault('occs', {}).update(last_preview_render_types=renders, last_preview_timeout_seconds=int(seconds))
+            settings.payload.setdefault('occs', {}).update(last_preview_render_types=renders,
+                last_preview_timeout_seconds=int(seconds), last_preview_exclude_charts=bool(exclude))
             settings.save()
             self.preview_effective_date = effective
             remaining = len(renders)
