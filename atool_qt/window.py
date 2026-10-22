@@ -7,7 +7,7 @@ import re
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog,
@@ -264,6 +264,7 @@ class ManagerPanel(QWidget):
     def set_session(self, session: PackageSession, *, preserve_selection: bool = False):
         current = self.tree.currentItem()
         previous = current.data(0, ROLE) if current and preserve_selection else 0
+        selected = {item.data(0, ROLE) for item in self.tree.selectedItems()} if preserve_selection else {0}
         self.session = session
         self.matched_only.setEnabled(session.mapped)
         token = (id(session), session.mapping_revision)
@@ -344,12 +345,17 @@ class ManagerPanel(QWidget):
         if hasattr(self.tree, '_grid_user_sort'):
             self.tree.setSortingEnabled(True)
             self.tree.sortByColumn(*self.tree._grid_user_sort)
+        # Restore selection explicitly: the default selection command can use
+        # modifiers still held during a save shortcut. Restore the current
+        # record before filtering can briefly select another document and
+        # reset the Layout Manager's selected field and expanded branches.
+        self.tree.clearSelection()
+        for item in self.items():
+            if item.data(0, ROLE) == previous:
+                self.tree.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            item.setSelected(item.data(0, ROLE) in selected)
         self.tree.blockSignals(False)
         self.apply_filter()
-        for item in self.items():
-            if item.data(0, ROLE) == previous and not item.isHidden():
-                self.tree.setCurrentItem(item)
-                break
         self.show_details(self.tree.currentItem())
 
     def apply_filter(self, *_):

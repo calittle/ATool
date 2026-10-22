@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 from atool_qt.editor import PackageEditor
 from atool_qt.session import PackageSession
 from atool_qt.user_settings import UserSettings
@@ -111,6 +112,67 @@ class ManagerInterfaceTests(unittest.TestCase):
         panel.field_view_toggle.click()
         self.assertEqual(panel.field_view,'name')
         self.assertEqual(panel.tree.topLevelItemCount(),3)
+
+    def test_layout_path_edit_preserves_document_selection_and_expansion(self):
+        window = self.window
+        payload = copy.deepcopy(session_fixture().payload)
+        payload['Documents'].insert(0, {'$$Id': 'Earlier', 'Layouts': [{'$$Id': 'Other'}]})
+        window.set_session(PackageSession.from_payload(payload))
+        window.select_name(window.documents, 'Doc')
+        panel = window.layouts
+        selected_documents = []
+        window.documents.selected.connect(lambda record: selected_documents.append(record['name'] if record else None))
+
+        for key, path in (
+            ('layout/0/Contents/0/Iteration/Fields/0', '$.updated'),
+            ('layout/0/Contents/0/Iteration', '$.updatedRows'),
+        ):
+            with self.subTest(key=key):
+                window.select_layout_key(key)
+                panel.tree.expandAll()
+                before = {item.data(0, Qt.ItemDataRole.UserRole)['key'] for item in panel.items() if item.isExpanded()}
+                selected_documents.clear()
+                panel.path.setText(path)
+                panel.path.editingFinished.emit()
+                self.assertEqual(window.active_document['name'], 'Doc')
+                self.assertEqual(panel.tree.currentItem().data(0, Qt.ItemDataRole.UserRole)['key'], key)
+                self.assertEqual(panel.path.text(), path)
+                self.assertEqual({item.data(0, Qt.ItemDataRole.UserRole)['key'] for item in panel.items() if item.isExpanded()}, before)
+                self.assertNotIn('Earlier', selected_documents)
+                self.assertEqual(window.editor.layout_source(window.active_document, key)[0]['Path'], path)
+
+    def test_save_keeps_only_the_selected_second_document(self):
+        window = self.window
+        payload = copy.deepcopy(session_fixture().payload)
+        payload['Documents'].insert(0, {'$$Id': 'Earlier', 'Layouts': [{'$$Id': 'Other'}]})
+        window.set_session(PackageSession.from_payload(payload))
+        window.editor.save(Path(self.temp.name) / 'assembly-template.json')
+        window.show()
+        window.show_panel('documents')
+        window.select_name(window.documents, 'Doc')
+        tree = window.documents.tree
+        tree.clearSelection()
+        tree.currentItem().setSelected(True)
+        tree.setFocus()
+        self.app.processEvents()
+        selected_names = lambda: {item.data(0, Qt.ItemDataRole.UserRole + 4) for item in tree.selectedItems()}
+        self.assertEqual(selected_names(), {'Doc'})
+        for _ in range(2):
+            QTest.keyPress(tree, Qt.Key.Key_Control)
+            try:
+                window.save_action.trigger()
+                self.app.processEvents()
+            finally:
+                QTest.keyRelease(tree, Qt.Key.Key_Control)
+            self.assertEqual(selected_names(), {'Doc'})
+            self.assertEqual(window.active_document['name'], 'Doc')
+
+        # A deliberate multi-selection must also survive, without adding rows.
+        first = next(item for item in window.documents.items() if item.data(0, Qt.ItemDataRole.UserRole + 4) == 'Earlier')
+        first.setSelected(True)
+        window.save_action.trigger()
+        self.assertEqual(selected_names(), {'Earlier', 'Doc'})
+        self.assertEqual(window.active_document['name'], 'Doc')
 
     def test_multi_selection_clipboard_tree_order_child_copy_and_keyboard_controls(self):
         window=self.window
