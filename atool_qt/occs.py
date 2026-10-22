@@ -119,6 +119,7 @@ class CommandJob(QObject):
         self.stdout = bytearray()
         self.stderr = bytearray()
         self.stderr_display_pending = ''
+        self.stderr_discarding = False
         self.stderr_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.cancelled = self.timed_out = self.done = False
         self.started_at = None
@@ -155,6 +156,7 @@ class CommandJob(QObject):
         self.stdout.clear()
         self.stderr.clear()
         self.stderr_display_pending = ''
+        self.stderr_discarding = False
         self.stderr_decoder.reset()
         if args is self.args:
             try:
@@ -188,18 +190,32 @@ class CommandJob(QObject):
         if not self.process.isOpen():
             return
         chunk = bytes(self.process.readAllStandardError())
-        self.stderr.extend(chunk)
         self.display_stderr(self.stderr_decoder.decode(chunk))
 
     def display_stderr(self, text, *, flush=False):
-        if self.phase == 'original' and self.args[:1] != ['login']:
-            lines = (self.stderr_display_pending + text).split('\n')
-            self.stderr_display_pending = '' if flush else lines.pop()
-            for line in lines:
-                if line.startswith(HTTP_TRACE_PREFIX):
+        lines = (self.stderr_display_pending + text).split('\n')
+        self.stderr_display_pending = '' if flush else lines.pop()
+        display = self.phase == 'original' and self.args[:1] != ['login']
+        for line in lines:
+            if self.stderr_discarding:
+                line = '[Oversized diagnostic line omitted]'
+                self.stderr_discarding = False
+            if len(line) > 1024 * 1024:
+                line = '[Oversized diagnostic line omitted]'
+            if line.startswith(HTTP_TRACE_PREFIX):
+                # Stream diagnostics to their sink without retaining a second
+                # copy of every request/response in the operation result.
+                if display:
                     self.http_trace.emit(line)
-                elif line:
+            elif line:
+                self.stderr.extend((line + '\n').encode('utf-8'))
+                if len(self.stderr) > 256 * 1024:
+                    del self.stderr[:-256 * 1024]
+                if display:
                     self.output.emit(line + '\n')
+        if len(self.stderr_display_pending) > 1024 * 1024:
+            self.stderr_display_pending = ''
+            self.stderr_discarding = True
 
     def process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:

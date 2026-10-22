@@ -154,7 +154,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         menus = {action.text().replace('&', ''): action for action in self.menuBar().actions()}
         for action in menus.values():
             self.menuBar().removeAction(action)
-        for title in ('File', 'Edit', 'Package', 'Resources', 'Model', 'Config', 'Data', 'Settings', 'Window', 'View', 'Help'):
+        for title in ('File', 'Edit', 'Package', 'Resources', 'Model', 'Config', 'Data', 'Settings', 'Window', 'View', 'Activity', 'Help'):
             if title in menus:
                 self.menuBar().addAction(menus[title])
 

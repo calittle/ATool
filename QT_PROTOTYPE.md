@@ -149,6 +149,7 @@ email contracts, transport cancellation/retries, settings and embedded editing.
 Send Email selects a Communication distribution route and its transaction together.
 It reads `<Comms Cache Folder>/email-routes/index.json`, populated by the CLI's
 `get-everything` command or `list-email-routes --output <cache>/email-routes`.
+When no Comms Cache Folder is configured, it uses `~/.atool/email-routes/index.json`.
 **Refresh from Comms** runs `list-email-routes --json` for the configured session.
 The lookup includes active transactions with Email Creation or Email Distribution
 services, including configurations that choose Email templates through runtime rules
@@ -191,3 +192,29 @@ Documents, layouts and fields display ` *` when their source differs from the sa
 Dialogs use the operating system window controls instead of duplicate Close buttons. Cancel, Save, Apply and operations such as Close Package or Close Configuration remain available. Window-close cancellation and cleanup are verified by the workflow tests.
 
 Convert and Map opens the XML picker immediately, remembering its own last-used directory and falling back to the mapped-data location. Canceling the initial picker dismisses the dialog. Successful conversion and mapping close the dialog automatically; conversion failures, missing output, changed-package guards and mapping errors keep their status visible.
+
+Activity & Logs settings bound retained Activity text (default 1024 KiB), the
+maximum file size (10 MiB) and rotated backups (five plus the current file).
+The default directory is `~/.atool/logs`; custom settings stores use their sibling
+`logs` directory unless overridden. Settings apply immediately. `atool.log` rotates
+to `atool.log.1` through `.5`; a cross-process lock protects the shared file set.
+Clearing Activity leaves the files intact; Save Activity exports only the retained
+screen history. File errors appear in Activity without stopping the application.
+The top-level Activity menu and Activity's context menu share Copy, Select All,
+Open Current Log, Show Log Folder, Save Activity and Clear Activity actions.
+Open Current Log drains the file writer before launching the system's text viewer;
+a timeout or write error is shown instead of opening stale contents. Show Log
+Folder opens the directory containing the current file and rotated backups.
+
+Activity batches screen additions every 100 ms, discards oldest text at the UTF-8
+byte cap, and keeps undo disabled. A 10,000-line guard and a 4,096-entry pending
+screen queue also bound Qt overhead for bursts of tiny messages. Running status updates are not written every
+timer tick; completion status is retained in the log even if its original screen
+line was pruned. Full sanitized HTTP diagnostics go to the file when Debug Logging
+is enabled, with concise request/response summaries on screen. File writes run in a
+background thread with a 1 MiB queue and buffered bursts; if storage cannot keep up,
+old pending records are dropped with an explicit notice. Oversized entries are
+truncated and marked. Trace records are streamed instead of being duplicated in
+CLI result stderr, whose non-trace error tail is capped at 256 KiB. These are logging
+limits, not a total application memory limit: command JSON results and mapped data
+still require their own memory.

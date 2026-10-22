@@ -179,6 +179,29 @@ class EmailTests(unittest.TestCase):
         finally:
             reopened.reject()
 
+    def test_unconfigured_cache_uses_atool_for_refresh_and_reopening(self):
+        self.window.comms.settings.payload['occs']['comms_cache_dir'] = ''
+        with patch('atool_qt.package_email.Path.home', return_value=self.root):
+            dialog = EmailDialog(self.window)
+            try:
+                target = self.root / '.atool' / 'email-routes' / 'index.json'
+                self.assertEqual(dialog.email_cache_path(), target)
+                dialog.refresh_emails()
+                args = self.calls[0]['args']
+                self.assertEqual(args[args.index('--output') + 1], str(target.parent))
+                target.parent.mkdir(parents=True)
+                target.write_text(json.dumps(self.catalog_result()))
+                self.complete(result=CommandResult(0, '', '', self.catalog_result()))
+            finally:
+                dialog.reject()
+            reopened = EmailDialog(self.window)
+            try:
+                self.assertEqual(reopened.config_picker.count(), 1)
+                self.assertEqual(reopened.catalog[0]['uuid'], 'uuid-1')
+                self.assertEqual(len(self.calls), 1)
+            finally:
+                reopened.reject()
+
     def test_no_cache_requires_refresh_and_selection(self):
         (self.cache / 'email-routes' / 'index.json').unlink()
         reopened = EmailDialog(self.window)

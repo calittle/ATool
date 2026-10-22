@@ -9,7 +9,11 @@
     "font_family": ""
   },
   "diagnostics": {
-    "debug_logging": false
+    "debug_logging": false,
+    "activity_backlog_kib": 1024,
+    "log_directory": "",
+    "log_file_max_mib": 10,
+    "log_backup_count": 5
   },
   "occs": {
     "cli_path": "",

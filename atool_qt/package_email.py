@@ -227,7 +227,8 @@ class EmailDialog(QDialog):
 
     def email_cache_path(self):
         folder = str(self.workspace.comms.settings.get('comms_cache_dir') or '').strip()
-        return Path(folder).expanduser() / 'email-routes' / 'index.json' if folder else None
+        root = Path(folder).expanduser() if folder else Path.home() / '.atool'
+        return root / 'email-routes' / 'index.json'
 
     def load_cached_emails(self):
         path = self.email_cache_path()

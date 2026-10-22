@@ -1144,6 +1144,8 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         view_menu.addAction(self.reset_action)
         view_menu.addAction(self.action("Documents + Layouts + Fields", self.reset_layout))
         view_menu.addAction(self.action("Tab Document and Field Managers", self.tab_managers))
+        self.activity_menu = self.menuBar().addMenu('&Activity')
+        self.activity.populate_menu(self.activity_menu)
         help_menu = self.menuBar().addMenu("&Help")
         self.about_action = self.action("About ATool", self.about)
         self.about_action.setMenuRole(QAction.MenuRole.AboutRole)
@@ -1408,6 +1410,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
             event.ignore()
             return
         self.comms.shutdown()
+        self.activity.shutdown()
         self.finish_publish()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("dockState", self.saveState(self.LAYOUT_VERSION))

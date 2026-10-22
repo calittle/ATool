@@ -74,6 +74,16 @@ class UserSettings(CommsSettings):
             if not isinstance(payload.get(section, {}), dict):
                 raise ValueError(f'{section} settings must be a JSON object.')
         occs = payload.get('occs', {})
+        diagnostics = payload.get('diagnostics', {})
+        for key, title, minimum, maximum in (
+                ('activity_backlog_kib', 'Activity Backlog (KiB)', 16, 102400),
+                ('log_file_max_mib', 'Maximum Log File Size (MiB)', 1, 1024),
+                ('log_backup_count', 'Rotated Log Files', 1, 100)):
+            value = diagnostics.get(key, DEFAULTS['diagnostics'][key])
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise ValueError(f'{title} must be a whole number between {minimum} and {maximum}.')
+        if not isinstance(diagnostics.get('log_directory', ''), str):
+            raise ValueError('Log Folder must be a path.')
         try:
             timeout = int(occs.get('request_timeout_seconds', 360))
         except (ValueError, TypeError):
@@ -117,6 +127,16 @@ class SettingsDialog(QDialog):
         self.add_control(general, 'document_display', 'collapse', 'Collapse Documents', bool)
         self.add_control(general, 'content_editor', 'font_family', 'HTML Font', 'font')
         self.add_control(general, 'diagnostics', 'debug_logging', 'Debug Logging', bool)
+        logging_form = self.add_tab('Activity & Logs')
+        self.add_control(logging_form, 'diagnostics', 'activity_backlog_kib', 'Activity Backlog (KiB)', int)
+        self.add_control(logging_form, 'diagnostics', 'log_directory', 'Log Folder', 'directory')
+        self.add_control(logging_form, 'diagnostics', 'log_file_max_mib', 'Maximum Log File Size (MiB)', int)
+        self.add_control(logging_form, 'diagnostics', 'log_backup_count', 'Rotated Log Files', int)
+        hint = QLabel('Oldest Activity entries are discarded. Log files retain sanitized details; '
+                      'Debug Logging includes full request/response diagnostics. '
+                      'Rotated files are retained in addition to the current atool.log.')
+        hint.setWordWrap(True)
+        logging_form.addRow(hint)
         comms = self.add_tab('Comms')
         entries = [('cli_path', 'CLI Path', 'file'), ('work_dir', 'Local Package Folder', 'directory'),
                    ('request_timeout_seconds', 'Request Timeout (seconds)', int),
@@ -158,6 +178,9 @@ class SettingsDialog(QDialog):
         elif kind is int:
             widget = QSpinBox()
             widget.setRange(1, 2147483)
+            if section == 'diagnostics':
+                widget.setRange(*{'activity_backlog_kib': (16, 102400),
+                                  'log_file_max_mib': (1, 1024), 'log_backup_count': (1, 100)}[key])
             try:
                 widget.setValue(int(value))
             except (ValueError, TypeError):
@@ -168,6 +191,8 @@ class SettingsDialog(QDialog):
             widget.setCurrentText(str(value or 'System Default'))
         else:
             widget = QLineEdit(str(value or ''))
+            if section == 'diagnostics' and key == 'log_directory':
+                widget.setPlaceholderText(str(self.store.path.parent / 'logs'))
             if section == 'occs':
                 defaults = {'cli_path': self.store.cli, 'work_dir': str(self.store.work_dir), 'shared_workspace_dir': str(self.store.shared_dir)}
                 widget.setPlaceholderText(defaults.get(key, ''))
@@ -239,6 +264,8 @@ class SettingsActions:
         dialog.show()
 
     def apply_user_settings(self):
+        self.activity.configure(self.comms.settings.section('diagnostics'),
+                                default_directory=self.comms.settings.path.parent / 'logs')
         previous = self.refreshing
         self.refreshing = True
         try:

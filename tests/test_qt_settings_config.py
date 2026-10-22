@@ -214,7 +214,7 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
     def test_settings_all_browse_buttons_update_only_their_draft_field(self):
         from PySide6.QtWidgets import QFileDialog
         dialog=SettingsDialog(self.window)
-        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir'}
+        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir','log_directory'}
         for key,button in dialog.browse_controls.items():
             widget=dialog.controls[key]
             old=widget.text()
@@ -228,6 +228,29 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
                 self.assertEqual(widget.text(),choice)
         self.assertGreaterEqual(len(dialog.browse_controls),7)
         dialog.reject()
+
+    def test_log_settings_save_and_apply_without_restart(self):
+        dialog = SettingsDialog(self.window)
+        dialog.controls[('diagnostics', 'activity_backlog_kib')].setValue(64)
+        dialog.controls[('diagnostics', 'log_file_max_mib')].setValue(1)
+        dialog.controls[('diagnostics', 'log_backup_count')].setValue(2)
+        folder = self.root / 'activity logs'
+        dialog.controls[('diagnostics', 'log_directory')].setText(str(folder))
+        dialog.save()
+        activity = self.window.activity
+        self.assertEqual(activity.backlog_bytes, 64 * 1024)
+        self.assertEqual(activity.file_log.path, folder / 'atool.log')
+        self.assertEqual(activity.file_log.max_bytes, 1024 * 1024)
+        self.assertEqual(activity.file_log.backups, 2)
+        saved = UserSettings(self.window.comms.settings.path)
+        self.assertEqual(saved.section('diagnostics')['log_directory'], str(folder))
+
+    def test_top_level_activity_menu_mirrors_activity_actions(self):
+        menu = self.window.activity_menu
+        self.assertIn(menu.menuAction(), self.window.menuBar().actions())
+        self.assertEqual(menu.title(), '&Activity')
+        actions = [action for action in menu.actions() if not action.isSeparator()]
+        self.assertEqual(actions, list(self.window.activity.menu_actions.values()))
 
     def test_settings_save_installs_validated_draft_and_reopen_can_resolve_file_conflict(self):
         from PySide6.QtWidgets import QDialogButtonBox
