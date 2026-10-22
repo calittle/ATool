@@ -1,5 +1,15 @@
 # ATool Release Notes
 
+## v2.1.1
+
+- Preserve the selected Layout Manager field or iterator and expanded branches
+  when editing a Path, instead of briefly switching documents during refresh.
+- Restore the exact Document and Field Manager selection after edits and saves,
+  independently of held shortcut keys; retain deliberate multiple selections.
+- Bundle OCCS CLI v1.2.7, replacing v1.2.6. Document models now flag missing or
+  inactive Assembly Template layout/content references with affected paths and
+  alternative placements, and correctly identify layouts with configured conditions.
+
 ## v2.1.0
 
 - Add a package-specific Favorites Manager. Mark fields and clauses as favorites,
