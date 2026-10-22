@@ -1,5 +1,27 @@
 # ATool Release Notes
 
+## v2.1.0
+
+- Add a package-specific Favorites Manager. Mark fields and clauses as favorites,
+  see their mapped values or PASS/FAIL results together, filter by result, and
+  jump back to the original field or clause. Favorites are saved in user settings
+  separately for each package.
+- Remember the Preview Package Exclude Charts choice across dialogs and app restarts.
+- Cache email distribution lists under `~/.atool/email-routes` when no Comms Cache
+  Folder is configured, so Send Email does not require refreshing on each use.
+- Add Activity & Logs settings for retained Activity history, log location, maximum
+  file size and rotated backups. Defaults are a 1 MiB Activity backlog and logs in
+  `~/.atool/logs`, with 10 MiB per file and five backups plus the current file.
+- Keep Activity responsive with batched updates, bounded history and background
+  file writes. Show concise HTTP summaries in Activity and retain full sanitized
+  diagnostics in log files when Debug Logging is enabled. Stop retaining duplicate
+  HTTP trace records in CLI results, and report queue overflow or file-write errors.
+- Add a top-level Activity menu matching the right-click commands: Copy, Select
+  All, Open Current Log, Show Log Folder, Save Activity and Clear Activity. Flush
+  pending file writes before opening the current log; report write errors or
+  timeouts instead of opening stale contents. Clearing Activity preserves saved
+  logs and subsequent file diagnostics for operations already running.
+
 ## v2.0.5
 
 - Select email distribution routes by name from the Comms cache or refresh them
