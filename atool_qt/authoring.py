@@ -116,7 +116,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         window_menu = self.menuBar().addMenu("&Window")
         for key, title, shortcut in (("documents", "Document Manager", "Ctrl+Shift+P"), ("fields", "Field Manager", "Ctrl+Shift+F"),
                                      ("clauses", "Clause Manager", "Ctrl+Shift+C"), ("layouts", "Layout Manager", "Ctrl+Shift+L"),
-                                     ("data", "Data Manager", "Ctrl+Shift+D")):
+                                     ("data", "Data Manager", "Ctrl+Shift+D"), ("favorites", "Favorites Manager", None)):
             window_menu.addAction(self.action(title, lambda checked=False, key=key: self.show_panel(key), shortcut))
         window_menu.addAction(self.action("Arrange", self.reset_layout))
         for panel in (self.documents, self.fields, self.layouts, self.clauses, self.data):

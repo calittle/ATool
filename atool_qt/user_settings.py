@@ -256,6 +256,8 @@ class SettingsActions:
         logger.setLevel(logging.DEBUG if self.comms.settings.section('diagnostics').get('debug_logging') else logging.INFO)
         if hasattr(self, 'content'):
             self.content.apply_settings(self.comms.settings)
+        if self.session is not None:
+            self.refresh_favorites()
         if hasattr(self, 'config_actions'):
             self.update_config_actions()
 

@@ -457,8 +457,18 @@ The Tkinter troubleshooting below applies to that legacy application.
 
 Drag panel titles to dock, tab, detach or rearrange the managers. Use
 **View → Panels** to show hidden panels and **View → Reset Layout** to restore
-the default arrangement. Clause Manager and Data Manager initially share tabs
-with Field Manager.
+the default arrangement. Clause Manager, Data Manager and Favorites Manager
+initially share tabs with Field Manager.
+
+Use the **Favorite** checkboxes in Field Manager and Clause Manager to build a
+personal transaction summary in **Favorites Manager**. Favorites are saved by
+package name in your local `~/.atool/.settings.json`, without changing package
+metadata. The default **Pass / Mapped** filter shows passing clauses and fields
+with values. **Fail / Unmapped** shows failing clauses and fields without values;
+**All** shows every favorite, including clause errors. Empty strings, nulls and
+empty containers count as unmapped; zero and false are values. Before mapping,
+all favorite names show “No data loaded.” Click a favorite to open its field or
+clause in the corresponding manager. Favorites for missing items are ignored.
 
 Every grid supports column resizing and header-click sorting. Selected rows use
 a lavender background and purple outline; PASS/mapped values are blue and

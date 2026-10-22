@@ -30,6 +30,7 @@ from .activity import ActivityLog
 from .dialog_placement import DialogPlacement
 from .grids import configure_grid
 from .package_guard import PackageGuard, session_package_name
+from .favorites import FavoritesActions, FavoritesPanel
 
 ROLE = Qt.ItemDataRole.UserRole
 BLUE = "#0057d9"
@@ -143,6 +144,7 @@ class ManagerPanel(QWidget):
         self.mapping_token = None
         self.hierarchy = False
         self.field_view = "name"
+        self.favorite_names = set()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         self.search = QLineEdit()
@@ -160,7 +162,7 @@ class ManagerPanel(QWidget):
         self.matched_only.toggled.connect(self.apply_filter)
         layout.addWidget(self.matched_only)
         self.splitter = QSplitter(Qt.Orientation.Vertical)
-        headers = ["Document", "Order", "AT / Pkg", "Match"] if kind == "documents" else ["Field", "Value", "Required"]
+        headers = ["Document", "Order", "AT / Pkg", "Match"] if kind == "documents" else ["Field", "Value", "Required", "Favorite"]
         self.tree = table(headers, PackageDocumentTree if kind == "documents" else QTreeWidget)
         if kind == "documents":
             self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -309,6 +311,7 @@ class ManagerPanel(QWidget):
                     item.setForeground(2, QColor(RED))
             if self.kind == "fields":
                 item.setToolTip(1, pretty(record.get("mapped_values", [])) if session.mapped else "Map data to inspect values")
+                item.setCheckState(3, Qt.CheckState.Checked if record['name'] in self.favorite_names else Qt.CheckState.Unchecked)
             parent = None
             if self.kind == 'fields' and self.field_view == 'path':
                 for path_part in DataQueries._path_to_segments(record.get('true_path') or record['path']):
@@ -684,6 +687,7 @@ class ClausePanel(QWidget):
         super().__init__()
         self.session = None
         self.records = []
+        self.favorite_names = set()
         layout = QVBoxLayout(self)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter clauses by name, description, or expression…")
@@ -697,7 +701,7 @@ class ClausePanel(QWidget):
         layout.addLayout(search_row)
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)
-        self.tree = table(["Name", "Description"])
+        self.tree = table(["Name", "Description", "Favorite"])
         self.tree.currentItemChanged.connect(self.show_details)
         self.splitter.addWidget(self.tree)
         properties = QWidget()
@@ -761,6 +765,7 @@ class ClausePanel(QWidget):
             item = QTreeWidgetItem([record["name"], record.get("description", "")])
             item.setData(0, ROLE, index)
             item.setToolTip(0, record["expression"])
+            item.setCheckState(2, Qt.CheckState.Checked if record['name'] in self.favorite_names else Qt.CheckState.Unchecked)
             self.tree.addTopLevelItem(item)
         self.tree.blockSignals(False)
         self.apply_filter()
@@ -1008,7 +1013,7 @@ class MappingJob(QThread):
         self.completed.emit(self.result, self.error)
 
 
-class WorkspaceWindow(AuthoringActions, QMainWindow):
+class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
     # The three-manager layout replaces the initial two-column prototype.
     LAYOUT_VERSION = 4
 
@@ -1043,6 +1048,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.data.save_target = self.mapped_data_path
         self.layouts = LayoutPanel()
         self.clauses = ClausePanel()
+        self.favorites = FavoritesPanel()
         self.activity = ActivityLog()
         self.data.message.connect(self.log)
         self.add_panel("documents", "Document Manager", self.documents, Qt.DockWidgetArea.LeftDockWidgetArea)
@@ -1050,6 +1056,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.add_panel("layouts", "Layout Manager", self.layouts, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.add_panel("data", "Data Manager", self.data, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.add_panel("clauses", "Clause Manager", self.clauses, Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.add_panel("favorites", "Favorites Manager", self.favorites, Qt.DockWidgetArea.RightDockWidgetArea)
         self.add_panel("activity", "Activity", self.activity, Qt.DockWidgetArea.BottomDockWidgetArea)
         self.active_document = None
         self.updating_layout = False
@@ -1065,6 +1072,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.data_label.setMargin(5)
         self.statusBar().addWidget(self.data_label, 1)
         self.install_authoring()
+        self.install_favorites()
         self.reset_layout()
         geometry = self.settings.value("geometry")
         state = self.settings.value("dockState")
@@ -1073,6 +1081,9 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         if state is not None:
             if self.restoreState(state, self.LAYOUT_VERSION):
                 self.default_layout_pending = False
+                if not self.settings.value('favoritesDockAdded', False, type=bool):
+                    self.tabifyDockWidget(self.docks['fields'], self.docks['favorites'])
+                    self.docks['favorites'].show()
             else:
                 self.reset_layout()
         for key in ("documents", "layouts", "fields", "data", "content"):
@@ -1146,7 +1157,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.docks["documents"])
         self.splitDockWidget(self.docks["documents"], self.docks["layouts"], Qt.Orientation.Horizontal)
         self.splitDockWidget(self.docks["layouts"], self.docks["fields"], Qt.Orientation.Horizontal)
-        for key in ("clauses", "data"):
+        for key in ("clauses", "data", "favorites"):
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.docks[key])
             self.tabifyDockWidget(self.docks["fields"], self.docks[key])
             self.docks[key].show()
@@ -1214,6 +1225,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.clauses.set_session(session)
         self.documents.set_session(session, preserve_selection=preserve_selection)
         self.fields.set_session(session, preserve_selection=preserve_selection)
+        self.refresh_favorites()
         self.data.set_data(session.data, mapped=session.mapped, fields=session.fields)
         if hasattr(self, 'content'):
             self.content.refresh_fields()
@@ -1399,6 +1411,7 @@ class WorkspaceWindow(AuthoringActions, QMainWindow):
         self.finish_publish()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("dockState", self.saveState(self.LAYOUT_VERSION))
+        self.settings.setValue('favoritesDockAdded', True)
         for key in ("documents", "layouts", "fields", "data", "content"):
             self.settings.setValue(f"{key}/splitter", getattr(self, key).splitter.saveState())
         self.settings.setValue('clauses/stackedSplitter', self.clauses.splitter.saveState())
