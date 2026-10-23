@@ -28,7 +28,7 @@ from .package_documents import PackageDocumentTree
 from .clause_completion import ClauseComposeEdit
 from .activity import ActivityLog
 from .dialog_placement import DialogPlacement
-from .grids import configure_grid
+from .grids import CheckStateSortItem, configure_grid
 from .package_guard import PackageGuard, session_package_name
 from .favorites import FavoritesActions, FavoritesPanel
 
@@ -294,7 +294,7 @@ class ManagerPanel(QWidget):
             if record.get('in_at', True) and self.source_changed(record['source']):
                 label += ' *'
             columns[0] = label
-            item = QTreeWidgetItem(columns)
+            item = CheckStateSortItem(columns) if self.kind == 'fields' else QTreeWidgetItem(columns)
             item.setData(0, ROLE + 4, record['name'])
             item.setData(0, ROLE, index)
             if self.kind == "documents":
@@ -318,7 +318,7 @@ class ManagerPanel(QWidget):
                 for path_part in DataQueries._path_to_segments(record.get('true_path') or record['path']):
                     group_key = (id(parent), str(path_part))
                     if group_key not in path_nodes:
-                        group = QTreeWidgetItem([str(path_part)])
+                        group = CheckStateSortItem([str(path_part)])
                         if parent:
                             parent.addChild(group)
                         else:
@@ -768,7 +768,7 @@ class ClausePanel(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         for index, record in enumerate(self.records):
-            item = QTreeWidgetItem([record["name"], record.get("description", "")])
+            item = CheckStateSortItem([record["name"], record.get("description", "")])
             item.setData(0, ROLE, index)
             item.setToolTip(0, record["expression"])
             item.setCheckState(2, Qt.CheckState.Checked if record['name'] in self.favorite_names else Qt.CheckState.Unchecked)

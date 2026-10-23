@@ -1,10 +1,24 @@
 """Consistent interactive columns without changing source order on initial display."""
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QColor, QPalette, QPen
-from PySide6.QtWidgets import QHeaderView, QStyle, QStyledItemDelegate
+from PySide6.QtWidgets import QHeaderView, QStyle, QStyledItemDelegate, QTreeWidgetItem
 
 SELECTION_COLOR = '#E3D2FF'
 SELECTION_OUTLINE = '#7950B3'
+
+
+class CheckStateSortItem(QTreeWidgetItem):
+    """Sort checkbox columns by state while keeping normal text sorting."""
+    def __lt__(self, other):
+        tree = self.treeWidget()
+        if tree is not None:
+            column = tree.sortColumn()
+            left = self.data(column, Qt.ItemDataRole.CheckStateRole)
+            right = other.data(column, Qt.ItemDataRole.CheckStateRole)
+            if left is not None or right is not None:
+                return (int(left) if left is not None else -1) < (int(right) if right is not None else -1)
+            return self.text(column) < other.text(column)
+        return False
 
 
 class GridColumnFill(QObject):

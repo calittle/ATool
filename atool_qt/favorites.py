@@ -130,6 +130,8 @@ class FavoritesActions:
             panel = getattr(self, kind)
             panel.favorite_names = set(favorites.get(kind, []))
             panel.tree.blockSignals(True)
+            sorting = panel.tree.isSortingEnabled()
+            panel.tree.setSortingEnabled(False)
             try:
                 items = panel.items() if kind == 'fields' else (
                     panel.tree.topLevelItem(i) for i in range(panel.tree.topLevelItemCount()))
@@ -137,6 +139,7 @@ class FavoritesActions:
                     name = item.data(0, ROLE + 4) if kind == 'fields' else panel.records[item.data(0, ROLE)]['name']
                     item.setCheckState(column, Qt.CheckState.Checked if name in favorites.get(kind, []) else Qt.CheckState.Unchecked)
             finally:
+                panel.tree.setSortingEnabled(sorting)
                 panel.tree.blockSignals(False)
         self.favorites.set_session(self.session, favorites)
 

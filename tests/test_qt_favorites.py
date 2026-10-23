@@ -118,6 +118,36 @@ class FavoritesTests(unittest.TestCase):
         self.assertEqual(self.rows(), {})
         self.assertEqual(json.loads(self.store.path.read_text())['favorites']['Billing']['fields'], [])
 
+    def test_manager_favorite_headers_sort_checkboxes_and_survive_refresh(self):
+        for kind, column, name in (('fields', 3, 'missing'), ('clauses', 2, 'Other')):
+            with self.subTest(kind=kind):
+                self.favorite(kind, name)
+                panel = getattr(self.window, kind)
+                tree = panel.tree
+
+                def states():
+                    return [tree.topLevelItem(row).checkState(column).value
+                            for row in range(tree.topLevelItemCount())]
+
+                tree.header().sectionClicked.emit(column)
+                self.assertEqual(states(), sorted(states()))
+                self.assertEqual(tree.topLevelItem(tree.topLevelItemCount() - 1).text(0), name)
+                tree.header().sectionClicked.emit(column)
+                self.assertEqual(states(), sorted(states(), reverse=True))
+                self.assertEqual(tree.topLevelItem(0).text(0), name)
+                self.window.set_session(self.session)
+                self.assertEqual(tree.topLevelItem(0).text(0), name)
+                self.assertEqual(states(), sorted(states(), reverse=True))
+                # Changing a checkbox must re-sort without skipping other rows
+                # when the persisted favorites are reapplied.
+                self.favorite(kind, name, False)
+                self.assertTrue(all(state == Qt.CheckState.Unchecked.value for state in states()))
+                self.favorite(kind, name)
+                self.assertEqual(tree.topLevelItem(0).text(0), name)
+                tree.header().sectionClicked.emit(0)
+                names = [tree.topLevelItem(row).text(0) for row in range(tree.topLevelItemCount())]
+                self.assertEqual(names, sorted(names))
+
     def test_click_opens_raw_name_and_clears_manager_filters(self):
         self.favorite('fields', 'missing')
         self.favorite('clauses', 'Other')
