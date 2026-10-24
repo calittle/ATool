@@ -1,4 +1,5 @@
 """Package preview controls and independent, cancellable rendering operations."""
+import copy
 import json
 import re
 import tempfile
@@ -9,8 +10,10 @@ from atool_core.activity_output import activity_text, HTTP_TRACE_PREFIX, sanitiz
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout)
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QScrollArea, QWidget)
 from .shared_packages import bundle_hashes, manifest, names, segment
+from .languages import language_field, validate_languages
 
 RENDER_TYPES = ('PDF', 'HTML', 'TEXT', 'CSV', 'JSON', 'METADATA')
 RENDER_EXTENSIONS = dict(zip(RENDER_TYPES, ('.pdf', '.html', '.txt', '.csv', '.json', '.json')))
@@ -64,6 +67,26 @@ class PreviewDialog(QDialog):
             browse.clicked.connect(self.browse)
             input_row.addWidget(browse)
         form.addRow('Mapped Data' if mapped_path else 'JSON File', input_row)
+        self.language_settings = copy.deepcopy(workspace.comms.settings.section('language'))
+        self.languages = {}
+        self.mapped_language = None
+        language_body = QWidget()
+        language_layout = QVBoxLayout(language_body)
+        for row in self.language_settings.get('display_mapping', []):
+            check = QCheckBox(row['label'])
+            check.setToolTip(f"Data: {row['data']}\nShort Name: {row['short_name']}")
+            self.languages[row['data']] = check
+            language_layout.addWidget(check)
+        language_scroll = QScrollArea()
+        language_scroll.setWidgetResizable(True)
+        language_scroll.setWidget(language_body)
+        language_scroll.setMaximumHeight(150)
+        form.addRow('Languages', language_scroll)
+        self.language_status = QLabel()
+        self.language_status.setWordWrap(True)
+        form.addRow(self.language_status)
+        self.input.textChanged.connect(self.refresh_languages)
+        self.refresh_languages()
         self.pre = QCheckBox('Use Pre-Prod Session Alias for this preview')
         form.addRow(self.pre)
         selected = workspace.comms.settings.get('last_preview_render_types') or ['PDF']
@@ -104,15 +127,41 @@ class PreviewDialog(QDialog):
         row.addWidget(submit)
         layout.addLayout(row)
 
+    def refresh_languages(self):
+        mapped = None
+        try:
+            payload = json.loads(Path(self.input.text()).expanduser().read_text(encoding='utf-8-sig'))
+            parent, key = language_field(payload, self.language_settings.get('mapping', ''))
+            mapped = parent[key]
+            if mapped in self.languages:
+                message = '* identifies the language in the input data. Select one or more languages.'
+            else:
+                message = (f'Input language {mapped!r} has no display mapping. Select a language to replace it, '
+                           'or leave all unchecked to preview the input unchanged.')
+        except (OSError, ValueError) as error:
+            message = (f'{error} Select input data with a mapped language to generate alternate languages. '
+                       'Leave all unchecked to preview the input unchanged.')
+        for row in self.language_settings.get('display_mapping', []):
+            check = self.languages[row['data']]
+            matches = row['data'] == mapped
+            check.setText(row['label'] + (' *' if matches else ''))
+            check.setChecked(matches)
+        self.mapped_language = mapped if mapped in self.languages else None
+        self.language_status.setText(message)
+
     def browse(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Select JSON File', '', 'JSON Files (*.json);;All Files (*)')
         if path:
             self.input.setText(path)
 
     def submit(self):
+        languages = [value for value, check in self.languages.items() if check.isChecked()]
+        if not languages and self.mapped_language is not None:
+            self.workspace.report_error('Preview Package', 'Select at least one language.')
+            return
         if self.workspace.start_package_preview(self.input.text(), [name for name, check in self.renders.items() if check.isChecked()],
                 self.timeout.value(), self.effective.date().toString('yyyy-MM-dd'), pre=self.pre.isChecked(),
-                exclude=self.exclude.isChecked(), open_after=self.open_after.isChecked()):
+                exclude=self.exclude.isChecked(), open_after=self.open_after.isChecked(), languages=languages or None):
             self.accept()
 
 
@@ -169,8 +218,10 @@ class PackagePreviewActions:
                 reasons.append(f'Could not verify {label.lower()}: {error}')
         return reasons
 
-    def start_package_preview(self, input_path, renders, seconds, effective, *, pre=False, exclude=False, open_after=True):
+    def start_package_preview(self, input_path, renders, seconds, effective, *, pre=False, exclude=False, open_after=True,
+                              languages=None):
         temporary = None
+        batch_jobs = []
         if not self.current_bundle_dir() or self.package_busy():
             return False
         try:
@@ -185,6 +236,19 @@ class PackagePreviewActions:
             alias = str(self.comms.settings.get('pre_prod_session_alias') or '').strip()
             if pre and not alias:
                 raise ValueError('Set a Pre-Prod Session Alias in User Settings first.')
+            language_settings = self.comms.settings.section('language')
+            language_rows = [None]
+            payload = None
+            if languages is not None:
+                validate_languages(language_settings)
+                requested = set(languages)
+                if not requested:
+                    raise ValueError('Select at least one language.')
+                language_rows = [row for row in language_settings['display_mapping'] if row['data'] in requested]
+                if len(language_rows) != len(requested):
+                    raise ValueError('Selected languages have changed. Reopen Preview Package.')
+                payload = json.loads(source.read_text(encoding='utf-8-sig'))
+                language_field(payload, language_settings['mapping'])
             reasons = self.preview_unpublished_reasons()
             if reasons and QMessageBox.question(self, 'Preview Package', 'Local and/or Shared Changes have not been published to Comms; preview anyway?\n\n' + '\n'.join(reasons)) != QMessageBox.StandardButton.Yes:
                 return False
@@ -194,30 +258,46 @@ class PackagePreviewActions:
                     '--timeout', str(int(seconds) * 1000), '--effective-date', effective]
             if pre:
                 args[1:1] = ['--session', alias]
-            if exclude:
+            if exclude and payload is None:
                 payload = json.loads(source.read_text(encoding='utf-8-sig'))
-                temporary = tempfile.TemporaryDirectory(prefix='atool-preview-')
-                path = Path(temporary.name) / 'input.json'
-                path.write_text(json.dumps(exclude_charts(payload), ensure_ascii=False), encoding='utf-8')
-                args[args.index('--input') + 1] = str(path)
+            variants = []
+            for row in language_rows:
+                path = source
+                variant = payload
+                if row:
+                    parent, key = language_field(payload, language_settings['mapping'])
+                    if parent[key] != row['data']:
+                        variant = copy.deepcopy(payload)
+                        parent, key = language_field(variant, language_settings['mapping'])
+                        parent[key] = row['data']
+                if exclude:
+                    variant = exclude_charts(variant)
+                if exclude or variant is not payload:
+                    if temporary is None:
+                        temporary = tempfile.TemporaryDirectory(prefix='atool-preview-')
+                    path = Path(temporary.name) / f"input-{row['short_name'] if row else 'original'}.json"
+                    path.write_text(json.dumps(variant, ensure_ascii=False), encoding='utf-8')
+                variants.append((row, path))
             settings = self.comms.settings
             debug = bool(settings.payload.get('diagnostics', {}).get('debug_logging'))
             if debug:
                 args.append('--verbose')
                 self.log('Preview debug context:\n' + json.dumps(dict(
                     package=package, session=alias if pre else settings.get('session_alias'),
-                    input=str(source), preview_input=args[args.index('--input') + 1],
-                    output=str(output), render_types=renders, timeout_seconds=int(seconds),
+                    input=str(source), preview_inputs=[dict(language=row, path=str(path)) for row, path in variants],
+                    output=str(output), languages=language_rows, render_types=renders, timeout_seconds=int(seconds),
                     effective_date=effective, exclude_charts=exclude), indent=2))
             settings.payload.setdefault('occs', {}).update(last_preview_render_types=renders,
                 last_preview_timeout_seconds=int(seconds), last_preview_exclude_charts=bool(exclude))
             settings.save()
             self.preview_effective_date = effective
-            remaining = len(renders)
-            def launch(render):
+            remaining = len(renders) * len(variants)
+            def launch(render, language, input_file):
+                description = f"{language['label']} / {render}" if language else render
                 def complete(result):
-                    self.log('Preview complete.\n' + (result.stdout or render))
-                    self.statusBar().showMessage(f'Preview complete ({render}).', 7000)
+                    message = f'Preview complete ({description}).' if language else 'Preview complete.'
+                    self.log(message + '\n' + (result.stdout or render))
+                    self.statusBar().showMessage(f'Preview complete ({description}).', 7000)
                     outputs = preview_outputs(result.stdout)
                     errors = []
                     if open_after:
@@ -228,14 +308,17 @@ class PackagePreviewActions:
                                 errors.append(str(error))
                     if errors:
                         QMessageBox.warning(self, 'Open Preview', 'Preview files were generated, but could not all be opened.\n\n' + '\n'.join(errors))
-                title = f'Preview Package ({render})' if len(renders) > 1 else 'Preview Package'
+                title = f'Preview Package ({description})' if language or len(renders) > 1 else 'Preview Package'
                 # Per-render IDs also isolate CLI response/error sidecars.
                 render_args = [*args, '--render-type', render]
+                render_args[render_args.index('--input') + 1] = str(input_file)
                 label = '-metadata' if render == 'METADATA' else ''
-                render_args[render_args.index('--output') + 1] = f'{output}-{uuid4().hex[:8]}{label}{RENDER_EXTENSIONS[render]}'
+                suffix = f"-{language['short_name']}" if language else ''
+                render_args[render_args.index('--output') + 1] = f'{output}{suffix}-{uuid4().hex[:8]}{label}{RENDER_EXTENSIONS[render]}'
                 job = self.run_comms_operation(title, render_args, complete,
                     channel='regular', timeout_ms=int(seconds)*1000+30000, close_on_success=True)
                 self.preview_jobs.append(job)
+                batch_jobs.append(job)
                 def finished(result):
                     nonlocal remaining
                     try:
@@ -248,12 +331,19 @@ class PackagePreviewActions:
                             temporary.cleanup()
                         self.update_preview_actions()
                 job.completed.connect(finished)
-            for render in renders:
-                launch(render)
+            for language, input_file in variants:
+                for render in renders:
+                    launch(render, language, input_file)
             self.update_preview_actions()
             return True
         except (ValueError, OSError) as error:
-            if temporary:
+            # A partially submitted batch still owns its temporary inputs until
+            # the launched jobs finish cancellation, including queued jobs.
+            pending = [job for job in batch_jobs if job in self.preview_jobs]
+            remaining = len(pending)
+            for job in pending:
+                job.cancel()
+            if temporary and not pending:
                 temporary.cleanup()
             self.report_error('Preview Package', str(error))
             return False

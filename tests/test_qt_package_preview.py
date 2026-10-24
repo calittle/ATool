@@ -77,6 +77,126 @@ class PreviewTests(unittest.TestCase):
     def start(self, renders=None, **kwargs):
         return self.window.start_package_preview(str(self.source),renders or ['PDF'],400,'2026-10-08',open_after=False,**kwargs)
 
+    def language_data(self, value='ENGLISH'):
+        self.payload['billPrint'] = {'billDetails': {'cmElements': {'billLanguagePreference': value}}}
+        self.source.write_bytes(encode(self.payload))
+
+    def test_language_dialog_matches_input_and_refreshes_when_file_changes(self):
+        self.language_data()
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        dialog.input.setText(str(self.source))
+        self.assertEqual(dialog.languages['ENGLISH'].text(), 'English *')
+        self.assertTrue(dialog.languages['ENGLISH'].isChecked())
+        self.assertFalse(dialog.languages['CHINESE'].isChecked())
+        dialog.languages['CHINESE'].setChecked(True)
+        dialog.open_after.setChecked(False)
+        dialog.submit()
+        self.assertEqual(len(self.calls), 2)
+        self.assertIn('-EN-', self.calls[0]['args'][self.calls[0]['args'].index('--output') + 1])
+        self.assertIn('-ZF-', self.calls[1]['args'][self.calls[1]['args'].index('--output') + 1])
+        alternate = self.root / 'chinese.json'
+        self.language_data('CHINESE')
+        alternate.write_bytes(self.source.read_bytes())
+        dialog.input.setText(str(alternate))
+        self.assertFalse(dialog.languages['ENGLISH'].isChecked())
+        self.assertEqual(dialog.languages['ENGLISH'].text(), 'English')
+        self.assertEqual(dialog.languages['CHINESE'].text(), 'Chinese *')
+        self.assertTrue(dialog.languages['CHINESE'].isChecked())
+        dialog.languages['CHINESE'].setChecked(False)
+        with patch.object(self.window, 'report_error') as error:
+            dialog.submit()
+        error.assert_called_once()
+        self.assertEqual(len(self.calls), 2)
+
+    def test_languages_cross_render_types_preserve_original_and_clean_after_all_jobs(self):
+        self.language_data()
+        original = self.source.read_bytes()
+        self.assertTrue(self.start(renders=['PDF', 'HTML', 'METADATA'], languages=['ENGLISH', 'CHINESE'], exclude=True))
+        self.assertEqual(len(self.calls), 6)
+        paths = []
+        for index, call in enumerate(self.calls):
+            args = call['args']
+            path = Path(args[args.index('--input') + 1])
+            paths.append(path)
+            payload = json.loads(path.read_text())
+            expected = 'ENGLISH' if index < 3 else 'CHINESE'
+            short = 'EN' if index < 3 else 'ZF'
+            self.assertEqual(payload['billPrint']['billDetails']['cmElements']['billLanguagePreference'], expected)
+            self.assertNotIn('charts', payload)
+            self.assertNotIn('charts', payload['nested'][0])
+            output = Path(args[args.index('--output') + 1])
+            self.assertIn(f'-{short}-', output.name)
+            for unwanted in ('English', 'Chinese', 'ENGLISH', 'CHINESE'):
+                self.assertNotIn(unwanted, output.name)
+        self.assertEqual(len(set(paths)), 2)
+        self.assertEqual(self.source.read_bytes(), original)
+        for index in range(5):
+            self.complete(CommandResult(1, '', 'render failed', None), index)
+            self.assertTrue(all(path.exists() for path in paths))
+        self.window.cancel_package_preview()
+        self.assertTrue(self.calls[5]['job'].cancelled)
+        self.complete(CommandResult(-1, '', '', None, cancelled=True), 5)
+        self.assertTrue(all(not path.exists() for path in paths))
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_default_language_uses_original_and_alternate_uses_copy(self):
+        self.language_data()
+        self.assertTrue(self.start(languages=['ENGLISH', 'CHINESE']))
+        inputs = [Path(call['args'][call['args'].index('--input') + 1]) for call in self.calls]
+        self.assertEqual(inputs[0], self.source)
+        self.assertNotEqual(inputs[1], self.source)
+        self.assertEqual(json.loads(inputs[1].read_text())['billPrint']['billDetails']['cmElements']['billLanguagePreference'], 'CHINESE')
+        self.complete(CommandResult(0, '', '', None), 1)
+        self.assertTrue(inputs[1].exists())
+        self.complete(CommandResult(0, '', '', None), 0)
+        self.assertFalse(inputs[1].exists())
+        self.assertTrue(self.source.exists())
+
+    def test_unknown_language_and_missing_mapping_are_explicit(self):
+        self.language_data('OTHER')
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        dialog.input.setText(str(self.source))
+        self.assertFalse(any(check.isChecked() for check in dialog.languages.values()))
+        self.assertIn('OTHER', dialog.language_status.text())
+        self.assertTrue(self.start(languages=['CHINESE']))
+        self.window.comms.settings.payload['language']['mapping'] = '$.missing'
+        with patch.object(self.window, 'report_error') as error:
+            self.assertFalse(self.start(languages=['CHINESE']))
+            self.assertFalse(self.start(languages=['UNKNOWN']))
+            self.assertFalse(self.start(languages=[]))
+        self.assertEqual(error.call_count, 3)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_custom_mapping_value_and_short_name(self):
+        self.window.comms.settings.payload['language'] = {
+            'mapping': '$.bills[0]["print language"]',
+            'display_mapping': [{'label': 'Chinese', 'data': 'ZF', 'short_name': 'zh_HK'}]}
+        self.source.write_bytes(encode({'bills': [{'print language': 'ENGLISH', 'other': 42}]}))
+        self.assertTrue(self.start(languages=['ZF']))
+        args = self.calls[0]['args']
+        self.assertIn('-zh_HK-', args[args.index('--output') + 1])
+        self.assertEqual(json.loads(Path(args[args.index('--input') + 1]).read_text()),
+                         {'bills': [{'print language': 'ZF', 'other': 42}]})
+
+    def test_partial_language_batch_start_failure_keeps_inputs_until_cancelled(self):
+        self.language_data()
+        def launch(title, args, callback=None, **kwargs):
+            if self.calls:
+                raise OSError('Could not start render')
+            return self.command(title, args, callback, **kwargs)
+        with patch.object(self.window, 'run_comms_operation', side_effect=launch), \
+                patch.object(self.window, 'report_error') as error:
+            self.assertFalse(self.start(renders=['PDF', 'HTML'], languages=['CHINESE']))
+        error.assert_called_once()
+        self.assertTrue(self.calls[0]['job'].cancelled)
+        args = self.calls[0]['args']
+        path = Path(args[args.index('--input') + 1])
+        self.assertTrue(path.exists())
+        self.complete(CommandResult(-1, '', '', None, cancelled=True), 0)
+        self.assertFalse(path.exists())
+
     def test_data_save_as_switches_source_and_preview_input(self):
         session = self.window.session
         session.map_data(self.payload, self.source.name)

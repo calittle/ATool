@@ -500,6 +500,35 @@ Editing leaves the original input file unchanged
 until you use Save or explicitly save over it; save a copy before mapping another file or
 closing the app to keep your changes. These controls apply to the native Qt app.
 
+### Generate previews in multiple languages
+
+In **Settings → User Settings → Language**, set **Language mapping** to the
+input JSON field that controls print language. It defaults to
+`$.billPrint.billDetails.cmElements.billLanguagePreference`. Use an absolute
+path with property names and array indices, such as `$.bills[0].language`;
+wildcards, filters, and recursive searches are not supported here.
+
+The **Language display mapping** table supports Add and Remove, with these defaults:
+
+| Label | Data | Short Name |
+| --- | --- | --- |
+| English | ENGLISH | EN |
+| Chinese | CHINESE | ZF |
+
+**Package → Preview…** shows a checkbox for each configured language. The
+language matching the selected input file is checked and marked with `*`.
+Select one or more languages to generate each selected render type in those
+languages. Alternate languages use temporary input copies with the mapped
+field changed to the configured **Data** value; the source file stays unchanged.
+Output filenames include only the language's **Short Name**, for example
+`data-Bill-non-2026-10-24_10-30-00-ZF-a1b2c3d4.pdf`.
+
+Data values and Short Names must be unique; Short Names ignore case and allow
+letters, numbers, underscores, and hyphens, starting with a letter or number.
+If the input language is missing or unrecognized, Preview explains the issue
+and leaves all languages unchecked. Leaving them unchecked previews the input
+unchanged. Selecting a language requires the mapped field to exist and contain text.
+
 The Layout Resolver displays a collapsible evidence tree with resolved values,
 condition results and iteration rows. Expand or collapse branches to inspect
 selected content; text reports and JSON evidence can still be saved.

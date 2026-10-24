@@ -22,6 +22,29 @@ def config_result():
 
 
 class SettingsStorageTests(unittest.TestCase):
+    def test_language_defaults_and_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = UserSettings(Path(temporary) / 'settings.json')
+            language = settings.section('language')
+            self.assertEqual('$.billPrint.billDetails.cmElements.billLanguagePreference', language['mapping'])
+            self.assertEqual([{'label': 'English', 'data': 'ENGLISH', 'short_name': 'EN'},
+                              {'label': 'Chinese', 'data': 'CHINESE', 'short_name': 'ZF'}], language['display_mapping'])
+            for field, value in [('label', ''), ('data', ''), ('data', 'ENGLISH'),
+                                 ('short_name', 'en'), ('short_name', '../ZF'), ('short_name', 'Z/F'),
+                                 ('short_name', 'ZF.'), ('short_name', '')]:
+                with self.subTest(field=field, value=value):
+                    payload = copy.deepcopy(settings.payload)
+                    payload['language']['display_mapping'][1][field] = value
+                    with self.assertRaises(ValueError):
+                        settings.save(payload)
+            for mapping in ('', '$', '$..language', '$.bills[*].language', '@.language'):
+                payload = copy.deepcopy(settings.payload)
+                payload['language']['mapping'] = mapping
+                with self.subTest(mapping=mapping), self.assertRaisesRegex(ValueError, 'Language mapping'):
+                    settings.save(payload)
+            settings.save()
+            self.assertEqual(language, UserSettings(settings.path).section('language'))
+
     def test_defaults_unknown_settings_validation_and_external_conflict(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'settings.json'
@@ -98,6 +121,26 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
         self.window.comms.settings.payload['application']['confirm_on_quit'] = False
         with patch('atool_qt.authoring.QMessageBox.question', return_value=QMessageBox.StandardButton.Discard):
             self.window.close()
+
+    def test_language_settings_table_add_remove_and_persist(self):
+        dialog = SettingsDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertIn('Language', [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())])
+        self.assertEqual(dialog.language_table.rowCount(), 2)
+        dialog.add_language_button.click()
+        self.assertEqual(dialog.language_table.rowCount(), 3)
+        dialog.save()
+        self.assertIn('Each language requires', dialog.status.text())
+        for column, value in enumerate(('French', 'FRENCH', 'FR')):
+            dialog.language_table.item(2, column).setText(value)
+        dialog.language_table.selectRow(1)
+        dialog.remove_language_button.click()
+        self.assertEqual(dialog.language_table.rowCount(), 2)
+        dialog.controls[('language', 'mapping')].setText('$.language')
+        dialog.save()
+        saved = UserSettings(self.root / 'user.json').section('language')
+        self.assertEqual(saved['mapping'], '$.language')
+        self.assertEqual(saved['display_mapping'][1], {'label': 'French', 'data': 'FRENCH', 'short_name': 'FR'})
 
     def test_settings_dialog_persists_hierarchy_and_quit_cancel(self):
         window = self.window

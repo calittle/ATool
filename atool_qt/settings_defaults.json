@@ -15,6 +15,13 @@
     "log_file_max_mib": 10,
     "log_backup_count": 5
   },
+  "language": {
+    "mapping": "$.billPrint.billDetails.cmElements.billLanguagePreference",
+    "display_mapping": [
+      {"label": "English", "data": "ENGLISH", "short_name": "EN"},
+      {"label": "Chinese", "data": "CHINESE", "short_name": "ZF"}
+    ]
+  },
   "occs": {
     "cli_path": "",
     "work_dir": "",

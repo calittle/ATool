@@ -10,9 +10,11 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFontComboBox,
                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
-                              QToolButton, QVBoxLayout, QWidget, QMessageBox)
+                              QToolButton, QVBoxLayout, QWidget, QMessageBox, QTableWidget,
+                              QTableWidgetItem, QHeaderView, QAbstractItemView)
 from .occs import CommsSettings
 from .storage import write_files
+from .languages import validate_languages
 
 class ActivityLogBridge(QObject):
     message = Signal(str)
@@ -73,6 +75,7 @@ class UserSettings(CommsSettings):
         for section in DEFAULTS:
             if not isinstance(payload.get(section, {}), dict):
                 raise ValueError(f'{section} settings must be a JSON object.')
+        validate_languages(payload.get('language', DEFAULTS['language']))
         occs = payload.get('occs', {})
         diagnostics = payload.get('diagnostics', {})
         for key, title, minimum, maximum in (
@@ -127,6 +130,31 @@ class SettingsDialog(QDialog):
         self.add_control(general, 'document_display', 'collapse', 'Collapse Documents', bool)
         self.add_control(general, 'content_editor', 'font_family', 'HTML Font', 'font')
         self.add_control(general, 'diagnostics', 'debug_logging', 'Debug Logging', bool)
+        language = self.add_tab('Language')
+        self.add_control(language, 'language', 'mapping', 'Language mapping', str)
+        self.language_table = QTableWidget(0, 3)
+        self.language_table.setHorizontalHeaderLabels(['Label', 'Data', 'Short Name'])
+        self.language_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.language_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.language_table.setMinimumHeight(200)
+        for row in self.store.section('language').get('display_mapping', []):
+            self.add_language_row(row)
+        language.addRow('Language display mapping', self.language_table)
+        language_buttons = QHBoxLayout()
+        self.add_language_button, self.remove_language_button = QToolButton(), QToolButton()
+        self.add_language_button.setText('Add')
+        self.remove_language_button.setText('Remove')
+        self.add_language_button.clicked.connect(lambda: self.add_language_row())
+        self.remove_language_button.clicked.connect(self.remove_language_rows)
+        language_buttons.addWidget(self.add_language_button)
+        language_buttons.addWidget(self.remove_language_button)
+        language_buttons.addStretch()
+        language.addRow(language_buttons)
+        language_hint = QLabel('Label appears in Preview; Data is written to the mapped input field; '
+                               'Short Name appears in output filenames. Use a unique Short Name with '
+                               'letters, numbers, underscores, or hyphens.')
+        language_hint.setWordWrap(True)
+        language.addRow(language_hint)
         logging_form = self.add_tab('Activity & Logs')
         self.add_control(logging_form, 'diagnostics', 'activity_backlog_kib', 'Activity Backlog (KiB)', int)
         self.add_control(logging_form, 'diagnostics', 'log_directory', 'Log Folder', 'directory')
@@ -162,6 +190,16 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def add_language_row(self, values=None):
+        row = self.language_table.rowCount()
+        self.language_table.insertRow(row)
+        for column, key in enumerate(('label', 'data', 'short_name')):
+            self.language_table.setItem(row, column, QTableWidgetItem((values or {}).get(key, '')))
+
+    def remove_language_rows(self):
+        for row in sorted({index.row() for index in self.language_table.selectedIndexes()}, reverse=True):
+            self.language_table.removeRow(row)
 
     def add_tab(self, title):
         scroll = QScrollArea()
@@ -234,6 +272,10 @@ class SettingsDialog(QDialog):
                     payload[section] = {}
                 target = payload[section]
             target[key] = value
+        payload['language']['display_mapping'] = [
+            {key: self.language_table.item(row, column).text().strip()
+             for column, key in enumerate(('label', 'data', 'short_name'))}
+            for row in range(self.language_table.rowCount())]
         try:
             self.store.save(payload)
             self.workspace.comms.settings = self.store
