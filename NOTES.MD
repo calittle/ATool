@@ -1,5 +1,27 @@
 # ATool Release Notes
 
+## v2.2.0
+
+- Generate package previews in multiple languages at once, for every selected
+  render type. The new User Settings Language tab defines the input language
+  mapping and editable Label, Data and Short Name rows, defaulting to
+  English / ENGLISH / EN and Chinese / CHINESE / ZF.
+- Preselect and mark the input's mapped language with an asterisk in Preview.
+  Use temporary input copies for alternate languages, preserve the source file,
+  and include only each language's Short Name in output filenames. Open after
+  generation opens each generated output as its render finishes.
+- Add Package → Audit JSONPaths to review length() expressions using relative
+  or recursive paths in the open template and current clause library, including
+  unsaved edits. Reports identify owners, JSON locations and expressions, with
+  Copy Report and Save Report controls; source checkouts also include a CLI audit.
+- Add an experimental Check length() JSONPaths setting, off by default. When
+  enabled, check these expressions before saving templates, updating shared
+  packages or publishing to Comms. Manual audits remain available with the
+  setting off and in read-only package sessions; findings are review candidates
+  while the Comms restriction is being clarified.
+- Sort the Field and Clause Managers by the Favorite checkbox column, making
+  favorite items easier to group together.
+
 ## v2.1.1
 
 - Preserve the selected Layout Manager field or iterator and expanded branches
