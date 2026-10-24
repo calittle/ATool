@@ -4,6 +4,7 @@ import re
 import unicodedata
 
 from atool_core.condition_evaluator import ConditionEvaluator
+from atool_core.jsonpath_preflight import length_path_issues
 
 class PayloadValidation:
 
@@ -56,21 +57,23 @@ class PayloadValidation:
         return False
 
     @classmethod
-    def _payload_condition_validation_issues(cls, value: object, path: str = "$") -> list[str]:
-        """Return validation errors for persisted Condition values only."""
+    def _payload_condition_validation_issues(cls, value: object, path: str = "$", *, check_length_paths: bool = False) -> list[str]:
+        """Validate persisted Conditions and Comms length/path compatibility."""
         issues: list[str] = []
         if isinstance(value, dict):
             for key, item in value.items():
                 item_path = f"{path}.{key}"
                 if key == "Condition" and isinstance(item, str):
-                    condition_issues, _warnings = cls._at_condition_validation_messages(item)
+                    condition_issues, _warnings = cls._at_condition_validation_messages(item, check_length_paths=check_length_paths)
                     issues.extend(f"{item_path}: {issue}" for issue in condition_issues)
+                elif check_length_paths and key in {"Path", "expression"} and isinstance(item, str):
+                    issues.extend(f"{item_path}: {issue}" for issue in length_path_issues(item))
                 elif isinstance(item, (dict, list)):
-                    issues.extend(cls._payload_condition_validation_issues(item, item_path))
+                    issues.extend(cls._payload_condition_validation_issues(item, item_path, check_length_paths=check_length_paths))
             return issues
         if isinstance(value, list):
             for index, item in enumerate(value):
-                issues.extend(cls._payload_condition_validation_issues(item, f"{path}[{index}]"))
+                issues.extend(cls._payload_condition_validation_issues(item, f"{path}[{index}]", check_length_paths=check_length_paths))
         return issues
 
     @classmethod
@@ -94,11 +97,11 @@ class PayloadValidation:
                 cls._normalize_field_mandatory_defaults(item)
 
     @classmethod
-    def _at_condition_validation_messages(cls, condition: str) -> tuple[list[str], list[str]]:
+    def _at_condition_validation_messages(cls, condition: str, *, check_length_paths: bool = False) -> tuple[list[str], list[str]]:
         text = str(condition or "").strip()
         if not text:
             return [], []
-        issues: list[str] = []
+        issues: list[str] = length_path_issues(text) if check_length_paths else []
         warnings: list[str] = []
         match = re.match(r"^\$\s*\[\s*\?\s*\((.*)\)\s*\]\s*$", text, flags=re.DOTALL)
         if not match:

@@ -148,6 +148,10 @@ class SettingsDialog(QDialog):
                    ('use_static_xsd_conversion', 'Use Local XSD Conversion', bool), ('static_xsd_path', 'Static XSD Path', 'file')]
         for key, title, kind in entries:
             self.add_control(comms, 'occs', key, title, kind)
+        self.add_control(comms, 'occs', 'check_jsonpath_length', 'Check length() JSONPaths (experimental)', bool)
+        self.controls[('occs', 'check_jsonpath_length')].setToolTip(
+            'Check relative and recursive paths used with length() before saving, updating shared packages, or publishing. '
+            'Off by default while the restriction is being clarified.')
         preview = self.add_tab('Preview Programs')
         for render_type in DEFAULTS['occs']['preview_open_programs']:
             self.add_control(preview, 'preview_open_programs', render_type, render_type, 'file')

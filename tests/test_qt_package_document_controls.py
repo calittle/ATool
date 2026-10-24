@@ -69,6 +69,19 @@ class PackageDocumentControlTests(unittest.TestCase):
         self.assertEqual(self.window.session.documents[0]['condition'],'')
         dialog.reject()
 
+    def test_length_condition_check_respects_current_setting(self):
+        dialog = PackageConditionDialog(self.window, self.window.selected_record('documents'))
+        condition = '$[?(@.items.length() > 0)]'
+        dialog.condition.setPlainText(condition)
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = True
+        with patch.object(self.window, 'report_error') as error:
+            dialog.apply()
+        error.assert_called_once()
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = False
+        dialog.apply()
+        self.assertEqual(condition, self.window.session.documents[0]['condition'])
+        dialog.reject()
+
     def test_refresh_retains_memory_edits_and_ghost_condition_button_disabled(self):
         self.window.documents.description.setPlainText('Pending description')
         self.window.package_actions['Refresh'].trigger()

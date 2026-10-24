@@ -569,7 +569,7 @@ class PackageEditor:
         files["versionMaster"] = str(bundle["master_path"].relative_to(bundle["root"]))
         return helper, master, manifest
 
-    def save(self, path=None):
+    def save(self, path=None, *, check_length_paths=False):
         destination = Path(path or self.session.source) if path or self.session.source else None
         if destination is None:
             raise ValueError("Choose a file to save this package.")
@@ -579,9 +579,6 @@ class PackageEditor:
         payload = copy.deepcopy(self.session.payload)
         PayloadValidation._sanitize_package_text_object(payload)
         PayloadValidation._normalize_field_mandatory_defaults(payload)
-        issues = PayloadValidation._payload_condition_validation_issues(payload)
-        if issues:
-            raise ValueError('Invalid Conditions:\n' + '\n'.join(issues[:8]))
         meta = payload.setdefault("Meta", {})
         if not isinstance(meta, dict):
             raise ValueError("Meta must be a JSON object before saving clauses.")
@@ -589,6 +586,9 @@ class PackageEditor:
             meta["ATool"]["clause_library"] = copy.deepcopy(self.session.clauses)
         else:
             meta["clause_library"] = copy.deepcopy(self.session.clauses)
+        issues = PayloadValidation._payload_condition_validation_issues(payload, check_length_paths=check_length_paths)
+        if issues:
+            raise ValueError('Invalid Conditions or JSONPaths:\n' + '\n'.join(issues[:8]))
         def encoded(value):
             return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         files = {destination: encoded(payload)}

@@ -28,6 +28,7 @@ class SettingsStorageTests(unittest.TestCase):
             path.write_text(json.dumps({'occs': {'session_alias': 'np', 'custom': [1]}, 'extra': {'keep': True}}))
             settings = UserSettings(path)
             self.assertTrue(settings.section('application')['confirm_on_quit'])
+            self.assertIs(False, settings.get('check_jsonpath_length'))
             self.assertEqual('pp', settings.get('config_target_session_alias'))
             changed = copy.deepcopy(settings.payload)
             changed['occs']['config_id_filter'] = '['
@@ -102,10 +103,14 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
         window = self.window
         window.documents.matched_only.setChecked(False)
         dialog = SettingsDialog(window)
+        check = dialog.controls[('occs', 'check_jsonpath_length')]
+        self.assertFalse(check.isChecked())
+        check.setChecked(True)
         dialog.controls[('document_display', 'collapse')].setChecked(True)
         dialog.controls[('occs', 'session_alias')].setText('new')
         dialog.controls[('occs', 'request_timeout_seconds')].setValue(90)
         dialog.save()
+        self.assertIs(True, UserSettings(self.root / 'user.json').get('check_jsonpath_length'))
         self.assertEqual('new', window.comms.settings.get('session_alias'))
         self.assertTrue(window.documents.hierarchy)
         self.assertEqual(1, window.documents.tree.topLevelItemCount())

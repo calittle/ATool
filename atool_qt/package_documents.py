@@ -214,7 +214,7 @@ class PackageConditionDialog(QDialog):
     def apply(self):
         workspace = self.workspace
         text = self.condition.toPlainText()
-        issues, warnings = PayloadValidation._at_condition_validation_messages(text)
+        issues, warnings = PayloadValidation._at_condition_validation_messages(text, check_length_paths=workspace.comms.settings.get("check_jsonpath_length", False) is True)
         if issues:
             workspace.report_error('Invalid Condition', '\n'.join(issues))
             return

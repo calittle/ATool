@@ -14,6 +14,7 @@ from .clauses import ClauseComposer
 from .editor import PackageEditor
 from .data_queries import DataQueries
 from .package_documents import PackageDocumentActions
+from .jsonpath_audit import JSONPathAuditActions
 from .occs import CommsService, CommsSettings
 from .clause_usage import ClauseUsageActions, clause_token
 from .data_actions import DataMenuActions
@@ -33,7 +34,7 @@ from .manager_controls import ManagerControlActions
 
 from .status import WorkspaceStatus
 
-class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActions, DataMenuActions, SettingsActions, ConfigurationActions, OperationActions, SharedFolderActions, ResourceModelActions, SharedPackageActions, PackageDownloadActions, PackagePublishActions, PackagePreviewActions, PackageEmailActions, ManagerControlActions):
+class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentActions, ClauseUsageActions, DataMenuActions, SettingsActions, ConfigurationActions, OperationActions, SharedFolderActions, ResourceModelActions, SharedPackageActions, PackageDownloadActions, PackagePublishActions, PackagePreviewActions, PackageEmailActions, ManagerControlActions):
     def install_authoring(self):
         self.editor = None
         self.refreshing = False
@@ -144,6 +145,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
         self.install_publish_actions()
         self.install_preview_actions()
         self.install_email_actions()
+        self.install_jsonpath_audit()
         self.install_manager_controls()
         self.restore_original_shortcuts()
         self.restore_original_package_menu()
@@ -166,7 +168,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
             self.package_menu.removeAction(action)
         for title in ('Preview...', 'Send Email...', 'Cancel All Previews', None,
                       'Open Shared Package...', 'Close Package', None, 'Get Packages from Comms...', None,
-                      'Update Shared Package', 'Publish Package to Comms...', 'Check Shared Folder Sync...', None,
+                      'Audit JSONPaths...', 'Update Shared Package', 'Publish Package to Comms...', 'Check Shared Folder Sync...', None,
                       'Release Shared Package Lock', 'Manual Shared Package Unlock...', None, 'Advanced'):
             if title is None:
                 self.package_menu.addSeparator()
@@ -579,7 +581,7 @@ class AuthoringActions(WorkspaceStatus, PackageDocumentActions, ClauseUsageActio
                 return False
             path = Path(filename)
         try:
-            destination = self.editor.save(path)
+            destination = self.editor.save(path, check_length_paths=self.comms.settings.get("check_jsonpath_length", False) is True)
         except (OSError, ValueError) as error:
             self.report_error("Could not save", str(error))
             return False

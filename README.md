@@ -840,3 +840,32 @@ It marks unsupported transforms, unknown fields, unresolved iterator markers,
 and cached relationships with missing or conflicting Assembly Template
 conditions in the report. The text is a content facsimile; page layout, fonts,
 and barcode drawing still require a Comms render.
+## JSONPath preflight
+
+The **User Settings → Comms → Check length() JSONPaths (experimental)** option
+is **off by default** while PD's restriction is being clarified. When enabled,
+saving an AT, updating a shared package, and publishing to Comms check for
+`length()` used with relative paths (`@.items`, `items`) or recursive searches
+(`$..items`, `$.root..items`). Both `path.length()` and `$.length(path)` forms
+are checked in field/iteration Paths, Conditions, and saved clause expressions.
+Use an explicit absolute path without recursive descent, and verify that it
+counts the intended nodes. Normal `@` predicates within an absolute path's
+filter remain allowed, for example `$.items[?(@.active == true)].length()`.
+
+In installed releases, use **Package → Audit JSONPaths…** to review the open
+template, including unsaved edits and the current clause library. The report
+shows owner names, JSON locations, and expressions, with Copy Report and Save
+Report controls. This manual audit works even with automatic preflight off and
+in read-only package sessions. Findings are review candidates while PD's
+restriction is being clarified.
+
+From a source checkout, you can also audit files without opening them:
+
+```sh
+python3 tools/audit_jsonpath_length.py /path/to/assembly-template.json --output /tmp/length-audit.json
+```
+
+The audit also accepts multiple files, bundle directories, or bundle manifests.
+This explicit command always runs the audit, independently of User Settings.
+It reports each affected expression with its JSON location and owner names.
+Exit status is 0 for a clean audit, 1 for findings, and 2 for unreadable inputs.

@@ -1216,6 +1216,8 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.map_action.setEnabled(self.session is not None and not busy)
         if hasattr(self, "editor"):
             self.update_authoring_actions()
+        if hasattr(self, 'jsonpath_audit_action'):
+            self.update_jsonpath_audit_action()
 
     def set_session(self, session: PackageSession, *, preserve_selection=False):
         previous = self.refreshing

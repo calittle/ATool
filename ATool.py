@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.email_input import email_recipients, prepare_email_input
 from atool_core.condition_evaluator import ConditionEvaluator
+from atool_core.jsonpath_preflight import length_path_issues, require_valid_length_paths
 from atool_core.layout_resolver import LayoutResolver, format_report
 
 
@@ -318,6 +319,7 @@ class AToolApp:
             "comms_cache_dir": "",
             "user_name": "",
             "retain_lock_after_shared_update": False,
+            "check_jsonpath_length": False,
             "use_static_xsd_conversion": False,
             "static_xsd_path": "",
             "package_mru": [],
@@ -6449,21 +6451,23 @@ class AToolApp:
         return False
 
     @classmethod
-    def _payload_condition_validation_issues(cls, value: object, path: str = "$") -> list[str]:
-        """Return validation errors for persisted Condition values only."""
+    def _payload_condition_validation_issues(cls, value: object, path: str = "$", *, check_length_paths: bool = False) -> list[str]:
+        """Validate persisted Conditions and Comms length/path compatibility."""
         issues: list[str] = []
         if isinstance(value, dict):
             for key, item in value.items():
                 item_path = f"{path}.{key}"
                 if key == "Condition" and isinstance(item, str):
-                    condition_issues, _warnings = cls._at_condition_validation_messages(item)
+                    condition_issues, _warnings = cls._at_condition_validation_messages(item, check_length_paths=check_length_paths)
                     issues.extend(f"{item_path}: {issue}" for issue in condition_issues)
+                elif check_length_paths and key in {"Path", "expression"} and isinstance(item, str):
+                    issues.extend(f"{item_path}: {issue}" for issue in length_path_issues(item))
                 elif isinstance(item, (dict, list)):
-                    issues.extend(cls._payload_condition_validation_issues(item, item_path))
+                    issues.extend(cls._payload_condition_validation_issues(item, item_path, check_length_paths=check_length_paths))
             return issues
         if isinstance(value, list):
             for index, item in enumerate(value):
-                issues.extend(cls._payload_condition_validation_issues(item, f"{path}[{index}]"))
+                issues.extend(cls._payload_condition_validation_issues(item, f"{path}[{index}]", check_length_paths=check_length_paths))
         return issues
 
     def _sanitize_and_validate_payload_for_save(self) -> bool:
@@ -6471,14 +6475,14 @@ class AToolApp:
             return True
         self._sanitize_package_text_object(self.current_payload)
         self._normalize_field_mandatory_defaults(self.current_payload)
-        issues = self._payload_condition_validation_issues(self.current_payload)
+        issues = self._payload_condition_validation_issues(self.current_payload, check_length_paths=self._get_check_jsonpath_length_setting())
         if not issues:
             return True
         preview = "\n".join(f"- {issue}" for issue in issues[:8])
         suffix = "\n- …" if len(issues) > 8 else ""
         messagebox.showerror(
-            "Invalid Conditions",
-            "ATool did not save the template because one or more Condition values are invalid.\n\n"
+            "Invalid Conditions or JSONPaths",
+            "ATool did not save the template because one or more Conditions or JSONPaths are invalid.\n\n"
             + preview
             + suffix,
         )
@@ -8461,6 +8465,9 @@ class AToolApp:
             variable=confirm_on_quit_var,
         )
         confirm_on_quit_check.grid(row=0, column=0, sticky="w")
+        check_jsonpath_length_var = tk.BooleanVar(value=self._get_check_jsonpath_length_setting())
+        ttk.Checkbutton(application_group, text="Check length() JSONPaths (experimental)",
+                        variable=check_jsonpath_length_var).grid(row=1, column=0, sticky="w")
 
         group = ttk.LabelFrame(container, text="Document Display", padding=10)
         group.grid(row=1, column=0, sticky="ew", pady=(10, 0))
@@ -8843,6 +8850,7 @@ class AToolApp:
             self._set_occs_comms_cache_dir(comms_cache_dir_var.get())
             self._set_occs_user_name(occs_user_name_var.get())
             self._set_retain_lock_after_shared_update_enabled(bool(retain_lock_after_shared_update_var.get()))
+            self.user_settings.setdefault("occs", {})["check_jsonpath_length"] = bool(check_jsonpath_length_var.get())
             self._set_use_static_xsd_conversion_enabled(bool(use_static_xsd_conversion_var.get()))
             self._set_static_xsd_path(static_xsd_path)
             for render_type, variable in preview_program_vars.items():
@@ -9669,6 +9677,10 @@ class AToolApp:
             return ""
         return str(section.get("user_name", "")).strip()
 
+    def _get_check_jsonpath_length_setting(self) -> bool:
+        section = getattr(self, "user_settings", {}).get("occs")
+        return isinstance(section, dict) and section.get("check_jsonpath_length", False) is True
+
     def _get_retain_lock_after_shared_update_setting(self) -> bool:
         section = self.user_settings.get("occs")
         if not isinstance(section, dict):
@@ -10052,6 +10064,8 @@ class AToolApp:
                 if isinstance(value, str):
                     settings["occs"][key] = value
             retain_lock_value = occs.get("retain_lock_after_shared_update")
+            if isinstance(occs.get("check_jsonpath_length"), bool):
+                settings["occs"]["check_jsonpath_length"] = occs["check_jsonpath_length"]
             if isinstance(retain_lock_value, bool):
                 settings["occs"]["retain_lock_after_shared_update"] = retain_lock_value
             static_xsd_value = occs.get("use_static_xsd_conversion")
@@ -14630,6 +14644,18 @@ class AToolApp:
         finally:
             temporary.cleanup()
 
+    def _length_path_publish_preflight(self) -> bool:
+        if not self._get_check_jsonpath_length_setting():
+            return True
+        from atool_qt.session import read_json, resolve_template
+        try:
+            require_valid_length_paths(self.current_payload)
+            require_valid_length_paths(read_json(resolve_template(Path(self.current_occs_bundle_dir))))
+        except (OSError, ValueError) as error:
+            messagebox.showerror("JSONPath Preflight", str(error))
+            return False
+        return True
+
     def save_occs_package(self) -> None:
         if self._occs_regular_operation_limit_reached():
             messagebox.showinfo("OCCS", "An OCCS operation is already in progress.")
@@ -14638,6 +14664,8 @@ class AToolApp:
             messagebox.showinfo("Publish Package to Comms", "Open a package version first.")
             return
         if self.is_dirty and not self.save_assembly_template():
+            return
+        if not self._length_path_publish_preflight():
             return
 
         source_session = self._get_occs_config_source_session_alias()
@@ -14837,6 +14865,8 @@ class AToolApp:
         if context is None:
             return False
         if self.is_dirty and not self.save_assembly_template():
+            return False
+        if not self._length_path_publish_preflight():
             return False
         owner = self._current_shared_user_identity()
         lock_path = self._shared_lock_path(context["package_dir"])
@@ -18023,7 +18053,7 @@ class AToolApp:
         self._select_package_document_by_name(str(row.get("document", "")))
 
     def _confirm_valid_at_condition(self, condition: str, *, parent: tk.Misc | None = None) -> bool:
-        issues, warnings = self._at_condition_validation_messages(condition)
+        issues, warnings = self._at_condition_validation_messages(condition, check_length_paths=self._get_check_jsonpath_length_setting())
         if issues:
             messagebox.showerror(
                 "Invalid Condition",
@@ -18043,11 +18073,11 @@ class AToolApp:
         )
 
     @classmethod
-    def _at_condition_validation_messages(cls, condition: str) -> tuple[list[str], list[str]]:
+    def _at_condition_validation_messages(cls, condition: str, *, check_length_paths: bool = False) -> tuple[list[str], list[str]]:
         text = str(condition or "").strip()
         if not text:
             return [], []
-        issues: list[str] = []
+        issues: list[str] = length_path_issues(text) if check_length_paths else []
         warnings: list[str] = []
         match = re.match(r"^\$\s*\[\s*\?\s*\((.*)\)\s*\]\s*$", text, flags=re.DOTALL)
         if not match:

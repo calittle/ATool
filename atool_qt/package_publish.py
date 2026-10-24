@@ -5,12 +5,13 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from atool_core.jsonpath_preflight import require_valid_length_paths
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout
 
 from .configuration import config_label, filtered_configs, normalize_configs
-from .session import PackageSession
+from .session import PackageSession, read_json
 from .shared_packages import bundle_hashes, bundle_paths, copy_bundle_files, encode, manifest, names
 from .storage import write_files
 
@@ -79,6 +80,9 @@ class PackagePublishActions:
             self.flush_properties()
             if self.editor.dirty and not self.save_package():
                 return False
+            if self.comms.settings.get("check_jsonpath_length", False) is True:
+                require_valid_length_paths(self.session.payload)
+                require_valid_length_paths(read_json(bundle_paths(self.current_bundle_dir(), manifest(self.current_bundle_dir()))['assemblyTemplate']))
             store=self.shared_store()
             if not store.matches(self.current_bundle_dir(),self.shared_package_dir):
                 if not self.update_shared_package(release=False):
@@ -159,6 +163,8 @@ class PackagePublishActions:
             raise ValueError('Local package files changed after the dry-run snapshot. Start a new dry run.')
         if bundle_hashes(context['stage'])!=context['stage_hashes']:
             raise ValueError('The reviewed publish snapshot changed. Start a new dry run.')
+        if self.comms.settings.get("check_jsonpath_length", False) is True:
+            require_valid_length_paths(read_json(bundle_paths(context['stage'], manifest(context['stage']))['assemblyTemplate']))
         entry=self.shared_store().entry(context['shared_dir'])
         if not entry:
             raise ValueError('The shared package version is no longer available.')

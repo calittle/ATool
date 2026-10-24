@@ -34,6 +34,7 @@
     "comms_cache_dir": "",
     "user_name": "",
     "retain_lock_after_shared_update": false,
+    "check_jsonpath_length": false,
     "use_static_xsd_conversion": false,
     "static_xsd_path": "",
     "package_mru": [],

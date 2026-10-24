@@ -61,6 +61,37 @@ class PublishTests(unittest.TestCase):
             self.window.editor.saved=self.window.editor.snapshot()
         self.window.close()
 
+    def test_clean_package_with_invalid_length_path_cannot_publish_or_update_shared(self):
+        from atool_qt.editor import PackageEditor
+        from atool_qt.session import PackageSession
+        root = self.window.current_bundle_dir()
+        source = root / 'assembly-template.json'
+        payload = json_object(source)
+        payload['Fields'][0]['Path'] = '$..rows.length()'
+        source.write_bytes(encode(payload))
+        session = PackageSession.open(root)
+        self.window.session = session
+        self.window.editor = PackageEditor(session)
+        self.assertFalse(self.window.editor.dirty)
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = True
+        with patch.object(self.window, 'flush_properties'), patch.object(self.window, 'require_shared_sync') as sync:
+            self.assertFalse(self.window.publish_package())
+            self.assertFalse(self.window.update_shared_package(release=False))
+        sync.assert_not_called()
+        self.assertFalse(self.calls)
+        self.assertEqual(2, len(self.errors))
+        self.assertTrue(all('JSONPath preflight failed' in message for _, message in self.errors))
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = False
+        with patch.object(self.window, 'flush_properties'), patch.object(self.window, 'require_shared_sync', return_value=True):
+            self.assertTrue(self.window.update_shared_package(release=False))
+            self.assertTrue(self.window.publish_package())
+        self.assertEqual(1, len(self.calls))
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = True
+        with self.assertRaisesRegex(ValueError, 'JSONPath preflight failed'):
+            self.window.verify_publish_snapshot()
+        self.window.comms.settings.payload['occs']['check_jsonpath_length'] = False
+        self.assertIs(self.window.publish_context, self.window.verify_publish_snapshot())
+
     def command(self,title,args,callback=None,**kwargs):
         self.assertTrue(kwargs.get('close_on_success'))
         job=FakeJob()

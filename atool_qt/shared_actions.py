@@ -3,6 +3,7 @@ import getpass
 import socket
 from datetime import datetime
 from pathlib import Path
+from atool_core.jsonpath_preflight import require_valid_length_paths
 
 from .grids import configure_grid
 
@@ -10,8 +11,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
-from .session import PackageSession
-from .shared_packages import SharedPackages
+from .session import PackageSession, read_json
+from .shared_packages import SharedPackages, bundle_paths, manifest
 
 
 class SharedPicker(QDialog):
@@ -298,6 +299,9 @@ class SharedPackageActions:
             self.flush_properties()
             if self.editor.dirty and not self.save_package():
                 return False
+            if self.comms.settings.get("check_jsonpath_length", False) is True:
+                require_valid_length_paths(self.session.payload)
+                require_valid_length_paths(read_json(bundle_paths(self.current_bundle_dir(), manifest(self.current_bundle_dir()))['assemblyTemplate']))
             if not self.require_shared_sync('update this shared package'):
                 return False
             if release is None:
