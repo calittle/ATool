@@ -6,10 +6,34 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.notarize_macos import notarize
+from tools.notarize_macos import notarize, staple_ticket
 
 
 class NotarizationTests(unittest.TestCase):
+    def test_ticket_service_connection_failure_retries_then_succeeds(self):
+        with patch('tools.notarize_macos.subprocess.run', side_effect=[
+            subprocess.CalledProcessError(68, 'stapler'), subprocess.CompletedProcess('stapler', 0),
+        ]) as run, patch('tools.notarize_macos.time.sleep') as sleep:
+            staple_ticket(Path('ATool.app'))
+        self.assertEqual(2, run.call_count)
+        sleep.assert_called_once_with(15)
+
+    def test_ticket_service_retries_are_bounded(self):
+        with patch('tools.notarize_macos.subprocess.run', side_effect=subprocess.CalledProcessError(68, 'stapler')) as run, \
+                patch('tools.notarize_macos.time.sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                staple_ticket(Path('ATool.app'))
+        self.assertEqual(4, run.call_count)
+        self.assertEqual([15, 30, 45], [call.args[0] for call in sleep.call_args_list])
+
+    def test_other_stapling_errors_fail_immediately(self):
+        with patch('tools.notarize_macos.subprocess.run', side_effect=subprocess.CalledProcessError(73, 'stapler')) as run, \
+                patch('tools.notarize_macos.time.sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                staple_ticket(Path('ATool.app'))
+        self.assertEqual(1, run.call_count)
+        sleep.assert_not_called()
+
     def run_submission(self, status, code=0):
         def run(command, **kwargs):
             if command[:3] == ['xcrun', 'notarytool', 'submit']:

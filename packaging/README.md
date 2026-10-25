@@ -59,6 +59,8 @@ entitlements required by the bundled Qt WebEngine helper and Node JIT.
 Signing failures stop the build. The app is then submitted to Apple's notary
 service, which must return `Accepted`; its ticket is stapled and validated,
 and Gatekeeper assessment must pass before the final ZIP/checksum are made.
+CloudKit ticket-service failures (stapler error 68) retry up to three times,
+with 15, 30, and 45 second delays; other stapling errors fail immediately.
 The existing extracted-app UI, WebEngine, and CLI smoke checks run on that final
 archive. Temporary signing files and the keychain are removed even on failure.
 
@@ -68,7 +70,7 @@ the 25-minute wait limit, the workflow fails rather than publishing an
 unnotarized app; check the submission status before retrying.
 
 For an artifact-only refresh, run Publish release artifact with the existing
-`tag` and the packaging commit in `source_ref`. This builds from that exact
+`tag` and the full 40-character packaging commit in `source_ref`. This builds from that exact
 commit without moving the existing version tag. Leave `source_ref` empty for
 the usual build from a version tag.
 

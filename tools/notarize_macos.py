@@ -4,7 +4,23 @@ import argparse
 import json
 import subprocess
 import tempfile
+import time
 from pathlib import Path
+
+
+def staple_ticket(bundle):
+    for attempt in range(4):
+        try:
+            subprocess.run(['xcrun', 'stapler', 'staple', str(bundle)], check=True)
+            return
+        except subprocess.CalledProcessError as error:
+            # Apple's CloudKit ticket service can lose the connection even
+            # after notarization is Accepted. Retry only that service error.
+            if error.returncode != 68 or attempt == 3:
+                raise
+            delay = 15 * (attempt + 1)
+            print(f'Apple ticket service failed; retrying stapling in {delay}s.', flush=True)
+            time.sleep(delay)
 
 
 def notarize(bundle, keychain):
@@ -27,7 +43,7 @@ def notarize(bundle, keychain):
                 subprocess.run(['xcrun', 'notarytool', 'log', result['id'], '--keychain-profile',
                                 'ATool-notary', '--keychain', str(keychain)], check=False)
             raise RuntimeError('Apple did not accept this application; it must not be published.')
-    subprocess.run(['xcrun', 'stapler', 'staple', str(bundle)], check=True)
+    staple_ticket(bundle)
     subprocess.run(['xcrun', 'stapler', 'validate', str(bundle)], check=True)
     subprocess.run(['codesign', '--verify', '--deep', '--strict', '--verbose=2', str(bundle)], check=True)
     subprocess.run(['spctl', '--assess', '--type', 'execute', '--verbose=2', str(bundle)], check=True)
