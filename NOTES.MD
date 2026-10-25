@@ -2,6 +2,11 @@
 
 ## v2.2.0
 
+- Refresh the open Assembly Template and mapped data on every Resolve click,
+  including unsaved edits made while the dialog is open. Newly added fields no
+  longer require reopening Resolve to clear stale unknown-field warnings.
+  Keep each run consistent while edits continue, and require reopening Resolve
+  if a different package is opened.
 - Generate package previews in multiple languages at once, for every selected
   render type. The new User Settings Language tab defines the input language
   mapping and editable Label, Data and Short Name rows, defaulting to

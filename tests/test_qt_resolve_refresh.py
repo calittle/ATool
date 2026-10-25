@@ -35,7 +35,7 @@ class ResolveRefreshTests(unittest.TestCase):
         self.window.set_session(session)
         self.dialog = ResolveDialog(self.window)
         self.dialog.show()
-        self.addCleanup(self.window.close)
+        self.addCleanup(self.close_window)
         self.addCleanup(self.dialog.close)
         self.assertFalse(self.dialog.refresh_item_button.isEnabled())
         self.dialog.cache.setText(str(self.cache))
@@ -43,6 +43,10 @@ class ResolveRefreshTests(unittest.TestCase):
         self.dialog.refresh_layouts()
         self.dialog.resolve()
         self.wait_for_jobs()
+
+    def close_window(self):
+        with patch.object(self.window, 'confirm_discard', return_value=True):
+            self.window.close()
 
     def wait_for_jobs(self):
         deadline = time.monotonic() + 5
@@ -124,6 +128,35 @@ class ResolveRefreshTests(unittest.TestCase):
         self.assertEqual('header-content', dialog.tree.currentItem().text(0))
         self.assertTrue(dialog.refresh_item_button.isEnabled())
         self.assertTrue(dialog.save_button.isEnabled())
+
+    def test_resolve_uses_field_added_while_dialog_is_open(self):
+        blob = self.cache / 'contents/header-content/versions/1.0/header-content.blob'
+        blob.write_text('<p><comms-data>$Data{"Id":"has_GroupBill"}</comms-data></p>')
+        self.dialog.resolve()
+        self.wait_for_jobs()
+        self.assertIn("Unknown field 'has_GroupBill'", str(self.dialog.result['warnings']))
+
+        self.window.editor.change('Add field', lambda: self.window.session.payload['Fields'].append(
+            {'Name': 'has_GroupBill', 'Path': '$.name'}))
+        self.dialog.resolve()
+        self.wait_for_jobs()
+        self.assertNotIn("Unknown field 'has_GroupBill'", str(self.dialog.result['warnings']))
+        self.assertIn('Alice', str(self.dialog.result))
+
+    def test_resolve_captures_current_data_and_isolates_running_snapshot(self):
+        self.window.session.map_data({'show': True, 'name': 'Updated', 'address': 'New address'}, 'new data')
+        resolver = self.dialog.resolver()
+        self.window.session.data['name'] = 'Later'
+        self.window.session.payload['Fields'][0]['Path'] = '$.missing'
+        result = resolver.resolve('header')
+        self.assertIn('Upd', str(result))
+        self.assertIn('New address', str(result))
+        self.assertNotIn('Later', str(result))
+
+    def test_resolve_rejects_replaced_package(self):
+        self.window.set_session(PackageSession.from_payload({'$$Id': 'Other', 'Fields': [], 'Documents': []}))
+        self.dialog.resolve()
+        self.assertIn('Reopen Resolve', self.dialog.status.text())
 
 
 if __name__ == '__main__':

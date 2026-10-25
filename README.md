@@ -839,9 +839,11 @@ the cached document's root layouts. Click **Resolve** to see the selected and
 suppressed content and mapped field values. **Save...** exports the text trace
 or JSON evidence.
 
-The resolver uses the open Assembly Template, including unsaved field and
-document condition edits, plus active document and content versions from the
-cache for the effective date. It does not change Comms or the mapped data.
+Each click of **Resolve** captures the current open Assembly Template and mapped
+data, including unsaved field and document condition edits made while the dialog
+is open. The resolver combines that snapshot with active document and content
+versions from the cache for the effective date. Edits made during a run take
+effect on the next click of **Resolve**. It does not change Comms or the mapped data.
 
 The same resolver can be run without the UI for automation:
 

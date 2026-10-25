@@ -236,9 +236,9 @@ class ResolveDialog(QDialog):
         super().__init__(workspace)
         self.workspace = workspace
         session = workspace.session
+        self.session = session
         self.document = copy.deepcopy(workspace.selected_record('documents'))
         self.package = session.name
-        self.template, self.data = copy.deepcopy(session.payload), copy.deepcopy(session.data)
         self.result, self.job = None, None
         self.refresh_job = None
         self.closed = False
@@ -398,12 +398,18 @@ class ResolveDialog(QDialog):
             self.refresh_layouts()
 
     def resolver(self):
+        if self.workspace.session is not self.session:
+            raise ValueError('The open package has changed. Reopen Resolve for the current package.')
         if not self.cache.text().strip() or not Path(self.cache.text()).expanduser().is_dir():
             raise ValueError('Choose a valid Comms cache directory.')
-        return LayoutResolver(Path(self.cache.text()).expanduser(), self.package, self.document['name'], self.data,
+        self.workspace.flush_properties()
+        # Capture the current edits on the UI thread before starting background work.
+        template = copy.deepcopy(self.session.payload)
+        data = copy.deepcopy(self.session.data)
+        return LayoutResolver(Path(self.cache.text()).expanduser(), self.package, self.document['name'], data,
                               effective_date=self.date.date().toString('yyyy-MM-dd'),
                               system_fields={'PackagePageNum': self.page.value(), 'GRIDPAGENUMBER': self.grid_page.value()},
-                              assembly_template=self.template)
+                              assembly_template=template)
 
     def refresh_layouts(self, *_):
         try:
