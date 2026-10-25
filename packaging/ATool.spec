@@ -18,8 +18,13 @@ a = Analysis([str(root / 'ATool_Qt.py')], pathex=[str(root)],
              hiddenimports=[], hookspath=[], runtime_hooks=[],
              excludes=['tkinter', 'webview'], noarchive=False)
 pyz = PYZ(a.pure)
+signing = {}
+if sys.platform == 'darwin' and os.environ.get('ATOOL_CODESIGN_IDENTITY'):
+    signing = {'codesign_identity': os.environ['ATOOL_CODESIGN_IDENTITY'],
+               'entitlements_file': str(root / 'packaging' / 'macos-entitlements.plist')}
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='ATool',
-          debug=False, strip=False, upx=False, console=False, icon=str(root / 'atool_qt' / 'assets' / 'atool.ico'))
+          debug=False, strip=False, upx=False, console=False,
+          icon=str(root / 'atool_qt' / 'assets' / 'atool.ico'), **signing)
 collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='ATool')
 if sys.platform == 'darwin':
     app = BUNDLE(collection, name='ATool.app',

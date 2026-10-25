@@ -10,6 +10,10 @@ on:
         description: Existing version tag to package and publish
         required: true
         type: string
+      source_ref:
+        description: Optional source commit for rebuilding an existing release with updated packaging
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -24,8 +28,9 @@ jobs:
   native:
     name: Native applications
     uses: ./.github/workflows/native-build.yml
+    secrets: inherit
     with:
-      source_ref: ${{ inputs.tag || github.ref }}
+      source_ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
 
   release:
     name: Package and publish ATool
@@ -38,7 +43,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5

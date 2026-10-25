@@ -2,6 +2,10 @@
 
 ## v2.2.0
 
+- Sign and notarize the Mac application downloads with Apple Developer ID and
+  staple Apple's approval ticket, allowing normal Gatekeeper launch without
+  manually removing quarantine or using Open Anyway. This artifact refresh
+  does not change application behavior.
 - Refresh the open Assembly Template and mapped data on every Resolve click,
   including unsaved edits made while the dialog is open. Newly added fields no
   longer require reopening Resolve to clear stale unknown-field warnings.

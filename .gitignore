@@ -6,6 +6,9 @@ dist/
 build/
 *.zip
 .atool-build.local.json
+*.p12
+*.pfx
+*.certSigningRequest
 samples/
 generated/
 tools/td_generator/profiles/residential-tariff.json

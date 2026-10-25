@@ -7,6 +7,17 @@ on:
         description: ATool commit or tag to build
         required: true
         type: string
+    secrets:
+      MACOS_CERTIFICATE_P12_BASE64:
+        required: true
+      MACOS_CERTIFICATE_PASSWORD:
+        required: true
+      APPLE_ID:
+        required: true
+      APPLE_TEAM_ID:
+        required: true
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: true
 
 permissions:
   contents: read
@@ -66,7 +77,7 @@ jobs:
             runner: windows-2022
             bundle: dist/native/ATool
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash
@@ -142,6 +153,55 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p 'test_native_*.py'
 
+      - name: Install Mac signing identity and notarization credentials
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+          umask 077
+          certificate_path="$RUNNER_TEMP/atool-signing.p12"
+          keychain_path="$RUNNER_TEMP/atool-signing.keychain-db"
+          keychain_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$keychain_password"
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          encoded = ''.join(os.environ['MACOS_CERTIFICATE_P12_BASE64'].split())
+          (Path(os.environ['RUNNER_TEMP']) / 'atool-signing.p12').write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path" >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" >/dev/null
+          security list-keychains -d user -s "$keychain_path" "$HOME/Library/Keychains/login.keychain-db"
+          python - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          keychain = str(Path(os.environ['RUNNER_TEMP']) / 'atool-signing.keychain-db')
+          result = subprocess.check_output(['security', 'find-identity', '-v', '-p', 'codesigning', keychain], text=True)
+          identities = re.findall(r'\b([A-Fa-f0-9]{40}) "Developer ID Application: [^"\n]+ \(' + re.escape(os.environ['APPLE_TEAM_ID']) + r'\)"', result)
+          if len(identities) != 1:
+              raise SystemExit('Expected one valid Developer ID Application identity matching APPLE_TEAM_ID in the exported certificate.')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              print('ATOOL_CODESIGN_IDENTITY=' + identities[0], file=output)
+              print('PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR=1', file=output)
+          PY
+          xcrun notarytool store-credentials ATool-notary --keychain "$keychain_path" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
+          rm -f "$certificate_path"
+
       - name: Build native application
         env:
           NODE_EXECUTABLE: ${{ steps.node.outputs.executable }}
@@ -149,6 +209,10 @@ jobs:
         run: >-
           python tools/build_native.py --occs-dir build/inputs/occs
           --node "$NODE_EXECUTABLE" --node-license "$NODE_LICENSE"
+
+      - name: Notarize Mac application and staple its ticket
+        if: runner.os == 'macOS'
+        run: python tools/notarize_macos.py dist/native/ATool.app --keychain "$RUNNER_TEMP/atool-signing.keychain-db"
 
       - name: Archive tested application
         env:
@@ -170,3 +234,11 @@ jobs:
             dist/ATool-*.zip
             dist/ATool-*.zip.sha256
           if-no-files-found: error
+
+      - name: Remove temporary Mac signing credentials
+        if: always() && runner.os == 'macOS'
+        run: |
+          rm -f "$RUNNER_TEMP/atool-signing.p12"
+          if [ -f "$RUNNER_TEMP/atool-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/atool-signing.keychain-db"
+          fi

@@ -29,9 +29,52 @@ then uploads all native ZIPs/checksums along with the existing source ZIP.
 Windows is a folder distribution: `ATool.exe` and `_internal` must stay together.
 macOS is an application bundle with the name ATool and identifier
 `com.calittle.ATool`. `ditto` preserves its signed framework symlinks and modes
-when archiving and extracting. PyInstaller's default ad-hoc macOS signing is
-used; Developer ID/notarization and Windows Authenticode require signing
-credentials and are not configured by this workflow.
+when archiving and extracting. Release builds require Developer ID signing and
+Apple notarization for both Mac architectures. Local builds use PyInstaller's
+ad-hoc signing unless `ATOOL_CODESIGN_IDENTITY` is set to a signing identity.
+Windows Authenticode is not configured.
+
+## Mac release credentials
+
+Add these repository secrets under Settings > Secrets and variables > Actions:
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12_BASE64` | Base64 text of the exported Developer ID Application `.p12`, including its private key. |
+| `MACOS_CERTIFICATE_PASSWORD` | Password set when exporting the `.p12`. |
+| `APPLE_ID` | Apple Account email with access to the developer team. |
+| `APPLE_TEAM_ID` | Team ID from Apple Developer > Membership details. |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password generated at account.apple.com for notarization. |
+
+On your Mac, copy the certificate's encoded contents directly to the clipboard
+with `base64 -i "/path/to/ATool-signing.p12" | pbcopy`, then paste into the
+certificate secret. Do not commit signing files, export passwords, or Apple
+credentials. Keep a password-protected backup of the identity outside the repo.
+
+The release workflow passes secrets to its reusable native build workflow.
+Each Mac runner imports the identity into a temporary keychain and checks that
+it is a valid Developer ID Application identity for the configured Team ID.
+PyInstaller signs the app and bundled binaries with Hardened Runtime and the
+entitlements required by the bundled Qt WebEngine helper and Node JIT.
+Signing failures stop the build. The app is then submitted to Apple's notary
+service, which must return `Accepted`; its ticket is stapled and validated,
+and Gatekeeper assessment must pass before the final ZIP/checksum are made.
+The existing extracted-app UI, WebEngine, and CLI smoke checks run on that final
+archive. Temporary signing files and the keychain are removed even on failure.
+
+Apple notarization requires two-factor authentication and an app-specific
+password for this Apple Account authentication method. If notarization exceeds
+the 25-minute wait limit, the workflow fails rather than publishing an
+unnotarized app; check the submission status before retrying.
+
+For an artifact-only refresh, run Publish release artifact with the existing
+`tag` and the packaging commit in `source_ref`. This builds from that exact
+commit without moving the existing version tag. Leave `source_ref` empty for
+the usual build from a version tag.
+
+Setup references: [GitHub certificate import](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications),
+[Apple notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
+and [Qt WebEngine deployment](https://doc.qt.io/qt-6/qtwebengine-deploying.html).
 
 App artwork lives in `atool_qt/assets`. The ruby-red glass AT monogram sits
 on a smoked-black glass tile. `atool-source.png` is the master artwork;
