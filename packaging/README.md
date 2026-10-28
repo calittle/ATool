@@ -17,7 +17,9 @@ fixes. Rebuilding an existing ATool tag selects the latest CLI release again.
 The builder stages only CLI runtime directories, manifests and license notices.
 It never copies a developer checkout's settings, sessions, `.env`, outputs or
 Git metadata. The resulting runtime versions and source commits are written to
-`RUNTIME_INFO.json`; About also receives `BUILD_INFO.txt`.
+`RUNTIME_INFO.json`; About also receives `BUILD_INFO.txt`. The release workflow
+passes its published tag through `ATOOL_RELEASE_TAG` to both package builders,
+so About retains the release version even when rebuilding from a newer commit.
 
 Each job archives the app, extracts that ZIP into a temporary directory, and
 runs the extracted executable with isolated user settings and without installed

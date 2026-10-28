@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Permit both direct execution and imports from tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.build_artifact import git_value
+from tools.build_artifact import git_value, release_version
 
 
 def stage_cli(source, destination):
@@ -51,7 +51,7 @@ def build(root, cli, node, node_license, dist):
     shutil.copy2(root / 'packaging' / 'THIRD_PARTY.md', licenses / 'THIRD_PARTY.md')
     commit = git_value(root, 'rev-parse', 'HEAD', default='local')
     (stage / 'BUILD_INFO.txt').write_text(
-        f'source=native bundle\ncommit={commit}\nrelease_tag={git_value(root, "describe", "--tags", "--exact-match", "HEAD")}\n'
+        f'source=native bundle\ncommit={commit}\nrelease_tag={release_version(root)}\n'
         f'dirty={str(bool(git_value(root, "status", "--porcelain"))).lower()}\n', encoding='utf-8')
     runtime_info = {
         'atool_commit': commit,

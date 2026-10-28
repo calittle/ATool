@@ -224,6 +224,12 @@ def build_release_notes(
     return "\n".join(lines)
 
 
+def release_version(repo_root: Path) -> str:
+    """Retain the published version when rebuilding from a different commit."""
+    return os.environ.get('ATOOL_RELEASE_TAG', '').strip() or git_value(
+        repo_root, 'describe', '--tags', '--match', 'v[0-9]*', '--exact-match', 'HEAD')
+
+
 def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     dist_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -232,7 +238,7 @@ def build_zip(repo_root: Path, dist_dir: Path, source: str) -> Path:
     build_id = f"{commit_sha}-dirty" if is_dirty_worktree and commit_sha != "local" else commit_sha
     artifact_path = dist_dir / f"ATool-{timestamp}-{build_id}.zip"
     full_commit_sha = git_value(repo_root, "rev-parse", "HEAD", default="local")
-    release_tag = git_value(repo_root, "describe", "--tags", "--exact-match", "HEAD")
+    release_tag = release_version(repo_root)
     built_at = datetime.now().isoformat(timespec="seconds")
 
     with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:

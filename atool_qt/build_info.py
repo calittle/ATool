@@ -25,7 +25,7 @@ def build_info(root=None):
                 return default
             return result.stdout.strip() or default if result.returncode == 0 else default
         values = dict(source='local worktree', commit=git_value('rev-parse', '--short', 'HEAD', default='local'),
-                      release_tag=git_value('describe', '--tags', '--exact-match', 'HEAD'))
+                      release_tag=git_value('describe', '--tags', '--match', 'v[0-9]*', '--abbrev=0', 'HEAD'))
         if git_value('status', '--short'):
             values['dirty'] = 'true'
     commit = values.get('commit', '').strip()

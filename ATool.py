@@ -1101,7 +1101,7 @@ class AToolApp:
             build_info = {
                 "source": "local worktree",
                 "commit": cls._local_git_value("rev-parse", "--short", "HEAD", default="local"),
-                "release_tag": cls._local_git_value("describe", "--tags", "--exact-match", "HEAD"),
+                "release_tag": cls._local_git_value("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD"),
             }
             if cls._local_git_value("status", "--short", default=""):
                 build_info["dirty"] = "true"

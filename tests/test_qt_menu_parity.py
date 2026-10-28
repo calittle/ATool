@@ -31,6 +31,16 @@ class BuildInfoTests(unittest.TestCase):
             with patch('atool_qt.build_info.subprocess.run', side_effect=FileNotFoundError):
                 self.assertEqual(build_info(temporary)['build_label'], 'local')
 
+    def test_local_checkout_uses_nearest_release_version(self):
+        import subprocess
+        outputs = ['abcdef123\n', 'v2.3.0\n', '']
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch('atool_qt.build_info.subprocess.run', side_effect=[subprocess.CompletedProcess([], 0, value, '') for value in outputs]) as git:
+                text = about_text(temporary)
+                self.assertIn('Release: v2.3.0', text)
+                self.assertNotIn('abcdef1', text)
+                self.assertIn('--abbrev=0', git.call_args_list[1].args[0])
+
 
 class MenuParityTests(unittest.TestCase):
     @classmethod

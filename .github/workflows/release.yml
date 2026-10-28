@@ -31,6 +31,7 @@ jobs:
     secrets: inherit
     with:
       source_ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
 
   release:
     name: Package and publish ATool
@@ -51,6 +52,8 @@ jobs:
           python-version: '3.11'
 
       - name: Build distribution ZIP
+        env:
+          ATOOL_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python3 tools/build_artifact.py --source head
 
       - name: Download tested native distributions

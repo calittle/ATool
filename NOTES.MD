@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show the published release version in About when rebuilding release artifacts
+  from a newer source commit; local checkouts use the nearest version tag.
+
 - Refresh the app icon across macOS, Windows and Linux with a cleaner red AT
   monogram and glossy black mirror background.
 

@@ -7,6 +7,10 @@ on:
         description: ATool commit or tag to build
         required: true
         type: string
+      release_tag:
+        description: Published ATool version, including artifact rebuilds
+        required: true
+        type: string
     secrets:
       MACOS_CERTIFICATE_P12_BASE64:
         required: true
@@ -204,6 +208,7 @@ jobs:
 
       - name: Build native application
         env:
+          ATOOL_RELEASE_TAG: ${{ inputs.release_tag }}
           NODE_EXECUTABLE: ${{ steps.node.outputs.executable }}
           NODE_LICENSE: ${{ steps.node.outputs.license }}
         run: >-
