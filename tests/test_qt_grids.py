@@ -5,10 +5,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHeaderView, QTreeWidget, QTreeWidgetItem
 from atool_qt.grids import configure_grid
 from atool_qt.session import demo_session
-from atool_qt.window import WorkspaceWindow
+from atool_qt.window import ClausePanel, WorkspaceWindow
 
 
 class GridTests(unittest.TestCase):
@@ -49,6 +50,56 @@ class GridTests(unittest.TestCase):
             self.assertEqual(tree.header().length(), tree.viewport().width())
         finally:
             tree.close()
+
+    def test_clause_columns_sort_on_mouse_click_and_keep_selection_on_refresh(self):
+        panel = ClausePanel()
+        session = demo_session()
+        session.clauses = [
+            {'name': 'Alpha', 'description': 'Zulu', 'expression': '@.alpha'},
+            {'name': 'Bravo', 'description': 'Alpha', 'expression': '@.bravo'},
+            {'name': 'Charlie', 'description': 'Middle', 'expression': '@.charlie'},
+        ]
+        panel.favorite_names = {'Bravo'}
+        panel.resize(900, 800)
+        panel.set_session(session)
+        panel.show()
+        self.app.processEvents()
+        tree = panel.tree
+        header = tree.header()
+
+        def click(column):
+            position = header.viewport().rect().center()
+            position.setX(header.sectionViewportPosition(column) + header.sectionSize(column) // 2)
+            QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=position)
+            self.app.processEvents()
+
+        def names():
+            return [tree.topLevelItem(row).text(0) for row in range(tree.topLevelItemCount())]
+
+        try:
+            click(0)
+            self.assertEqual(names(), ['Alpha', 'Bravo', 'Charlie'])
+            click(0)
+            self.assertEqual(names(), ['Charlie', 'Bravo', 'Alpha'])
+            click(1)
+            self.assertEqual(names(), ['Bravo', 'Charlie', 'Alpha'])
+            click(1)
+            self.assertEqual(names(), ['Alpha', 'Charlie', 'Bravo'])
+            tree.setCurrentItem(tree.topLevelItem(1))
+            panel.set_session(session)
+            self.assertEqual(names(), ['Alpha', 'Charlie', 'Bravo'])
+            self.assertEqual(panel.name.text(), 'Charlie')
+            self.assertEqual(panel.expression.toPlainText(), '@.charlie')
+            panel.search.setText('Middle')
+            self.assertFalse(tree.currentItem().isHidden())
+            panel.search.clear()
+            click(2)
+            self.assertEqual(names()[-1], 'Bravo')
+            click(2)
+            self.assertEqual(names()[0], 'Bravo')
+            self.assertEqual([row['name'] for row in session.clauses], ['Alpha', 'Bravo', 'Charlie'])
+        finally:
+            panel.close()
 
     def test_all_manager_columns_resize_and_user_sort_survives_refresh(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -378,6 +378,8 @@ class AToolApp:
         self._condition_library_entries: list[dict[str, str]] = []
         self._active_condition_library_index: int | None = None
         self._condition_library_node_to_index: dict[str, int] = {}
+        self._condition_library_sort_column = "name"
+        self._condition_library_sort_desc = False
         self._clause_trigger_update_proposals: list[dict[str, object]] = []
         self._clause_trigger_update_index = 0
         self._condition_usage_all_results: list[dict[str, object]] = []
@@ -4921,8 +4923,8 @@ class AToolApp:
         ).grid(row=0, column=1, padx=(6, 0))
 
         self.condition_library_list = ttk.Treeview(list_container, columns=("description",), show="tree headings")
-        self.condition_library_list.heading("#0", text="Name")
-        self.condition_library_list.heading("description", text="Description")
+        self.condition_library_list.heading("#0", text="Name", command=lambda: self._set_condition_library_sort("name"))
+        self.condition_library_list.heading("description", text="Description", command=lambda: self._set_condition_library_sort("description"))
         self.condition_library_list.column("#0", width=180, anchor=tk.W)
         self.condition_library_list.column("description", width=220, anchor=tk.W)
         self.condition_library_list.grid(row=1, column=0, sticky="nsew")
@@ -5123,6 +5125,14 @@ class AToolApp:
         height = max(520, self.condition_library_window.winfo_height())
         self.condition_library_window.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
 
+    def _set_condition_library_sort(self, column: str) -> None:
+        if self._condition_library_sort_column == column:
+            self._condition_library_sort_desc = not self._condition_library_sort_desc
+        else:
+            self._condition_library_sort_column = column
+            self._condition_library_sort_desc = False
+        self._render_condition_library_list()
+
     def _render_condition_library_list(self) -> None:
         if not hasattr(self, "condition_library_list"):
             return
@@ -5131,7 +5141,16 @@ class AToolApp:
         self.condition_library_list.delete(*self.condition_library_list.get_children())
         self._condition_library_node_to_index = {}
         filter_text = self.condition_clause_filter_var.get().strip().casefold()
-        for index, item in enumerate(self._condition_library_entries):
+        column = getattr(self, "_condition_library_sort_column", "name")
+        descending = getattr(self, "_condition_library_sort_desc", False)
+        for tree_column, key, label in (("#0", "name", "Name"), ("description", "description", "Description")):
+            indicator = (" ▼" if descending else " ▲") if column == key else ""
+            self.condition_library_list.heading(tree_column, text=label + indicator)
+        entries = sorted(enumerate(self._condition_library_entries),
+                         key=lambda pair: (str(pair[1].get(column, "")).strip().casefold(),
+                                           str(pair[1].get("name", "")).strip().casefold()),
+                         reverse=descending)
+        for index, item in entries:
             name = str(item.get("name", "")).strip() or f"Condition {index + 1}"
             descr = str(item.get("description", "")).strip()
             expression = str(item.get("expression", "")).strip()

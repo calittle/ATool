@@ -708,6 +708,8 @@ class ClausePanel(QWidget):
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)
         self.tree = table(["Name", "Description", "Favorite"])
+        self.tree.setSortingEnabled(True)
+        self.tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.tree.currentItemChanged.connect(self.show_details)
         self.splitter.addWidget(self.tree)
         properties = QWidget()
@@ -766,6 +768,7 @@ class ClausePanel(QWidget):
         self.records = sorted([dict(entry) for entry in session.clauses],
                               key=lambda entry: entry["name"].casefold())
         self.tree.blockSignals(True)
+        self.tree.setSortingEnabled(False)
         self.tree.clear()
         for index, record in enumerate(self.records):
             item = CheckStateSortItem([record["name"], record.get("description", "")])
@@ -773,6 +776,7 @@ class ClausePanel(QWidget):
             item.setToolTip(0, record["expression"])
             item.setCheckState(2, Qt.CheckState.Checked if record['name'] in self.favorite_names else Qt.CheckState.Unchecked)
             self.tree.addTopLevelItem(item)
+        self.tree.setSortingEnabled(True)
         self.tree.blockSignals(False)
         self.apply_filter()
         for row in range(self.tree.topLevelItemCount()):
