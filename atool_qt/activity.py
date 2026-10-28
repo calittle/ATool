@@ -6,7 +6,7 @@ from atool_core.activity_output import activity_text, HTTP_TRACE_PREFIX, sanitiz
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QTextCursor
-from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QPlainTextEdit
 from .activity_file import ActivityFile, utf8_tail
 
 MAX_ACTIVITY_BLOCKS = 10000
@@ -56,7 +56,9 @@ class ActivityLog(QPlainTextEdit):
         self.timer.timeout.connect(self.refresh_operations)
         self.menu_actions = {}
         for key, title, callback in (
-                ('copy', 'Copy', self.copy), ('select_all', 'Select All', self.selectAll),
+                ('copy', 'Copy', self.copy),
+                ('copy_all', 'Copy All Activity', lambda: QApplication.clipboard().setText(self.toPlainText())),
+                ('select_all', 'Select All', self.selectAll),
                 ('open_log', 'Open Current Log', self.open_current_log),
                 ('show_folder', 'Show Log Folder', self.show_log_folder),
                 ('save', 'Save Activity…', self.save_contents), ('clear', 'Clear Activity', self.clear)):
@@ -65,7 +67,7 @@ class ActivityLog(QPlainTextEdit):
             self.menu_actions[key] = action
 
     def populate_menu(self, menu):
-        for key in ('copy', 'select_all', None, 'open_log', 'show_folder', None, 'save', 'clear'):
+        for key in ('copy', 'copy_all', 'select_all', None, 'open_log', 'show_folder', None, 'save', 'clear'):
             menu.addSeparator() if key is None else menu.addAction(self.menu_actions[key])
         menu.aboutToShow.connect(self.update_menu_actions)
         self.update_menu_actions()
@@ -74,7 +76,7 @@ class ActivityLog(QPlainTextEdit):
         self.flush_pending()
         has_text = not self.document().isEmpty()
         self.menu_actions['copy'].setEnabled(self.textCursor().hasSelection())
-        for key in ('select_all', 'save', 'clear'):
+        for key in ('copy_all', 'select_all', 'save', 'clear'):
             self.menu_actions[key].setEnabled(has_text)
         for key in ('open_log', 'show_folder'):
             self.menu_actions[key].setEnabled(self.file_log is not None)

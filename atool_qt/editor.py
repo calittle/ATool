@@ -274,6 +274,8 @@ class PackageEditor:
         source, _, _ = self.layout_source(document, key)
         if key.endswith('/Iteration') and values.get('Type') and values['Type'] not in {'Iterator', 'Spliterator'}:
             raise ValueError("Iteration Type must be either 'Iterator' or 'Spliterator'.")
+        if key.count('/') == 2 and key.endswith('/Iteration') and 'Type' in values and values['Type'] != 'Spliterator':
+            raise ValueError("Layout Iteration Type must be 'Spliterator'.")
         def apply():
             if any(source.get(key) != value for key, value in values.items()):
                 source.update(values)
@@ -283,9 +285,11 @@ class PackageEditor:
     def add_layout_item(self, document, kind, parent_key=None):
         owner = self.layout_source(document, parent_key)[0] if parent_key else document["source"]
         if kind == "Iteration":
+            if not parent_key or not (parent_key.count('/') == 1 or parent_key.split('/')[-2] in {'Contents', 'Content', 'contents', 'content'}):
+                raise ValueError("Select a layout or content before adding an iteration.")
             if isinstance(owner.get("Iteration", owner.get("iteration")), dict):
-                raise ValueError("This content already has an iteration.")
-            source = {"$$Id": "NewIteration1", "Descr": "", "Condition": "", "Path": "$", "Type": "Array", "Fields": []}
+                raise ValueError("This layout or content already has an iteration.")
+            source = {"$$Id": "NewIteration1", "Descr": "", "Condition": "", "Path": "$", "Type": "Spliterator" if parent_key.count("/") == 1 else "Iterator", "Fields": []}
             def apply():
                 owner["Iteration"] = source
                 self.touch(document["source"])
@@ -345,6 +349,7 @@ class PackageEditor:
         else:
             while ancestor:
                 if ((parent_kind == 'Layout' and len(ancestor.split('/')) == 2) or
+                    (kind == 'Iteration' and len(ancestor.split('/')) == 2) or
                     (parent_kind == 'Content' and len(ancestor.split('/')) > 1 and ancestor.split('/')[-2] in {'Contents', 'Content', 'contents', 'content'}) or
                     (parent_kind == 'Iteration' and ancestor.endswith('/Iteration'))):
                     break
@@ -357,8 +362,10 @@ class PackageEditor:
             property_name = next((key for key in keys if isinstance(owner.get(key), list if kind != 'Iteration' else dict)), keys[0])
             prefix = ancestor + '/' + property_name
         if kind == 'Iteration':
+            if ancestor.count('/') == 1 and clipboard[0].get('Type') != 'Spliterator':
+                raise ValueError("Layout Iteration Type must be 'Spliterator'.")
             if isinstance(owner.get('Iteration', owner.get('iteration')), dict):
-                raise ValueError('This content already has an iteration.')
+                raise ValueError('This layout or content already has an iteration.')
             def apply():
                 owner[property_name] = copy.deepcopy(clipboard[0])
                 self.touch(document['source'])

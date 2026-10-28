@@ -241,12 +241,15 @@ class DataEditing:
             self.edit_value()
 
     def edit_menu(self, point):
+        from .context_menus import populate_data_menu, select_target
         item = self.tree.itemAt(point)
-        if item is not None:
-            self.tree.setCurrentItem(item)
+        select_target(self.tree, item)
         menu = QMenu(self)
-        menu.addActions(list(self.edit_actions.values()))
-        menu.exec(self.tree.viewport().mapToGlobal(point))
+        populate_data_menu(menu, self, self.tree, item)
+        try:
+            menu.exec(self.tree.viewport().mapToGlobal(point))
+        finally:
+            menu.deleteLater()
 
     def selected_parts(self):
         return path_parts(self.path.text())

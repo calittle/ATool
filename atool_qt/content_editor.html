@@ -142,6 +142,69 @@ function undoRich(){if(undoStack.length){redoStack.push(snapshot());restoreEdit(
 function redoRich(){if(redoStack.length){undoStack.push(snapshot());restoreEdit(redoStack.pop());}}
 function loadHtml(value, revision){closeDialog();generation=revision;undoStack=[];redoStack=[];lastSnapshot=value;setting=true;original=value;changed=false;activeCell=null;editor.innerHTML=value;normalizeChips();observer.takeRecords();setting=false;}
 function context(value){fields=value.fields||[];iterations=value.iterations||[];contents=value.contents||[];editor.style.fontFamily=value.fontFamily||'';}
+let contextTarget=null, contextRequest=0;
+function canMergeContext(direction){
+ const t=table();if(!t)return false;const layout=tableGrid(t),p=layout.positions.get(activeCell);
+ const horizontal=direction==='left'||direction==='right';
+ const r=direction==='up'?p.row-1:direction==='down'?p.row+p.h:p.row;
+ const c=direction==='left'?p.col-1:direction==='right'?p.col+p.w:p.col;
+ const other=layout.grid[r]?.[c];if(!other||other===activeCell)return false;const q=layout.positions.get(other);
+ return activeCell.parentElement.parentElement===other.parentElement.parentElement &&
+  (horizontal?(p.row===q.row&&p.h===q.h&&(q.col+q.w===p.col||p.col+p.w===q.col)):
+   (p.col===q.col&&p.w===q.w&&(q.row+q.h===p.row||p.row+p.h===q.row)));
+}
+function prepareContext(target,x,y,keyboard=false){
+ const chip=target.closest('.chip[data-comms]'),cell=target.closest('td,th'),link=target.closest('a[href]');
+ selectCell(cell);
+ const selection=window.getSelection();
+ // Retain a selection containing the clicked target; otherwise place the caret
+ // at the clicked position so formatting/paste cannot affect a previous target.
+ let range=selection.rangeCount&&editor.contains(selection.getRangeAt(0).commonAncestorContainer)?selection.getRangeAt(0).cloneRange():null;
+ const caret=keyboard?null:document.caretRangeFromPoint(x,y);
+ if(chip){range=document.createRange();range.selectNode(chip);}
+ else if(!range||(!keyboard&&(!caret||range.comparePoint(caret.startContainer,caret.startOffset)!==0))){
+  range=caret;
+  if(!range||!editor.contains(range.commonAncestorContainer)){range=document.createRange();range.selectNodeContents(target);range.collapse(false);}
+ }
+ contextTarget={chip,cell,link,range,revision:generation,request:++contextRequest};
+ return {generation,request:contextRequest,x,y,cell:Boolean(cell),selection:Boolean(range&&!range.collapsed),
+  undo:Boolean(undoStack.length),redo:Boolean(redoStack.length),
+  chipKind:chip?(chip.classList.contains('data')?'data':chip.classList.contains('loop')?'loop':'cond'):null,
+  chipMarkup:chip?chip.dataset.comms:null,link:link?link.getAttribute('href'):null,
+  merge:Object.fromEntries(['left','right','up','down'].map(direction=>[direction,canMergeContext(direction)]))};
+}
+function restoreContext(revision,request){
+ const ctx=contextTarget;if(!ctx||ctx.revision!==generation||revision!==generation||ctx.request!==request||!editor.contains(ctx.range.commonAncestorContainer))return false;
+ if((ctx.chip&&!editor.contains(ctx.chip))||(ctx.cell&&!editor.contains(ctx.cell)))return false;
+ editor.focus();const selection=window.getSelection();selection.removeAllRanges();selection.addRange(ctx.range);
+ selectCell(ctx.cell);return true;
+}
+function runContextCommand(name,revision,request){
+ if(!restoreContext(revision,request))return false;
+ const ctx=contextTarget;
+ const actions={undo:undoRich,redo:redoRich,bold:()=>cmd('bold'),italic:()=>cmd('italic'),underline:()=>cmd('underline'),
+  format:chooseFormat,editLink:()=>{if(ctx.link){const range=document.createRange();range.selectNodeContents(ctx.link);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);chooseFormat();document.getElementById('format-link').value=ctx.link.getAttribute('href');}},
+  insertField,editChip:()=>ctx.chip&&editChip(ctx.chip),removeChip:()=>ctx.chip&&ctx.chip.remove(),
+  rowAbove:()=>addRow(true),rowBelow:()=>addRow(false),columnLeft:()=>addColumn(true),columnRight:()=>addColumn(false),
+  splitHorizontal:()=>splitCell(false),splitVertical:()=>splitCell(true),mergeLeft,mergeRight,mergeUp,mergeDown,
+  cellStyle:cellProperties,tableStyle:tableProperties};
+ if(!actions[name])return false;
+ actions[name]();
+ if(!['undo','redo','format','editLink','insertField','editChip','cellStyle','tableStyle'].includes(name))notify();
+ return true;
+}
+editor.addEventListener('contextmenu',event=>{
+ if(!bridge||document.getElementById('dialog').classList.contains('open'))return;
+ event.preventDefault();bridge.contextMenu(JSON.stringify(prepareContext(event.target,event.clientX,event.clientY)));
+});
+editor.addEventListener('keydown',event=>{
+ if(event.key!=='ContextMenu'&&!(event.key==='F10'&&event.shiftKey))return;
+ if(!bridge)return;event.preventDefault();
+ const selection=window.getSelection(),node=selection.anchorNode;
+ const target=node?(node.nodeType===Node.ELEMENT_NODE?node:node.parentElement):editor;
+ const rect=selection.rangeCount?selection.getRangeAt(0).getBoundingClientRect():editor.getBoundingClientRect();
+ bridge.contextMenu(JSON.stringify(prepareContext(target,rect.left,rect.bottom,true)));
+});
 function insertMarkup(raw){insertChip(makeChip(raw));notify();}
 function chooseFormat(){
  const card=document.getElementById('card');

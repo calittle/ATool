@@ -150,14 +150,20 @@ class FavoritesActions:
         if index is None:
             return
         name = item.data(0, ROLE + 4) if kind == 'fields' else self.clauses.records[index]['name']
+        self.set_favorite_names(kind, [name], item.checkState(column) == Qt.CheckState.Checked)
+
+    def set_favorite_names(self, kind, selected_names, enabled):
+        """Update one or many personal favorites with a single settings write."""
+        if self.session is None:
+            return
         store = self.comms.settings
         payload = copy.deepcopy(store.payload)
         favorites = copy.deepcopy(self.package_favorites())
         names = set(favorites.get(kind, []))
-        if item.checkState(column) == Qt.CheckState.Checked:
-            names.add(name)
+        if enabled:
+            names.update(selected_names)
         else:
-            names.discard(name)
+            names.difference_update(selected_names)
         favorites[kind] = sorted(names)
         payload['favorites'] = dict(store.section('favorites'))
         payload['favorites'][session_package_name(self.session)] = favorites

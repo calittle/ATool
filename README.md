@@ -475,6 +475,23 @@ a lavender background and purple outline; PASS/mapped values are blue and
 FAIL/unmapped values are red. An asterisk marks changed items. Field Manager
 supports multi-field copy/paste with Cmd/Ctrl+C and Cmd/Ctrl+V.
 
+Right-click a manager row for actions on that item, or right-click inside a
+multi-selection to keep the selection. Right-click empty grid space for manager
+actions without targeting a previous row. Use Control-click on macOS, or the
+Menu key / Shift+F10 with the grid focused. Menus offer full-value copying,
+applicable editing and navigation commands, and favorites where supported.
+Document menus distinguish removing an Assembly Template document from removing
+its package association. Layout paste and move actions follow the destination
+type and source order, including when the grid is sorted.
+
+Right-click grid headers for sorting and sizing, panel titles or dock tabs for
+panel controls, and status messages to copy their full details. Secondary dialog
+grids expose their existing row actions and copy commands; existing confirmation
+and lock checks still apply. Text boxes keep their standard editing menus and
+add full-value copying. In Rich HTML, right-click a field, condition, or loop chip
+to edit, copy its Comms markup, or remove it; right-click table cells for table
+tools. Activity also offers **Copy All Activity**.
+
 Expanded containers in Data Manager show child property names and array indices
 without repeating the parent path. Standalone search results show compact paths
 with ancestor context when needed to distinguish matches. The full path remains
@@ -499,6 +516,25 @@ subsequent previews and remapping. The displayed data filename updates to match.
 Editing leaves the original input file unchanged
 until you use Save or explicitly save over it; save a copy before mapping another file or
 closing the app to keep your changes. These controls apply to the native Qt app.
+
+### Repeat a layout for each data row
+
+In the Qt **Layout Manager**, select a Layout and choose **Add Iteration**.
+Layout iterations use **Spliterator**. Set its name and collection Path (for
+example, `$.chargeRows[*]`), then use **Add Field** to define row fields such as
+`charge` with Path `$.charge`.
+
+The saved assembly template places `Iteration` directly on the Layout, alongside
+`Contents`. Comms repeats the entire layout and its content for each matching
+row. These fields appear in the Content Manager's field picker for that layout's
+content and use ordinary `<comms-data>` tags; no `<comms-loop>` is required.
+Mapping data previews the layout fields and content conditions in each row's
+context. An empty collection suppresses the layout in the mapping preview.
+
+Select Content instead to add a Content iteration. **Iterator** repeats elements
+inside Content using `<comms-loop>`; **Spliterator** repeats Content itself.
+Each Layout or Content can have one iteration. Iterations and their fields support
+copy/paste, removal, and undo/redo.
 
 ### Generate previews in multiple languages
 

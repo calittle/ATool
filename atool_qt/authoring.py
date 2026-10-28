@@ -344,7 +344,8 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         return {key: value for key, value in values.items() if value != record.get(keys.get(key, key), "")}
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.FocusOut and not self.refreshing and self.editor:
+        if (event.type() == QEvent.Type.FocusOut and event.reason() != Qt.FocusReason.PopupFocusReason
+                and not self.refreshing and self.editor):
             if watched is self.documents.description:
                 self.apply_record("documents")
             elif watched in (self.fields.description, self.fields.expression):
@@ -380,8 +381,11 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
             return
         parent_kind = {"Content": "Layout", "Iteration": "Content", "Field": "Iteration"}.get(kind)
         parent = self.layout_ancestor(parent_kind) if parent_kind else None
+        if kind == "Iteration" and parent is None:
+            parent = self.layout_ancestor("Layout")
         if parent_kind and not parent:
-            self.report_error("Select a parent", f"Select a {parent_kind.lower()} before adding a {kind.lower()}.")
+            parent_label = "layout or content" if kind == "Iteration" else parent_kind.lower()
+            self.report_error("Select a parent", f"Select a {parent_label} before adding a {kind.lower()}.")
             return
         try:
             key = self.editor.add_layout_item(self.active_document, kind, parent)
@@ -443,9 +447,12 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
                     _, node = self.layout_selection()
                     iteration = bool(node and node['kind'] == 'Iteration')
                     widget.setEditable(not iteration)
-                    for name in ("Iterator", "Spliterator") if iteration else ():
-                        if widget.findText(name) < 0:
-                            widget.addItem(name)
+                    choices = ("Spliterator",) if iteration and node['key'].count('/') == 2 else ("Iterator", "Spliterator")
+                    if iteration:
+                        current_type = str(node['source'].get('Type', ''))
+                        widget.clear()
+                        widget.addItems(list(dict.fromkeys([current_type, *choices])))
+                        widget.setCurrentText(current_type)
             elif hasattr(widget, "setReadOnly"):
                 widget.setReadOnly(not editable)
             if not widget.property("authoringConnected"):

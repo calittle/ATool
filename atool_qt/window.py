@@ -1079,6 +1079,8 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.statusBar().addWidget(self.data_label, 1)
         self.install_authoring()
         self.install_favorites()
+        from .context_menus import WorkspaceContextMenus
+        self.context_menus = WorkspaceContextMenus(self)
         self.reset_layout()
         geometry = self.settings.value("geometry")
         state = self.settings.value("dockState")

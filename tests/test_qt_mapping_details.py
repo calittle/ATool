@@ -44,11 +44,33 @@ class MappingSemanticsTests(unittest.TestCase):
         amount = nodes["Amount"]
         self.assertEqual([[0], []], [row["values"] for row in amount["rows"]])
         self.assertEqual([True, False], [row["passed"] for row in amount["rows"]])
-        self.assertFalse(amount["state"])
+        self.assertTrue(amount["state"])
+        self.assertEqual("Mapped in 1 of 2 rows", amount["reason"])
         self.assertEqual([[False], [True]], [row["values"] for row in nodes["Flag"]["rows"]])
         self.assertTrue(nodes["Flag"]["state"])
+        self.assertEqual("Mapped in every row", nodes["Flag"]["reason"])
         self.assertTrue(nodes["Rows"]["state"])
         self.assertEqual([99], session.fields[0]["mapped_values"])
+
+    def test_sparse_field_passes_when_any_row_maps(self):
+        for value in ("*", 0, False):
+            with self.subTest(value=value):
+                session = nested_session()
+                session.map_data({"enabled": True, "show": True,
+                                  "rows": [{}, {"flag": value}, {}, {}]}, "sparse.json")
+                flag = next(node for node in flatten(session.layouts_for(session.documents[0]))
+                            if node["source"].get("Name") == "Flag")
+                self.assertTrue(flag["state"])
+                self.assertEqual("Mapped in 1 of 4 rows", flag["reason"])
+                self.assertEqual([False, True, False, False], [row["passed"] for row in flag["rows"]])
+
+    def test_field_without_any_mapped_values_fails(self):
+        session = nested_session()
+        session.map_data({"enabled": True, "show": True, "rows": [{}, {}]}, "missing.json")
+        flag = next(node for node in flatten(session.layouts_for(session.documents[0]))
+                    if node["source"].get("Name") == "Flag")
+        self.assertFalse(flag["state"])
+        self.assertEqual("No mapped values, or condition/parent suppressed", flag["reason"])
 
     def test_parent_condition_suppresses_values_and_empty_iteration_suppresses_content(self):
         session = nested_session()
@@ -176,7 +198,9 @@ class MappingInterfaceTests(unittest.TestCase):
         panel.tree.setCurrentItem(amount)
         self.assertEqual(2, panel.mapped_values.topLevelItemCount())
         self.assertEqual(BLUE, panel.mapped_values.topLevelItem(0).foreground(0).color().name())
-        self.assertEqual(RED, amount.foreground(0).color().name())
+        self.assertEqual(BLUE, amount.foreground(0).color().name())
+        self.assertEqual("PASS", amount.text(2))
+        self.assertEqual("PASS · Mapped in 1 of 2 rows", panel.mapping_status.text())
         self.assertEqual(RED, panel.mapped_values.topLevelItem(1).foreground(0).color().name())
         colors = {item.text(0): item.foreground(0).color().name() for item in
                   (self.window.fields.tree.topLevelItem(i) for i in range(self.window.fields.tree.topLevelItemCount()))}

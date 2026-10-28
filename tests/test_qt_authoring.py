@@ -248,6 +248,51 @@ class AuthoringInterfaceTests(unittest.TestCase):
         self.assertEqual(3, len(window.session.payload["Documents"][0]["Layouts"]))
         self.assertEqual("L2 Copy", window.layouts.name.text())
 
+    def test_click_layout_then_iteration_button_keeps_contents_unchanged(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        window = self.window
+        window.editor.add_layout_item(window.session.documents[0], 'Content', 'layout/0')
+        window.refresh_edit()
+        window.select_layout_key('layout/0/Contents/0')
+        window.show_panel('layouts')
+        self.app.processEvents()
+        tree = window.layouts.tree
+        layout_item = tree.topLevelItem(0)
+        QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton,
+                         pos=tree.visualItemRect(layout_item).center())
+        self.assertEqual('Layout', window.layout_selection()[1]['kind'])
+        action = next(action for action in window.layouts.authoring_toolbar.actions()
+                      if action.text() == 'Add Iteration')
+        button = window.layouts.authoring_toolbar.widgetForAction(action)
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        layout = window.session.documents[0]['source']['Layouts'][0]
+        self.assertEqual('Spliterator', layout['Iteration']['Type'])
+        self.assertNotIn('Iteration', layout['Contents'][0])
+
+    def test_layout_iteration_toolbar_and_type_choices(self):
+        window = self.window
+        window.select_layout_key('layout/0')
+        actions = {action.text(): action for action in window.layouts.authoring_toolbar.actions()}
+        self.assertTrue(actions['Add Iteration'].isEnabled())
+        actions['Add Iteration'].trigger()
+        _, node = window.layout_selection()
+        self.assertEqual('layout/0/Iteration', node['key'])
+        self.assertEqual('Spliterator', node['source']['Type'])
+        box = window.layouts.property_controls['Type']
+        self.assertEqual(['Spliterator'], [box.itemText(i) for i in range(box.count())])
+        self.assertFalse(box.isEditable())
+        self.assertFalse(actions['Add Iteration'].isEnabled())
+        self.assertTrue(actions['Add Field'].isEnabled())
+        actions['Add Field'].trigger()
+        self.assertEqual('layout/0/Iteration/Fields/0', window.layout_selection()[1]['key'])
+        window.select_layout_key('layout/0')
+        self.assertFalse(actions['Add Iteration'].isEnabled())
+        actions['Add Content'].trigger()
+        self.assertTrue(actions['Add Iteration'].isEnabled())
+        actions['Add Iteration'].trigger()
+        self.assertEqual('Iterator', window.layout_selection()[1]['source']['Type'])
+
     def test_initial_layout_properties_are_editable_and_iteration_type_validated(self):
         window = self.window
         doc = window.session.documents[0]
@@ -268,9 +313,7 @@ class AuthoringInterfaceTests(unittest.TestCase):
         box = window.layouts.property_controls['Type']
         self.assertTrue(box.isEnabled())
         self.assertFalse(box.isEditable())
-        # The original creates Array iterations but offers Iterator/Spliterator
-        # when changing the type. Keep the current legacy value visible.
-        self.assertEqual({'Array', 'Iterator', 'Spliterator'}, {box.itemText(i) for i in range(box.count())})
+        self.assertEqual({'Iterator', 'Spliterator'}, {box.itemText(i) for i in range(box.count())})
 
 
 class PublishHistoryValueTests(unittest.TestCase):

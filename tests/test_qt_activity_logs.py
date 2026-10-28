@@ -61,7 +61,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual([action for action in first.actions() if not action.isSeparator()],
                          [action for action in second.actions() if not action.isSeparator()])
         self.assertEqual([action.text() for action in first.actions() if not action.isSeparator()],
-                         ['Copy', 'Select All', 'Open Current Log', 'Show Log Folder', 'Save Activity…', 'Clear Activity'])
+                         ['Copy', 'Copy All Activity', 'Select All', 'Open Current Log', 'Show Log Folder', 'Save Activity…', 'Clear Activity'])
         for menu in (first, second):
             self.activity.appendPlainText('pending latest detail')
             def opened(url):
@@ -71,7 +71,7 @@ class ActivityTests(unittest.TestCase):
                 self.assertFalse(self.activity.file_log.busy)
                 return True
             with patch('atool_qt.activity.QDesktopServices.openUrl', side_effect=opened) as launch:
-                menu.actions()[3].trigger()
+                self.activity.menu_actions['open_log'].trigger()
                 launch.assert_called_once()
 
     def test_show_folder_and_open_failure_or_flush_timeout(self):

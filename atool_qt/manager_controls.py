@@ -91,15 +91,27 @@ class ManagerControlActions:
         _, node = self.layout_selection()
         selected = document_editable and bool(node)
         ancestors = {kind: self.layout_ancestor(kind) for kind in ('Layout', 'Content', 'Iteration')}
-        content = self.editor.layout_source(document, ancestors['Content'])[0] if document_editable and ancestors['Content'] else None
+        owner_key = ancestors['Content'] or ancestors['Layout']
+        content = self.editor.layout_source(document, owner_key)[0] if document_editable and owner_key else None
         accepts_iteration = bool(content is not None and not isinstance(content.get('Iteration', content.get('iteration')), dict))
         path = str(node['source'].get('Path') or '') if node else ''
         valid_path = DataQueries()._validate_field_path(path)[0] if path else False
+        nodes = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.layouts.tree.selectedItems() if not item.isHidden()]
+        copy_kinds = {node['kind'] for node in nodes}
+        copyable = bool(nodes) and len(copy_kinds) == 1 and (copy_kinds != {'Iteration'} or len(nodes) == 1)
+        up = down = False
+        if selected:
+            try:
+                _, siblings, index = self.editor.layout_source(document, node['key'])
+            except (KeyError, IndexError, TypeError):
+                # Selection signals can fire between a mutation and tree rebuild.
+                siblings, index = None, 0
+            if isinstance(siblings, list):
+                up, down = index > 0, index < len(siblings) - 1
         states = {'Add Layout': document_editable, 'Add Content': document_editable and bool(ancestors['Layout']),
                   'Add Iteration': document_editable and accepts_iteration, 'Add Field': document_editable and bool(ancestors['Iteration']),
-                  'Remove': selected, 'Apply': selected, 'Up': selected and node['kind'] in {'Layout', 'Content', 'Field'} if node else False,
-                  'Down': selected and node['kind'] in {'Layout', 'Content', 'Field'} if node else False,
-                  'Copy': selected, 'Paste': document_editable and bool(self.layout_clipboard),
+                  'Remove': selected, 'Apply': selected, 'Up': up, 'Down': down,
+                  'Copy': selected and copyable, 'Paste': document_editable and self.can_paste_layout(),
                   'Browse Path': selected and valid_path,
                   'Evaluate Condition': selected and bool(str(node['source'].get('Condition') or '').strip()) if node else False}
         for action in self.layouts.authoring_toolbar.actions():
@@ -114,4 +126,26 @@ class ManagerControlActions:
             elif action.text() == 'Insert Name':
                 action.setEnabled(available and bool(self.clauses.clause_picker.currentText()))
             elif action.text() == 'Apply Composed':
-                action.setEnabled(document_editable)
+                layout_target = not self.clauses.target_label.text().startswith('Target: Document')
+                action.setEnabled(document_editable and (not layout_target or bool(node)))
+
+    def can_paste_layout(self):
+        """Check destination eligibility without modifying the editor or its history."""
+        kind = self.layout_clipboard_kind
+        if not self.layout_clipboard or kind not in {'Layout', 'Content', 'Iteration', 'Field'}:
+            return False
+        if kind == 'Layout':
+            return True
+        parent = self.layouts.tree.currentItem()
+        wanted = {'Content': {'Layout'}, 'Iteration': {'Content', 'Layout'}, 'Field': {'Iteration'}}[kind]
+        while parent is not None:
+            node = parent.data(0, Qt.ItemDataRole.UserRole)
+            if node['kind'] in wanted:
+                if kind != 'Iteration':
+                    return True
+                source = node['source']
+                return (len(self.layout_clipboard) == 1
+                        and not isinstance(source.get('Iteration', source.get('iteration')), dict)
+                        and (node['kind'] != 'Layout' or self.layout_clipboard[0].get('Type') == 'Spliterator'))
+            parent = parent.parent()
+        return False

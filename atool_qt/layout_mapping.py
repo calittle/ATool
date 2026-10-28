@@ -48,11 +48,20 @@ def layout_nodes(document: dict, data: object, mapped: bool, fields: list[dict],
             for row, context, passed in active:
                 values = evaluator._extract_values_by_path(context, relative(path, parent_path)) if path and passed and mapped else []
                 node["rows"].append({"row": row, "values": values, "passed": passed and bool(values)})
-            node["state"] = bool(node["rows"]) and all(row["passed"] for row in node["rows"]) if mapped else None
-            node["reason"] = "Mapped in every row" if node["state"] else "Missing value in one or more rows, or parent suppressed"
+            mapped_rows = sum(row["passed"] for row in node["rows"])
+            node["state"] = bool(mapped_rows) if mapped else None
+            node["reason"] = ("Mapped in every row" if mapped_rows == len(node["rows"]) else
+                              f"Mapped in {mapped_rows} of {len(node['rows'])} rows") if node["state"] else "No mapped values, or condition/parent suppressed"
         else:
             node["state"] = any(passed for _, _, passed in active) if mapped else None
             node["reason"] = "Triggered" if node["state"] else "Condition or parent not triggered"
+        iteration = source.get("Iteration", source.get("iteration"))
+        iteration_node = None
+        if isinstance(iteration, dict):
+            iteration_node = build("Iteration", iteration, f"{key}/Iteration", active, parent_path)
+            if kind in {"Layout", "Content"} and iteration.get("Type") == "Spliterator":
+                child_contexts = [(row["row"], row["values"][0], True) for row in iteration_node["rows"]]
+                child_path = normalizer._normalize_true_path(str(iteration.get("Path", "")))
         groups = (("Layouts", "Layout"), ("Contents", "Content"), ("Content", "Content"),
                   ("contents", "Content"), ("content", "Content"), ("Fields", "Field"), ("fields", "Field"))
         seen = set()
@@ -64,11 +73,10 @@ def layout_nodes(document: dict, data: object, mapped: bool, fields: list[dict],
             for index, child in enumerate(children):
                 if isinstance(child, dict):
                     node["children"].append(build(child_kind, child, f"{key}/{property_name}/{index}", child_contexts, child_path))
-        iteration = source.get("Iteration", source.get("iteration"))
-        if isinstance(iteration, dict):
-            node["children"].append(build("Iteration", iteration, f"{key}/Iteration", active, parent_path))
-        # A content block with an iterator is useful only when the iterator has rows.
-        if kind == "Content" and isinstance(iteration, dict) and mapped:
+        if iteration_node is not None:
+            node["children"].append(iteration_node)
+        # Repeated layouts and content need at least one active iteration row.
+        if kind in {"Layout", "Content"} and isinstance(iteration, dict) and mapped:
             node["state"] = bool(node["state"]) and bool(node["children"][-1]["state"])
             node["reason"] = "Triggered with iterator rows" if node["state"] else "No iterator rows or condition/parent suppressed"
         return node

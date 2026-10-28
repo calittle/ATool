@@ -18,28 +18,37 @@ from PySide6.QtWidgets import (
 
 
 def content_fields(session, content_name):
-    """AT globals plus iterator fields belonging to this particular Content."""
+    """AT globals and fields in this Content’s iteration and ancestor Spliterators."""
     definitions = {}
     def name(value):
         return str(value.get('name') or value.get('Name') or value.get('$$Id') or value.get('Id') or '').strip()
-    def walk(value):
+    inherited_fields = []
+    def iteration_fields(iteration):
+        values = iteration.get('Fields', iteration.get('fields', []))
+        return [{'name': name(field), 'scope': 'Iteration', 'path': str(field.get('Path', ''))}
+                for field in (values if isinstance(values, list) else []) if isinstance(field, dict) and name(field)]
+
+    def walk(value, inherited=()):
         if isinstance(value, dict):
             iteration = value.get('Iteration', value.get('iteration'))
-            if name(value) == content_name and isinstance(iteration, dict) and name(iteration):
-                values = iteration.get('Fields', iteration.get('fields', []))
-                values = values if isinstance(values, list) else []
-                fields = [{'name': name(field), 'scope': 'Iteration', 'path': str(field.get('Path', ''))}
-                          for field in values if isinstance(field, dict) and name(field)]
-                definitions.setdefault(name(iteration), dict(name=name(iteration), path=str(iteration.get('Path', '')),
-                    condition=str(iteration.get('Condition', '')), type=str(iteration.get('Type', '')), fields=fields))
-            for child in value.values():
-                walk(child)
+            scoped = list(inherited)
+            if isinstance(iteration, dict) and iteration.get('Type') == 'Spliterator':
+                scoped.extend(iteration_fields(iteration))
+            if name(value) == content_name:
+                inherited_fields.extend(scoped)
+                if isinstance(iteration, dict) and name(iteration) and iteration.get('Type') != 'Spliterator':
+                    definitions.setdefault(name(iteration), dict(name=name(iteration), path=str(iteration.get('Path', '')),
+                        condition=str(iteration.get('Condition', '')), type=str(iteration.get('Type', '')), fields=iteration_fields(iteration)))
+            for key, child in value.items():
+                if key not in {'Iteration', 'iteration'}:
+                    walk(child, scoped)
         elif isinstance(value, list):
             for child in value:
-                walk(child)
+                walk(child, inherited)
     walk(session.payload if session else {})
     fields = [{'name': str(field['name']), 'scope': 'AT', 'path': str(field.get('path', ''))}
               for field in (session.fields if session else [])]
+    fields.extend(inherited_fields)
     fields.extend(field for definition in definitions.values() for field in definition['fields'])
     unique = {(field['name'], field['scope']): field for field in fields}
     return sorted(unique.values(), key=lambda field: (field['name'].casefold(), field['scope'])), list(definitions.values())
