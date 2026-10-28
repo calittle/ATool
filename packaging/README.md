@@ -78,8 +78,8 @@ Setup references: [GitHub certificate import](https://docs.github.com/en/actions
 [Apple notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 and [Qt WebEngine deployment](https://doc.qt.io/qt-6/qtwebengine-deploying.html).
 
-App artwork lives in `atool_qt/assets`. The ruby-red glass AT monogram sits
-on a smoked-black glass tile. `atool-source.png` is the master artwork;
+App artwork lives in `atool_qt/assets`. The red AT monogram has a thin luminous
+edge and sits on a glossy black mirror tile. `atool-source.png` is the master artwork;
 run `python tools/build_icons.py` with the Qt dependencies installed to regenerate
 `atool.png`, the multiple-size Windows `atool.ico`, and macOS `atool.icns`.
 The native build embeds the platform icon; both application launchers set the

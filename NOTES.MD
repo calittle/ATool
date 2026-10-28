@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refresh the app icon across macOS, Windows and Linux with a cleaner red AT
+  monogram and glossy black mirror background.
+
 - Match Comms bare filtered-path and wildcard existence checks, including checks
   that pass with no matching values. Mapping and Match Details now expose this
   behavior instead of suppressing a document locally. Explain that an explicit
