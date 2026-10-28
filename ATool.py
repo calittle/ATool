@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.email_input import email_recipients, prepare_email_input
 from atool_core.condition_evaluator import ConditionEvaluator
+from atool_core.field_path_validation import separator_error
 from atool_core.jsonpath_preflight import length_path_issues, require_valid_length_paths
 from atool_core.layout_resolver import LayoutResolver, format_report
 
@@ -13183,6 +13184,9 @@ class AToolApp:
         parse_candidate = self._normalize_path_expression(candidate)
         if not self._is_balanced_parenthesized(parse_candidate):
             return False, "Unbalanced brackets/parentheses/quotes."
+        error = separator_error(parse_candidate)
+        if error:
+            return False, error
 
         true_path = self._normalize_true_path(parse_candidate).strip()
         if not true_path or not true_path.startswith("$"):

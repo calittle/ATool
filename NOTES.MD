@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reject malformed field paths such as `$. bill` before normalization can hide
+  the typo, including pasted fields. Keep spaces in quoted keys and filter values.
+
 - Show the published release version in About when rebuilding release artifacts
   from a newer source commit; local checkouts use the nearest version tag.
 
