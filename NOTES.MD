@@ -1,5 +1,24 @@
 # ATool Release Notes
 
+## v2.3.0
+
+- Add context menus across managers and secondary dialogs for copying full
+  values, editing, navigation and favorites where supported. Preserve existing
+  multi-selections when opening a row menu, and support Control-click on macOS
+  and the Menu key or Shift+F10. Header, panel and status menus provide sizing,
+  panel controls and full-detail copying; Activity adds Copy All Activity.
+- Add Rich HTML context menus to edit, copy Comms markup or remove field,
+  condition and loop chips, and access table tools directly from a cell.
+- Create Layout Spliterator iterations in Layout Manager to repeat an entire
+  layout for each matching data row. Add and edit row fields, expose them in
+  the content field picker, and preview content conditions in each row's
+  context. Empty collections suppress repeated layouts; iterations and fields
+  support copy/paste, removal and undo/redo.
+- Show a Layout Manager field as PASS when at least one row maps successfully,
+  instead of requiring a value in every row. Show the mapped-row count for
+  partial matches and retain individual row details so missing values remain
+  visible. Fields with no mapped values still show FAIL.
+
 ## v2.2.0
 
 - Sign and notarize the Mac application downloads with Apple Developer ID and
