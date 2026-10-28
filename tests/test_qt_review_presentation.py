@@ -138,7 +138,7 @@ class ReviewPresentationTests(unittest.TestCase):
     def test_per_item_markers_counts_undo_save_and_raw_names(self):
         payload = {'$$Id':'Package','Documents':[{'$$Id':'Doc','Layouts':[
             {'$$Id':'Main','Contents':[]},{'$$Id':'Other','Contents':[]}]}],
-            'Fields':[{'Name':'Amount','Path':'$.items[*].amount'}, {'Name':'Single','Path':'$.single'}]}
+            'Fields':[{'Name':'Amount','Path':'$..amount'}, {'Name':'Single','Path':'$.single'}]}
         path = self.root/'AT.json'
         path.write_text(json.dumps(payload))
         session = PackageSession.open(path)
