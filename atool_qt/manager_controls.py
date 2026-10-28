@@ -95,7 +95,7 @@ class ManagerControlActions:
         content = self.editor.layout_source(document, owner_key)[0] if document_editable and owner_key else None
         accepts_iteration = bool(content is not None and not isinstance(content.get('Iteration', content.get('iteration')), dict))
         path = str(node['source'].get('Path') or '') if node else ''
-        valid_path = DataQueries()._validate_field_path(path)[0] if path else False
+        valid_path = DataQueries()._validate_field_path(path, require_concat=False)[0] if path else False
         nodes = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.layouts.tree.selectedItems() if not item.isHidden()]
         copy_kinds = {node['kind'] for node in nodes}
         copyable = bool(nodes) and len(copy_kinds) == 1 and (copy_kinds != {'Iteration'} or len(nodes) == 1)

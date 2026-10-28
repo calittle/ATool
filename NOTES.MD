@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require `concat` around array wildcards (`[*]`) in field mappings to match
+  Comms rules, with an example in the validation error when applying or pasting.
+
 - Reject malformed field paths such as `$. bill` before normalization can hide
   the typo, including pasted fields. Keep spaces in quoted keys and filter values.
 

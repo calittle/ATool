@@ -945,7 +945,7 @@ class DataPanel(DataEditing, QWidget):
             self.report_message("Condition: " + ("PASS" if passed else "FAIL"))
             return
         if mode == "JSONPath" or (mode == "Auto" and query.startswith("$")):
-            valid, reason = evaluator._validate_field_path(query)
+            valid, reason = evaluator._validate_field_path(query, require_concat=False)
             if not valid:
                 self.report_message("Invalid JSONPath: " + reason)
                 return

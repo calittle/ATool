@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from atool_core.condition_evaluator import ConditionEvaluator
-from atool_core.field_path_validation import separator_error
+from atool_core.field_path_validation import separator_error, wildcard_concat_error
 from .paths import PathNormalizer
 
 
@@ -38,7 +38,7 @@ class DataQueries(ConditionEvaluator, PathNormalizer):
         visit(payload, "$")
         return matches
 
-    def _validate_field_path(self, path: str) -> tuple[bool, str]:
+    def _validate_field_path(self, path: str, *, require_concat: bool = True) -> tuple[bool, str]:
         candidate = path.strip()
         if not candidate:
             return False, "Path is empty."
@@ -56,6 +56,10 @@ class DataQueries(ConditionEvaluator, PathNormalizer):
             return False, "Could not derive a valid JSONPath from the expression."
         if not self._is_supported_jsonpath_segments(true_path):
             return False, f"Unsupported JSONPath syntax in resolved path: {true_path}"
+        if require_concat:
+            error = wildcard_concat_error(parse_candidate)
+            if error:
+                return False, error
         return True, ""
 
     def _is_supported_jsonpath_segments(self, path: str) -> bool:

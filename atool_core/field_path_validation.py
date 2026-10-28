@@ -1,4 +1,5 @@
 """Check field path separators before permissive resolver normalization."""
+import re
 
 
 def separator_error(expression: str) -> str:
@@ -32,4 +33,31 @@ def separator_error(expression: str) -> str:
             index = end
             continue
         index += 1
+    return ''
+
+
+def wildcard_concat_error(expression: str) -> str:
+    """Every array wildcard must be inside a concat call for Comms fields."""
+    quote = ''
+    escaped = False
+    calls = []
+    for index, char in enumerate(expression):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote:
+                quote = ''
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == '(':
+            calls.append(bool(re.search(r'\bconcat\s*$', expression[:index])))
+        elif char == ')':
+            if calls:
+                calls.pop()
+        elif char == '[' and re.match(r'\[\s*\*\s*\]', expression[index:]) and not any(calls):
+            return ("Comms field paths containing [*] must use concat. "
+                    "For example: $.concat($.rows[*].amount, '')")
     return ''

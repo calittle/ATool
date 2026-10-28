@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from atool_core.email_input import email_recipients, prepare_email_input
 from atool_core.condition_evaluator import ConditionEvaluator
-from atool_core.field_path_validation import separator_error
+from atool_core.field_path_validation import separator_error, wildcard_concat_error
 from atool_core.jsonpath_preflight import length_path_issues, require_valid_length_paths
 from atool_core.layout_resolver import LayoutResolver, format_report
 
@@ -2398,7 +2398,7 @@ class AToolApp:
         source_ref = details.get("source_ref") if details else None
         node_kind = str(details.get("node_kind", "")) if details else ""
         layout_path = str(source_ref.get("Path", "")).strip() if isinstance(source_ref, dict) else ""
-        is_valid, _reason = self._validate_field_path(layout_path)
+        is_valid, _reason = self._validate_field_path(layout_path, require_concat=False)
         if node_kind not in {"iteration", "field"} or not is_valid:
             return
 
@@ -8462,7 +8462,7 @@ class AToolApp:
         if hasattr(self, "open_layout_path_in_data_browser_button"):
             source_ref = details.get("source_ref") if self._active_layout_node_id else None
             layout_path = str(source_ref.get("Path", "")).strip() if isinstance(source_ref, dict) else ""
-            is_valid_path, _reason = self._validate_field_path(layout_path)
+            is_valid_path, _reason = self._validate_field_path(layout_path, require_concat=False)
             path_state = tk.NORMAL if node_kind in {"iteration", "field"} and is_valid_path else tk.DISABLED
             self.open_layout_path_in_data_browser_button.config(state=path_state)
 
@@ -13175,7 +13175,7 @@ class AToolApp:
         source.clear()
         source.update(ordered)
 
-    def _validate_field_path(self, path: str) -> tuple[bool, str]:
+    def _validate_field_path(self, path: str, *, require_concat: bool = True) -> tuple[bool, str]:
         candidate = path.strip()
         if not candidate:
             return False, "Path is empty."
@@ -13193,6 +13193,10 @@ class AToolApp:
             return False, "Could not derive a valid JSONPath from the expression."
         if not self._is_supported_jsonpath_segments(true_path):
             return False, f"Unsupported JSONPath syntax in resolved path: {true_path}"
+        if require_concat:
+            error = wildcard_concat_error(parse_candidate)
+            if error:
+                return False, error
         return True, ""
 
     def _is_supported_jsonpath_segments(self, path: str) -> bool:

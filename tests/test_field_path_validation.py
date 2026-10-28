@@ -36,7 +36,7 @@ class FieldPathValidationTests(unittest.TestCase):
                     self.assertFalse(validator._validate_field_path(path)[0])
 
     def test_preserves_supported_paths_and_literal_spaces_and_dots(self):
-        paths = [BILL_PATH, '$', '$..bill', '$.rows[*].amount', '$.rows[0].amount',
+        paths = [f"$.concat({BILL_PATH}, '')", '$', '$..bill', "$.concat($.rows[*].amount, '')", '$.rows[0].amount',
                  "$['bill amount']", '$["a. b...c"]',
                  '$.rows[?(@.amount > 1.25 && @.name == "A. B...")].amount',
                  '$.length($.bill)', "$.concat($.bill, ' . ... ')", '  $.bill  ']
@@ -58,3 +58,43 @@ class FieldPathValidationTests(unittest.TestCase):
         self.assertEqual(editor.snapshot(), original)
         self.assertFalse(editor.dirty)
         self.assertEqual(editor.undo_stack, [])
+
+    def test_array_wildcards_require_an_enclosing_concat_call(self):
+        paths = [BILL_PATH, '$.rows[*].amount', '$.rows[ * ].amount',
+                 '$.length($.rows[*])',
+                 "$.concat($.good, '[*]') + $.rows[*].amount",
+                 "$.concat($.good, '') + $.rows[*].amount"]
+        for validator in self.validators():
+            for path in paths:
+                with self.subTest(validator=type(validator).__name__, path=path):
+                    valid, reason = validator._validate_field_path(path)
+                    self.assertFalse(valid)
+                    self.assertIn('must use concat', reason)
+            self.assertFalse(validator._validate_field_path("$.notconcat($.rows[*].amount, '')")[0])
+
+    def test_concat_handles_wildcards_without_matching_literal_text(self):
+        paths = ["$.concat($.rows[*].amount, ', ')",
+                 "$.concat($.rows[ * ].amount, '')",
+                 "$.concat($.groups[*].rows[*].amount, '')",
+                 "$.length($.concat($.rows[*].amount, ''))",
+                 "$['literal[*]']", '$.rows[?(@.name == "[*]")].amount']
+        for validator in self.validators():
+            for path in paths:
+                with self.subTest(validator=type(validator).__name__, path=path):
+                    self.assertEqual(validator._validate_field_path(path), (True, ''))
+            self.assertEqual(validator._validate_field_path('$.rows[*].amount', require_concat=False), (True, ''))
+
+    def test_apply_and_paste_enforce_concat_atomically(self):
+        session = PackageSession.from_payload({'Documents': [], 'Fields': [
+            {'Name': 'Amount', 'Path': '$.bill.amount'}]})
+        editor = PackageEditor(session)
+        original = editor.snapshot()
+        with self.assertRaisesRegex(ValueError, 'must use concat'):
+            editor.update_record(session.fields[0], {'Path': '$.rows[*].amount'}, 'fields')
+        with self.assertRaisesRegex(ValueError, 'must use concat'):
+            editor.paste_fields([{'Name': 'Good', 'Path': '$.good'},
+                                 {'Name': 'Bad', 'Path': '$.rows[*].amount'}])
+        self.assertEqual(editor.snapshot(), original)
+        self.assertEqual(editor.undo_stack, [])
+        editor.update_record(session.fields[0], {'Path': "$.concat($.rows[*].amount, '')"}, 'fields')
+        self.assertEqual(session.fields[0]['source']['Path'], "$.concat($.rows[*].amount, '')")
