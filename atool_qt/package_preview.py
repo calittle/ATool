@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 from atool_core.activity_output import activity_text, HTTP_TRACE_PREFIX, sanitized_http_value
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QTimer
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
     QScrollArea, QWidget)
@@ -106,7 +106,15 @@ class PreviewDialog(QDialog):
             seconds = workspace.comms.settings.timeout_ms // 1000
         self.timeout.setValue(seconds)
         form.addRow('Timeout (seconds)', self.timeout)
-        self.effective = QDateEdit(QDate.fromString(workspace.preview_effective_date, 'yyyy-MM-dd'))
+        self.effective = QDateEdit(QDate.fromString(workspace.current_preview_effective_date(), 'yyyy-MM-dd'))
+        self.effective_day = date.today()
+        self.effective_edited = False
+        self.effective.dateChanged.connect(self.mark_effective_edited)
+        self.date_timer = QTimer(self)
+        self.date_timer.setInterval(1000)
+        self.date_timer.timeout.connect(self.refresh_effective_date)
+        self.date_timer.start()
+        self.finished.connect(self.date_timer.stop)
         self.effective.setCalendarPopup(True)
         self.effective.setDisplayFormat('yyyy-MM-dd')
         form.addRow('Effective date', self.effective)
@@ -126,6 +134,18 @@ class PreviewDialog(QDialog):
         row.addWidget(cancel)
         row.addWidget(submit)
         layout.addLayout(row)
+
+    def mark_effective_edited(self):
+        self.effective_edited = True
+
+    def refresh_effective_date(self):
+        today = date.today()
+        if today != self.effective_day:
+            effective = self.workspace.current_preview_effective_date()
+            self.effective_day = today
+            if not self.effective_edited:
+                self.effective.setDate(QDate.fromString(effective, 'yyyy-MM-dd'))
+                self.effective_edited = False
 
     def refresh_languages(self):
         mapped = None
@@ -155,6 +175,7 @@ class PreviewDialog(QDialog):
             self.input.setText(path)
 
     def submit(self):
+        self.refresh_effective_date()
         languages = [value for value, check in self.languages.items() if check.isChecked()]
         if not languages and self.mapped_language is not None:
             self.workspace.report_error('Preview Package', 'Select at least one language.')
@@ -169,11 +190,19 @@ class PackagePreviewActions:
     def install_preview_actions(self):
         self.preview_jobs = []
         self.preview_effective_date = date.today().isoformat()
+        self.preview_effective_day = date.today()
         self.preview_action = self.action('Preview…', self.preview_package, 'Ctrl+P')
         self.cancel_preview_action = self.action('Cancel All Previews', self.cancel_package_preview, 'Ctrl+.')
         self.package_menu.insertAction(self.publish_action, self.preview_action)
         self.package_menu.insertAction(self.publish_action, self.cancel_preview_action)
         self.package_menu.aboutToShow.connect(self.update_preview_actions)
+
+    def current_preview_effective_date(self):
+        today = date.today()
+        if today != self.preview_effective_day:
+            self.preview_effective_date = today.isoformat()
+            self.preview_effective_day = today
+        return self.preview_effective_date
 
     def mapped_data_path(self):
         if self.session and self.session.mapped:

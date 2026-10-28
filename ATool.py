@@ -420,6 +420,7 @@ class AToolApp:
         self._occs_preview_cancel_requested = False
         self._occs_preview_process: subprocess.Popen[str] | None = None
         self._occs_preview_effective_date = datetime.now().date().isoformat()
+        self._occs_preview_effective_day = datetime.now().date()
         self._occs_process_lock = threading.Lock()
         self._occs_parallel_read_semaphore = threading.BoundedSemaphore(self.OCCS_PARALLEL_READ_LIMIT)
         self._occs_download_all_in_progress = False
@@ -9749,6 +9750,10 @@ class AToolApp:
         return self._default_preview_timeout_seconds(render_types)
 
     def _get_last_occs_preview_effective_date(self) -> str:
+        today = datetime.now().date()
+        if today != getattr(self, "_occs_preview_effective_day", today):
+            self._occs_preview_effective_date = today.isoformat()
+        self._occs_preview_effective_day = today
         return self._occs_preview_effective_date
 
     def _get_occs_package_mru(self) -> list[dict[str, str]]:
@@ -14267,6 +14272,37 @@ class AToolApp:
         timeout_var.trace_add("write", _on_timeout_changed)
 
         effective_date_var = tk.StringVar(value=self._get_last_occs_preview_effective_date())
+        effective_day = datetime.now().date()
+        effective_edited = False
+
+        def _mark_effective_edited(*_args):
+            nonlocal effective_edited
+            effective_edited = True
+
+        effective_date_var.trace_add("write", _mark_effective_edited)
+
+        def _refresh_effective_date():
+            nonlocal effective_day, effective_edited
+            today = datetime.now().date()
+            if today != effective_day:
+                effective = self._get_last_occs_preview_effective_date()
+                effective_day = today
+                if not effective_edited:
+                    effective_date_var.set(effective)
+                    effective_edited = False
+
+        def _poll_effective_date():
+            nonlocal effective_date_job
+            _refresh_effective_date()
+            effective_date_job = dialog.after(1000, _poll_effective_date)
+
+        effective_date_job = dialog.after(1000, _poll_effective_date)
+
+        def _stop_effective_date_poll(event):
+            if event.widget is dialog:
+                dialog.after_cancel(effective_date_job)
+
+        dialog.bind("<Destroy>", _stop_effective_date_poll, add="+")
         ttk.Label(container, text="Effective date:").grid(row=5, column=0, sticky="w", padx=(0, 6), pady=(10, 0))
         effective_date_row = ttk.Frame(container)
         effective_date_row.grid(row=5, column=1, columnspan=2, sticky="w", pady=(10, 0))
@@ -14320,6 +14356,7 @@ class AToolApp:
                 messagebox.showerror("Preview Package", "Timeout must be a positive number of seconds.", parent=dialog)
                 return
 
+            _refresh_effective_date()
             effective_date = self._normalize_occs_preview_effective_date(effective_date_var.get())
             if not effective_date:
                 messagebox.showerror("Preview Package", "Effective date must be a valid YYYY-MM-DD date.", parent=dialog)

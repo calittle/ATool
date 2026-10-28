@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,18 @@ except ImportError:  # pragma: no cover - environments without Tkinter
 
 @unittest.skipIf(AToolApp is None, "Tkinter is not installed")
 class OccsPreviewSettingsTests(unittest.TestCase):
+    def test_date_refreshes_after_calendar_day_changes(self) -> None:
+        app = AToolApp.__new__(AToolApp)
+        app._occs_preview_effective_day = date(2026, 10, 28)
+        app._occs_preview_effective_date = '2026-09-25'
+        with patch('ATool.datetime') as clock:
+            clock.now.return_value.date.return_value = date(2026, 10, 28)
+            self.assertEqual(app._get_last_occs_preview_effective_date(), '2026-09-25')
+            clock.now.return_value.date.return_value = date(2026, 10, 30)
+            self.assertEqual(app._get_last_occs_preview_effective_date(), '2026-10-30')
+            clock.now.return_value.date.return_value = date(2026, 10, 29)
+            self.assertEqual(app._get_last_occs_preview_effective_date(), '2026-10-29')
+
     def test_date_is_not_saved_and_old_saved_date_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings_path = Path(directory) / "settings.json"

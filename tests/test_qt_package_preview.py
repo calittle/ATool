@@ -3,6 +3,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -80,6 +81,35 @@ class PreviewTests(unittest.TestCase):
     def language_data(self, value='ENGLISH'):
         self.payload['billPrint'] = {'billDetails': {'cmElements': {'billLanguagePreference': value}}}
         self.source.write_bytes(encode(self.payload))
+
+    def test_preview_date_rolls_over_after_idle_and_preserves_same_day_choice(self):
+        with patch('atool_qt.package_preview.date') as clock:
+            clock.today.return_value = date(2026, 10, 28)
+            self.window.preview_effective_day = date(2026, 10, 28)
+            self.window.preview_effective_date = '2026-09-01'
+            self.assertEqual(self.window.current_preview_effective_date(), '2026-09-01')
+            clock.today.return_value = date(2026, 10, 30)
+            dialog = PreviewDialog(self.window)
+            self.addCleanup(dialog.close)
+            self.assertEqual(dialog.effective.date().toString('yyyy-MM-dd'), '2026-10-30')
+            clock.today.return_value = date(2026, 10, 31)
+            dialog.date_timer.timeout.emit()
+            self.assertEqual(dialog.effective.date().toString('yyyy-MM-dd'), '2026-10-31')
+            clock.today.return_value = date(2026, 11, 1)
+            dialog.date_timer.timeout.emit()
+            self.assertEqual(dialog.effective.date().toString('yyyy-MM-dd'), '2026-11-01')
+
+    def test_open_preview_preserves_manually_edited_date_on_rollover(self):
+        from PySide6.QtCore import QDate
+        with patch('atool_qt.package_preview.date') as clock:
+            clock.today.return_value = date(2026, 10, 28)
+            dialog = PreviewDialog(self.window)
+            self.addCleanup(dialog.close)
+            dialog.effective.setDate(QDate(2026, 9, 1))
+            clock.today.return_value = date(2026, 10, 29)
+            dialog.date_timer.timeout.emit()
+            self.assertEqual(dialog.effective.date().toString('yyyy-MM-dd'), '2026-09-01')
+            self.assertEqual(self.window.current_preview_effective_date(), '2026-10-29')
 
     def test_language_dialog_matches_input_and_refreshes_when_file_changes(self):
         self.language_data()
