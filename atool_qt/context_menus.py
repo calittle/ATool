@@ -308,6 +308,7 @@ class WorkspaceContextMenus(QObject):
         record = w.selected_record('documents') if item else None
         single = bool(record and len(tree.selectedItems()) == 1)
         if record:
+            self.download_resource_action(menu, 'Document', record['name'], single)
             proxy(menu, w.trigger_clause_action, enabled=single)
             proxy(menu, w.package_actions['Edit Package Condition'], enabled=single)
             command(menu, 'Always Trigger', panel.always_trigger.click, single and panel.always_trigger.isEnabled(), checked=record.get('always_trigger', False))
@@ -335,6 +336,17 @@ class WorkspaceContextMenus(QObject):
             proxy(menu, w.package_actions['Refresh'], 'Refresh Package Documents')
             proxy(menu, w.document_view_action)
             self.panel_actions(menu, tree, panel)
+
+    def download_resource_action(self, menu, resource_type, name, single):
+        w = self.workspace
+
+        def download():
+            try:
+                w.download_resource(resource_type, name)
+            except (ValueError, OSError) as error:
+                w.report_error('Download Resource', str(error))
+
+        command(menu, 'Download Resource', download, single and bool(name))
 
     def fields(self, menu, tree, item):
         w, panel = self.workspace, self.workspace.fields
@@ -376,6 +388,8 @@ class WorkspaceContextMenus(QObject):
         node = item.data(0, ROLE) if item else None
         single = bool(node and len(tree.selectedItems()) == 1)
         if node:
+            if node['kind'] in ('Layout', 'Content'):
+                self.download_resource_action(menu, node['kind'], node['source'].get('$$Id', ''), single)
             for title in ('Add Content', 'Add Iteration', 'Add Field'):
                 action = toolbar_action(panel, title)
                 if action.isEnabled():

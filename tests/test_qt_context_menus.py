@@ -91,6 +91,49 @@ class ContextMenuTests(unittest.TestCase):
         self.assertNotIn('Remove from Assembly Template…', [entry.text() for entry in menu.actions()])
         self.assertTrue(action(menu, 'Add Assembly Template Document').isEnabled())
 
+    def test_download_resource_uses_existing_resource_commands(self):
+        w = self.window
+        cache = Path(self.temp.name) / 'cache'
+        w.comms.settings.payload['occs']['comms_cache_dir'] = str(cache)
+        for tree, item, resource_type, name in (
+            (w.documents.tree, w.documents.tree.topLevelItem(0), 'Document', 'Notice'),
+            (w.layouts.tree, self.layout('Header'), 'Layout', 'Header'),
+            (w.layouts.tree, self.layout('Body'), 'Content', 'Body'),
+        ):
+            with self.subTest(resource_type=resource_type):
+                menu = self.menu(tree, item)
+                with patch.object(w, 'run_comms_operation') as run:
+                    action(menu, 'Download Resource').trigger()
+                run.assert_called_once_with('Download ' + resource_type,
+                    ['get-' + resource_type.lower(), name, '--output', str(cache / (resource_type.lower() + 's'))],
+                    channel='resources')
+                self.assertEqual(w.comms.settings.get('resource_cache_mru')[0]['name'], name)
+
+    def test_download_resource_requires_supported_single_selection(self):
+        w = self.window
+        for tree in (w.documents.tree, w.layouts.tree):
+            menu = self.menu(tree, None)
+            self.assertNotIn('Download Resource', [entry.text() for entry in menu.actions()])
+        select_target(w.documents.tree, w.documents.tree.topLevelItem(0))
+        for name in ('Rows', 'RowValue'):
+            tree, item = w.layouts.tree, self.layout(name)
+            menu = self.menu(tree, item)
+            self.assertNotIn('Download Resource', [entry.text() for entry in menu.actions()])
+        tree = w.layouts.tree
+        select_target(tree, self.layout('Header'))
+        self.layout('Body').setSelected(True)
+        menu = self.menu(tree, self.layout('Header'))
+        self.assertFalse(action(menu, 'Download Resource').isEnabled())
+
+    def test_download_resource_reports_missing_cache_setting(self):
+        w = self.window
+        menu = self.menu(w.layouts.tree, self.layout('Body'))
+        with patch.object(w, 'report_error') as report, patch.object(w, 'run_comms_operation') as run:
+            action(menu, 'Download Resource').trigger()
+        run.assert_not_called()
+        self.assertEqual(report.call_args.args[0], 'Download Resource')
+        self.assertIn('Comms Cache Folder', report.call_args.args[1])
+
     def test_copy_full_values_ignores_display_truncation_and_tooltip_description(self):
         tree = self.window.fields.tree
         item = next(row for row in self.window.fields.items() if row.data(0, Qt.ItemDataRole.UserRole + 4) == 'Amount')
