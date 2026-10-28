@@ -101,7 +101,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         self.layouts.authoring_toolbar.addAction(self.action("Evaluate Condition", self.browse_layout_condition))
         self.layouts.details_ready.connect(self.enable_layout_properties)
         self.layouts.name.editingFinished.connect(self.apply_layout)
-        self.layouts.path.editingFinished.connect(self.apply_layout)
+        self.layouts.path.installEventFilter(self)
         self.layouts.condition.installEventFilter(self)
         self.add_controls(self.clauses, [("Add", self.add_clause), ("Delete", self.delete_clause),
                                          ("Save", self.save_clause), ("Find Usage", self.find_clause_usage),
@@ -350,7 +350,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
                 self.apply_record("documents")
             elif watched in (self.fields.description, self.fields.expression):
                 self.apply_record("fields")
-            elif watched is self.layouts.condition:
+            elif watched in (self.layouts.condition, self.layouts.path):
                 self.apply_layout()
         return super().eventFilter(watched, event)
 
@@ -475,7 +475,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         name_key = "$$Id" if "$$Id" in source else "Name" if "Name" in source else "Id"
         values = {name_key: self.layouts.name.text(), "Condition": self.layouts.condition.toPlainText()}
         if "Path" in source or node["kind"] in {"Field", "Iteration"}:
-            values["Path"] = self.layouts.path.text()
+            values["Path"] = self.layouts.path.toPlainText()
         for key, widget in self.layouts.property_controls.items():
             values[key] = (widget.isChecked() if isinstance(widget, QCheckBox) else widget.currentText() if isinstance(widget, QComboBox)
                            else widget.value() if isinstance(widget, (QSpinBox, QDoubleSpinBox)) else widget.text())
@@ -688,7 +688,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         _, node = self.layout_selection()
         if not node or node["kind"] not in {"Iteration", "Field"}:
             return
-        query = DataQueries()._field_path_for_data_browser(self.layouts.path.text())
+        query = DataQueries()._field_path_for_data_browser(self.layouts.path.toPlainText())
         parent = self.layout_ancestor("Iteration") if node["kind"] == "Field" else None
         if parent:
             iteration = self.editor.layout_source(self.active_document, parent)[0]

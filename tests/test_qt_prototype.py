@@ -102,7 +102,7 @@ class WorkspaceTests(unittest.TestCase):
         amount = next(item for item in items if item.text(0) == "Amount")
         layouts.tree.setCurrentItem(amount)
         self.assertEqual("Field", layouts.kind.text())
-        self.assertEqual("$.charges[*].amount", layouts.path.text())
+        self.assertEqual("$.charges[*].amount", layouts.path.toPlainText())
         self.assertIn('"Name": "Amount"', layouts.source.toPlainText())
         # Mapping refreshes keep the selected layout item in the same document.
         self.window.set_session(self.window.session, preserve_selection=True)

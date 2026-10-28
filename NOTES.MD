@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v2.3.1
+
+- Give Layout Manager paths a three-line wrapping editor and reduce the space
+  reserved for Condition so long paths are easier to read and edit.
+
 - Require `concat` around array wildcards (`[*]`) in field mappings to match
   Comms rules, with an example in the validation error when applying or pasting.
 
@@ -19,6 +24,15 @@
   behavior instead of suppressing a document locally. Explain that an explicit
   `empty false` check is needed to require matches, such as Calculation Details
   opt-in account characteristics.
+
+- Refresh the default Preview effective date when the calendar day changes,
+  including dialogs left open overnight, while preserving a date edited in
+  the current dialog.
+
+- Restore clickable sorting by Name, Description and Favorite in Clause Manager.
+
+- Add Download Resource to document, layout and content context menus so the
+  selected Comms resource can be downloaded directly.
 
 ## v2.3.0
 

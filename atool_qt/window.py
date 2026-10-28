@@ -493,8 +493,10 @@ class LayoutPanel(QWidget):
         self.property_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.property_form.setVerticalSpacing(8)
         self.name, self.kind = line_box(), line_box()
-        self.condition, self.path = text_box(), line_box()
-        self.condition.setMinimumHeight(120)
+        self.condition, self.path = text_box(), text_box()
+        self.condition.setMinimumHeight(90)
+        self.path.setFixedHeight(self.path.fontMetrics().lineSpacing() * 3 + 14)
+        self.path.setTabChangesFocus(True)
         for label, box in (("Name", self.name), ("Item kind", self.kind), ("Condition", self.condition), ("Path", self.path)):
             self.property_form.addRow(label, box)
         self.property_controls = {}
@@ -638,7 +640,7 @@ class LayoutPanel(QWidget):
         self.name.setText(current.data(0, ROLE + 4))
         self.kind.setText(record["kind"])
         self.condition.setPlainText(str(source.get("Condition", "")))
-        self.path.setText(str(source.get("Path", "")))
+        self.path.setPlainText(str(source.get("Path", "")))
         excluded = {"$$Id", "Name", "Id", "Condition", "Path"}
         for key, value in source.items():
             if key in excluded or isinstance(value, (list, dict)):
