@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import sys
+import weakref
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPersistentModelIndex, Qt, QUrl
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QPersistentModelIndex, Qt, QTimer, QUrl
 from PySide6.QtGui import QContextMenuEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget,
@@ -109,7 +110,16 @@ class WorkspaceContextMenus(QObject):
     def __init__(self, workspace):
         super().__init__(workspace)
         self.workspace = workspace
-        QApplication.instance().installEventFilter(self)
+        self._targets = weakref.WeakSet()
+        self._refresh_pending = False
+        self.refresh_targets()
+
+    def refresh_targets(self):
+        self._refresh_pending = False
+        for widget in [self.workspace, *self.workspace.findChildren(QWidget)]:
+            if widget not in self._targets:
+                widget.installEventFilter(self)
+                self._targets.add(widget)
 
     def belongs(self, widget):
         while isinstance(widget, QWidget):
@@ -120,6 +130,15 @@ class WorkspaceContextMenus(QObject):
 
     def eventFilter(self, watched, event):
         kind = event.type()
+        if kind == QEvent.Type.ChildAdded:
+            # Discover new dialog controls after construction. An application-wide
+            # Python filter also wraps WebEngine's partially constructed QObjects
+            # and can crash in Shiboken before this method is even entered.
+            # Do not access event.child() while its constructor is running.
+            if not self._refresh_pending:
+                self._refresh_pending = True
+                QTimer.singleShot(0, self, self.refresh_targets)
+            return False
         if kind not in (QEvent.Type.MouseButtonPress, QEvent.Type.ContextMenu, QEvent.Type.KeyPress) or not self.belongs(watched):
             return False
         if kind == QEvent.Type.KeyPress:

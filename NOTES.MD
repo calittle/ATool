@@ -9,6 +9,8 @@
   panel controls and full-detail copying; Activity adds Copy All Activity.
 - Add Rich HTML context menus to edit, copy Comms markup or remove field,
   condition and loop chips, and access table tools directly from a cell.
+- Keep context-menu event handling scoped to workspace widgets, fixing a Mac
+  startup crash when the embedded HTML editor initializes.
 - Create Layout Spliterator iterations in Layout Manager to repeat an entire
   layout for each matching data row. Add and edit row fields, expose them in
   the content field picker, and preview content conditions in each row's

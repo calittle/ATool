@@ -237,6 +237,20 @@ class ContextMenuTests(unittest.TestCase):
         QTest.keyRelease(tree, Qt.Key.Key_Shift, Qt.KeyboardModifier.NoModifier)
         self.assertIn('Copy Field Definitions', labels)
 
+    def test_new_dialog_controls_receive_context_events(self):
+        dialog = SettingsDialog(self.window)
+        self.addCleanup(dialog.deleteLater)
+        dialog.show()
+        self.app.processEvents()
+        table = dialog.language_table
+        target = table.viewport()
+        point = target.rect().center()
+        labels = []
+        with patch.object(self.window.context_menus, 'exec_menu', lambda menu, *_: labels.extend(entry.text() for entry in menu.actions())):
+            self.app.sendEvent(target, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, target.mapToGlobal(point)))
+        self.assertIn('Add Row', labels)
+        self.assertIn(table, self.window.context_menus._targets)
+
     def test_context_event_on_header_viewport_opens_header_menu(self):
         header = self.window.fields.tree.header()
         point = header.rect().center()
