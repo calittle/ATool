@@ -13034,8 +13034,12 @@ class AToolApp:
             )
 
         values = self._evaluate_condition_operand(data_payload, expr)
-        passed = len(values) > 0
-        return passed, f"values={self._format_mapped_nodeset_preview(values)}"
+        warnings: list[str] = []
+        passed = ConditionEvaluator(self._loaded_fields)._evaluate_bare_condition(
+            expr, data_payload, comms_compatible=comms_compatible, warnings=warnings,
+        )
+        detail = f"values={self._format_mapped_nodeset_preview(values)}"
+        return passed, "; ".join([detail, *warnings])
 
     def _on_field_name_changed(self, *_args: object) -> None:
         self._apply_field_form_change(name=self.edit_field_name_var.get())
@@ -23215,7 +23219,10 @@ class AToolApp:
 
         return passed, [
             f"Check: {expr}",
-            "Expected: path/expression should find at least one value.",
+            ("Expected: Comms bare-path existence check; an empty result can pass. "
+             "Use 'empty false' to require matching values."
+             if ConditionEvaluator()._is_indefinite_condition_path(self._normalize_condition_path(expr))
+             else "Expected: path/expression should find at least one value."),
             f"Found: {self._humanize_condition_detail(details)}",
         ]
 
@@ -23385,8 +23392,9 @@ class AToolApp:
                 return False
             return self._compare_condition_operand_values(left_values, operator, right_values)
 
-        values = self._evaluate_condition_operand(data_payload, expr)
-        return len(values) > 0
+        return ConditionEvaluator(self._loaded_fields)._evaluate_bare_condition(
+            expr, data_payload, comms_compatible=comms_compatible, warnings=warnings,
+        )
 
     @classmethod
     def _condition_path_comms_filter_literal_parse_issue(cls, path_expression: str) -> str:

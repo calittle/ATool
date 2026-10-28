@@ -1,5 +1,13 @@
 # ATool Release Notes
 
+## Unreleased
+
+- Match Comms bare filtered-path and wildcard existence checks, including checks
+  that pass with no matching values. Mapping and Match Details now expose this
+  behavior instead of suppressing a document locally. Explain that an explicit
+  `empty false` check is needed to require matches, such as Calculation Details
+  opt-in account characteristics.
+
 ## v2.3.0
 
 - Add context menus across managers and secondary dialogs for copying full

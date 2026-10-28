@@ -11,6 +11,20 @@ except ImportError:  # pragma: no cover - environments without Tkinter
 
 @unittest.skipIf(AToolApp is None, "Tkinter is not installed")
 class LayoutConditionBrowserTests(unittest.TestCase):
+    def test_legacy_bare_filter_evaluation_and_details_match_comms(self):
+        app = AToolApp.__new__(AToolApp)
+        app._loaded_fields = []
+        path = '@.rows[?(@.enabled == true)]'
+        payload = {'rows': [{'enabled': False}]}
+        self.assertTrue(app._evaluate_document_condition(path, payload))
+        self.assertTrue(app._evaluate_atomic_condition(path, payload))
+        self.assertFalse(app._evaluate_atomic_condition(path, payload, comms_compatible=False))
+        passed, details = app._describe_atomic_condition_result(path, payload)
+        self.assertTrue(passed)
+        self.assertIn('empty result can pass', ' '.join(details))
+        self.assertIn("Add 'empty false'", ' '.join(details))
+        self.assertFalse(app._evaluate_document_condition(path + ' empty false', payload))
+
     def test_layout_field_browser_search_includes_parent_iterator(self):
         app = AToolApp.__new__(AToolApp)
         app._active_layout_node_id = "field-node"

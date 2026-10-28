@@ -909,6 +909,13 @@ conditions in the report. The text is a content facsimile; page layout, fonts,
 and barcode drawing still require a Comms render.
 ## JSONPath preflight
 
+Bare filtered paths and wildcard paths in conditions use Comms existence
+semantics: a defined empty result can pass. For example,
+`@.accountChars[?(@.acctCharacteristicType == 'CM-RSEXP' && @.acctCharacteristicValue == 'Y')]`
+can pass with no matching account characteristic. Append `empty false` when
+the condition must find a match. Mapping follows this behavior, and Match Details
+explains when a bare-path check passes despite an empty result.
+
 The **User Settings → Comms → Check length() JSONPaths (experimental)** option
 is **off by default** while PD's restriction is being clarified. When enabled,
 saving an AT, updating a shared package, and publishing to Comms check for

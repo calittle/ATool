@@ -31,6 +31,73 @@ def bill_payload(*rows):
 
 
 class ConditionEvaluatorTests(unittest.TestCase):
+    def test_bare_filtered_paths_follow_jayway_existence_checks(self):
+        # Verified against Jayway 2.8.0 and 2.9.0: a defined empty result
+        # passes, but REQUIRE_PROPERTIES rejects missing traversed members.
+        path = '@.rows[?(@.value == 1)]'
+        for payload, bare, leaf in (
+            ({}, False, False),
+            ({'rows': []}, True, True),
+            ({'rows': [{'value': 2}]}, True, True),
+            ({'rows': [{'value': 1}]}, True, False),
+            ({'rows': [{'value': 1, 'leaf': 'ok'}]}, True, True),
+            ({'rows': [{'value': 1, 'leaf': 'ok'}, {'value': 1}]}, True, False),
+            ({'rows': None}, False, False),
+            ({'rows': 'text'}, False, False),
+        ):
+            for suffix, expected in (('', bare), ('.leaf', leaf)):
+                with self.subTest(payload=payload, suffix=suffix):
+                    condition = f'$[?({path}{suffix})]'
+                    self.assertEqual(expected, ConditionEvaluator()._evaluate_document_condition(condition, payload))
+                    self.assertEqual(expected, ConditionDiagnostics().explain(condition, payload)['passed'])
+
+    def test_bare_wildcard_and_recursive_existence_checks(self):
+        for path, payload, expected in (
+            ('@.rows[*].leaf', {}, False),
+            ('@.rows[*].leaf', {'rows': []}, True),
+            ('@.rows[*].leaf', {'rows': [{'leaf': 'ok'}, {}]}, False),
+            ('@.rows[*].leaf', {'rows': [{'leaf': None}]}, True),
+            ('@..rows[?(@.value == 1)].leaf', {}, True),
+            ('@..rows[?(@.value == 1)].leaf', {'nested': {'rows': [{'value': 2}]}}, True),
+            ('@..rows[?(@.value == 1)].leaf', {'nested': {'rows': [{'value': 1}]}}, False),
+            ("@['rows'][?(@.value == 1)]['leaf']", {'rows': [{'value': 1}]}, False),
+        ):
+            with self.subTest(path=path, payload=payload):
+                self.assertEqual(expected, ConditionEvaluator()._evaluate_document_condition(path, payload))
+
+    def test_calculation_details_empty_optin_triggers_and_explains_comms_behavior(self):
+        optin = ("@.billPrint.billDetails.cmElements.accountChars"
+                 "[?(@.acctCharacteristicType == 'CM-RSEXP' && @.acctCharacteristicValue == 'Y')]")
+        condition = f'$[?({optin} && (@.nonRT == true || (@.res == true && @.staff == false)))]'
+        payload = {'billPrint': {'billDetails': {'cmElements': {'accountChars': [
+            {'acctCharacteristicType': 'CM-BLLNG', 'acctCharacteristicValue': 'CHINESE'},
+        ]}}}, 'nonRT': True, 'res': False, 'staff': False}
+        session = PackageSession.from_payload({
+            'Documents': [{'$$Id': 'Calculation Details', 'Condition': condition}], 'Fields': [],
+        })
+        session.clauses = [{'name': 'CalcDetails_OptIn', 'expression': optin}]
+        session.map_data(payload, 'synthetic-bill.json')
+        self.assertTrue(session.documents[0]['triggered'])
+        details = session.document_details(session.documents[0])
+        gate = details['children'][0]['children'][0]
+        self.assertTrue(gate['passed'])
+        self.assertEqual('CalcDetails_OptIn', gate['clause_name'])
+        self.assertIn("Add 'empty false'", ' '.join(gate['details']))
+        self.assertIn('empty result can pass', ' '.join(gate['details']))
+        warnings = []
+        self.assertTrue(ConditionEvaluator()._evaluate_document_condition(condition, payload, warnings=warnings))
+        self.assertIn('result is empty', warnings[0])
+        self.assertFalse(ConditionEvaluator()._evaluate_document_condition(
+            condition, payload, comms_compatible=False))
+        self.assertFalse(ConditionEvaluator()._evaluate_document_condition(f'!({optin})', payload))
+        self.assertEqual([], ConditionEvaluator()._evaluate_condition_operand(payload, optin))
+        fixed = condition.replace(optin, optin + ' empty false', 1)
+        self.assertFalse(ConditionEvaluator()._evaluate_document_condition(fixed, payload))
+        payload['billPrint']['billDetails']['cmElements']['accountChars'].append(
+            {'acctCharacteristicType': 'CM-RSEXP', 'acctCharacteristicValue': 'Y'})
+        self.assertTrue(ConditionEvaluator()._evaluate_document_condition(fixed, payload))
+        self.assertFalse(ConditionEvaluator()._evaluate_document_condition(f'!({optin})', payload))
+
     def test_misplaced_root_marker_cannot_trigger_content_with_iterator_rows(self):
         path = '$.billPrint.$.billPrint.billDetails.cmElements.consumptionRemarks'
         payload = {'billPrint': {'billDetails': {'cmElements': {

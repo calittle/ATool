@@ -172,8 +172,73 @@ class ConditionEvaluator:
                     return False
                 return self._compare_condition_operand_values(left_values, operator, right_values)
 
-            values = self._evaluate_condition_operand(data_payload, expr)
-            return len(values) > 0
+            return self._evaluate_bare_condition(
+                expr, data_payload, comms_compatible=comms_compatible, warnings=warnings,
+            )
+
+    def _evaluate_bare_condition(
+        self, expression: str, data_payload: object, *, comms_compatible: bool = True,
+        warnings: list[str] | None = None,
+    ) -> bool:
+        values = self._evaluate_condition_operand(data_payload, expression)
+        path = self._normalize_condition_path(expression)
+        if not comms_compatible or not self._is_indefinite_condition_path(path):
+            return bool(values)
+        passed = self._condition_path_exists(data_payload, path)
+        if passed and not values and warnings is not None:
+            self._append_condition_warning(warnings, (
+                "Comms bare-path existence check passes even though the result is empty. "
+                "Add 'empty false' to require at least one matching value."
+            ))
+        return passed
+
+    def _is_indefinite_condition_path(self, path: str) -> bool:
+        if path.startswith('$..'):
+            return True
+        for segment in self._path_to_segments(path)[1:]:
+            base, brackets = self._split_path_segment(segment)
+            if base == '*' or any(
+                bracket[1:-1].strip() == '*' or bracket[1:-1].strip().startswith('?(')
+                for bracket in brackets
+            ):
+                return True
+        return False
+
+    def _condition_path_exists(self, payload: object, path: str) -> bool:
+        """Jayway bare paths use REQUIRE_PROPERTIES, not result-list truthiness.
+
+        Missing properties on traversed objects fail, but an indefinite path
+        that traverses no candidates still produces a defined (empty) list.
+        """
+        segments = self._path_to_segments(path)[1:]
+        nodes = [payload]
+        recursive = path.startswith('$..')
+        for index, segment in enumerate(segments):
+            base, brackets = self._split_path_segment(segment)
+            if recursive and index == 0:
+                nodes = self._deep_find_values(payload, base)
+            elif base:
+                if base != '*' and base != 'length()' and any(
+                    not isinstance(node, dict) or base not in node for node in nodes
+                ):
+                    return False
+                nodes = [value for node in nodes for value in self._resolve_path_segment(node, base)]
+            for bracket in brackets:
+                content = bracket[1:-1].strip()
+                is_filter = content.startswith('?(') and content.endswith(')')
+                if is_filter:
+                    if recursive and index == 0:
+                        nodes = [node for node in nodes if isinstance(node, (list, dict))]
+                    elif any(not isinstance(node, (list, dict)) for node in nodes):
+                        return False
+                next_nodes = []
+                for node in nodes:
+                    resolved = self._apply_segment_brackets([node], [bracket])
+                    if not resolved and content != '*' and not is_filter:
+                        return False
+                    next_nodes.extend(resolved)
+                nodes = next_nodes
+        return True
 
     @staticmethod
     def _condition_path_syntax_issues(expression: str) -> list[str]:

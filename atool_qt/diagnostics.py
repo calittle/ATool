@@ -290,8 +290,12 @@ class ConditionDiagnostics(ConditionEvaluator):
             )
 
         values = self._evaluate_condition_operand(data_payload, expr)
-        passed = len(values) > 0
-        return passed, f"values={self._format_mapped_nodeset_preview(values)}"
+        warnings: list[str] = []
+        passed = self._evaluate_bare_condition(
+            expr, data_payload, comms_compatible=comms_compatible, warnings=warnings,
+        )
+        detail = f"values={self._format_mapped_nodeset_preview(values)}"
+        return passed, "; ".join([detail, *warnings])
 
     def _format_mapped_nodeset_preview(self, mapped_values: list[object]) -> str:
         preview_items = [self._format_mapping_value_preview(value) for value in mapped_values[:5]]
@@ -372,7 +376,10 @@ class ConditionDiagnostics(ConditionEvaluator):
 
         return passed, [
             f"Check: {expr}",
-            "Expected: path/expression should find at least one value.",
+            ("Expected: Comms bare-path existence check; an empty result can pass. "
+             "Use 'empty false' to require matching values."
+             if self._is_indefinite_condition_path(self._normalize_condition_path(expr))
+             else "Expected: path/expression should find at least one value."),
             f"Found: {self._humanize_condition_detail(details)}",
         ]
 
