@@ -97,6 +97,8 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_layout_manager_tracks_document_and_nested_selection(self):
         layouts = self.window.layouts
+        # Exercise the AT hierarchy independently of any personal Comms cache.
+        layouts.show_cached.setChecked(False)
         items = list(layouts.items())
         self.assertEqual(7, len(items))
         amount = next(item for item in items if item.text(0) == "Amount")

@@ -89,7 +89,7 @@ class ManagerControlActions:
                 if action.text() in {'Remove', 'Apply', 'Browse Path'}:
                     action.setEnabled(selected)
         _, node = self.layout_selection()
-        selected = document_editable and bool(node)
+        selected = document_editable and bool(node) and not node.get('readonly')
         ancestors = {kind: self.layout_ancestor(kind) for kind in ('Layout', 'Content', 'Iteration')}
         owner_key = ancestors['Content'] or ancestors['Layout']
         content = self.editor.layout_source(document, owner_key)[0] if document_editable and owner_key else None
@@ -98,7 +98,7 @@ class ManagerControlActions:
         valid_path = DataQueries()._validate_field_path(path, require_concat=False)[0] if path else False
         nodes = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.layouts.tree.selectedItems() if not item.isHidden()]
         copy_kinds = {node['kind'] for node in nodes}
-        copyable = bool(nodes) and len(copy_kinds) == 1 and (copy_kinds != {'Iteration'} or len(nodes) == 1)
+        copyable = bool(nodes) and not any(node.get('readonly') for node in nodes) and len(copy_kinds) == 1 and (copy_kinds != {'Iteration'} or len(nodes) == 1)
         up = down = False
         if selected:
             try:
@@ -111,7 +111,7 @@ class ManagerControlActions:
         states = {'Add Layout': document_editable, 'Add Content': document_editable and bool(ancestors['Layout']),
                   'Add Iteration': document_editable and accepts_iteration, 'Add Field': document_editable and bool(ancestors['Iteration']),
                   'Remove': selected, 'Apply': selected, 'Up': up, 'Down': down,
-                  'Copy': selected and copyable, 'Paste': document_editable and self.can_paste_layout(),
+                  'Copy': selected and copyable, 'Paste': document_editable and not (node and node.get('readonly')) and self.can_paste_layout(),
                   'Browse Path': selected and valid_path,
                   'Evaluate Condition': selected and bool(str(node['source'].get('Condition') or '').strip()) if node else False}
         for action in self.layouts.authoring_toolbar.actions():
@@ -127,12 +127,15 @@ class ManagerControlActions:
                 action.setEnabled(available and bool(self.clauses.clause_picker.currentText()))
             elif action.text() == 'Apply Composed':
                 layout_target = not self.clauses.target_label.text().startswith('Target: Document')
-                action.setEnabled(document_editable and (not layout_target or bool(node)))
+                action.setEnabled(document_editable and (not layout_target or bool(node) and not node.get('readonly')))
 
     def can_paste_layout(self):
         """Check destination eligibility without modifying the editor or its history."""
         kind = self.layout_clipboard_kind
         if not self.layout_clipboard or kind not in {'Layout', 'Content', 'Iteration', 'Field'}:
+            return False
+        _, node = self.layout_selection()
+        if node and node.get('readonly'):
             return False
         if kind == 'Layout':
             return True

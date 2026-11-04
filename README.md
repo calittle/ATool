@@ -517,6 +517,29 @@ Editing leaves the original input file unchanged
 until you use Save or explicitly save over it; save a copy before mapping another file or
 closing the app to keep your changes. These controls apply to the native Qt app.
 
+### Inspect the complete cached document structure
+
+With a **Comms Cache Folder** configured in User Settings, Layout Manager's
+**Show cached structure** option includes the selected document's layouts,
+nested layouts and associated content, even when they have no entry in the AT.
+The **Source** column distinguishes **Cache · Read only**, **AT + Cache**, and
+**AT · Editable** entries. Existing AT conditions, iterations and fields remain
+editable; cached-only relationships cannot be edited, removed, reordered or
+pasted into. Browsing does not add anything to the AT or contact Comms.
+
+Choose an **Effective date** to inspect the corresponding active cached document
+and content versions. The status identifies the cached document version and any
+missing resources. **Refresh Cache View** rereads downloaded files; it does not
+download resources. Use **Download Resource** from a row's context menu to obtain
+missing resources, then refresh the view. Turn off **Show cached structure** for
+the original AT-only hierarchy.
+
+Select a row to inspect **Cached Resource** metadata. **Cached Content** shows
+available cached text markup read-only; image content exposes metadata instead.
+An **Always** relationship means included when its parent is included, rather
+than a mapped PASS. Unknown cached trigger states remain visible with
+**Matched Only** enabled, so incomplete cache information does not hide structure.
+
 ### Repeat a layout for each data row
 
 In the Qt **Layout Manager**, select a Layout and choose **Add Iteration**.

@@ -6,11 +6,12 @@ import json
 import re
 from html import escape
 from pathlib import Path
+from datetime import date
 
 from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette, QPainter
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDockWidget, QFileDialog,
     QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QDoubleSpinBox,
     QSplitter, QTabBar, QTabWidget, QTextEdit, QTreeWidget,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .session import PackageSession, read_json
+from .cached_layouts import cached_document_layouts, cached_content_text
 from .diagnostics import ConditionDiagnostics
 from .clauses import ClauseComposer
 from .authoring import AuthoringActions
@@ -451,6 +453,8 @@ class LayoutPanel(QWidget):
     def __init__(self):
         super().__init__()
         self.document_name = ""
+        self.document_record = None
+        self.cache_path = lambda: ""
         self.source_changed = lambda source: False
         self.session = None
         self.mapping_token = None
@@ -469,11 +473,32 @@ class LayoutPanel(QWidget):
         layout.addLayout(controls)
         self.matched_only = QCheckBox("Matched Only")
         self.matched_only.setEnabled(False)
+        self.matched_only.setToolTip('Show matched AT entries; cached relationships with unknown trigger state remain visible.')
         self.matched_only.toggled.connect(self.apply_filter)
         layout.addWidget(self.matched_only)
+        cache_controls = QHBoxLayout()
+        self.show_cached = QCheckBox("Show cached structure")
+        self.show_cached.setChecked(True)
+        self.cache_date = QDateEdit()
+        self.cache_date.setCalendarPopup(True)
+        self.cache_date.setDisplayFormat('yyyy-MM-dd')
+        self.cache_date.setDate(date.today())
+        self.cache_date.setToolTip('Effective date for the cached document and content versions')
+        self.refresh_cache = QPushButton('Refresh Cache View')
+        cache_controls.addWidget(self.show_cached)
+        cache_controls.addWidget(QLabel('Effective date'))
+        for control in (self.cache_date, self.refresh_cache):
+            cache_controls.addWidget(control)
+        layout.addLayout(cache_controls)
+        self.cache_status = QLabel()
+        self.cache_status.setWordWrap(True)
+        layout.addWidget(self.cache_status)
+        self.show_cached.toggled.connect(lambda: self.set_document(self.document_record))
+        self.cache_date.dateChanged.connect(lambda: self.set_document(self.document_record))
+        self.refresh_cache.clicked.connect(lambda: self.set_document(self.document_record))
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)
-        self.tree = table(["Layout / Content", "Kind", "Match"], LayoutTree)
+        self.tree = table(["Layout / Content", "Kind", "Match", "Source"], LayoutTree)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setRootIsDecorated(True)
         self.tree.itemExpanded.connect(self.update_tree_toggle)
@@ -516,6 +541,10 @@ class LayoutPanel(QWidget):
         tabs.addTab(self.match_details, "Match Details")
         self.source = text_box()
         tabs.addTab(self.source, "Source JSON")
+        self.cache_source = text_box()
+        tabs.addTab(self.cache_source, "Cached Resource")
+        self.cached_content = text_box()
+        tabs.addTab(self.cached_content, "Cached Content")
         self.splitter.addWidget(tabs)
         self.splitter.setSizes([360, 300])
         layout.addWidget(self.splitter, 1)
@@ -536,6 +565,7 @@ class LayoutPanel(QWidget):
         self.update_tree_toggle()
 
     def set_document(self, record, session=None):
+        self.document_record = record
         self.session = session if session is not None else self.session
         mapped = bool(self.session and self.session.mapped)
         token = (id(self.session), self.session.mapping_revision if self.session else 0)
@@ -555,8 +585,20 @@ class LayoutPanel(QWidget):
         self.tree.viewport().update()
         self.tree.blockSignals(True)
         self.tree.clear()
+        self.cache_status.setText('')
+        self.cache_status.setToolTip('')
         if record and self.session:
-            for node in self.session.layouts_for(record):
+            nodes = self.session.layouts_for(record)
+            cache = self.cache_path()
+            if self.show_cached.isChecked() and cache:
+                nodes, status, warnings = cached_document_layouts(
+                    cache, record['name'], nodes,
+                    self.cache_date.date().toString('yyyy-MM-dd'))
+                self.cache_status.setText(status)
+                self.cache_status.setToolTip('\n'.join(warnings) or str(cache))
+            elif self.show_cached.isChecked():
+                self.cache_status.setText('No Comms cache configured · showing AT entries only')
+            for node in nodes:
                 self.add_node(None, node)
         for item in self.items():
             item.setExpanded(item.data(0, ROLE + 1) in expanded if same_document else item.parent() is None)
@@ -574,12 +616,13 @@ class LayoutPanel(QWidget):
         kind, source, key = node["kind"], node["source"], node["key"]
         name = str(source.get("$$Id") or source.get("Name") or source.get("Id") or source.get("Path") or kind)
         state = node["state"]
-        item = QTreeWidgetItem([name + (" *" if self.source_changed(source) else ""), kind, "PASS" if state else "FAIL" if state is not None else "—"])
+        label = "Always" if node.get('readonly') and node.get('cache_status', '').startswith('Always') else "Unknown" if node.get('readonly') else "PASS" if state else "FAIL" if state is not None else "—"
+        item = QTreeWidgetItem([name + (" *" if not node.get('readonly') and self.source_changed(source) else ""), kind, label, node.get('origin', 'AT · Editable')])
         item.setData(0, ROLE + 4, name)
         item.setData(0, ROLE, node)
-        item.setData(0, ROLE + 1, key)
-        item.setToolTip(0, str(source.get("Descr", "")))
-        item.setToolTip(2, node.get("reason", ""))
+        item.setData(0, ROLE + 1, node.get('display_key', key))
+        item.setToolTip(0, node.get('origin', 'AT · Editable') + '\n' + str(source.get("Descr", "")))
+        item.setToolTip(2, node.get('cache_status') if node.get('readonly') else node.get('reason', ''))
         color_item(item, state)
         if parent is None:
             self.tree.addTopLevelItem(item)
@@ -600,7 +643,8 @@ class LayoutPanel(QWidget):
         query = self.search.text().strip().casefold()
         def visit(item, parent_allowed=True):
             record = item.data(0, ROLE)
-            allowed = parent_allowed and (not self.matched_only.isChecked() or record["state"] is True)
+            allowed = parent_allowed and (not self.matched_only.isChecked() or record["state"] is True
+                                          or (bool(record.get('cache_source')) and record['state'] is None))
             child_matches = [visit(item.child(row), allowed) for row in range(item.childCount())]
             own_text = " ".join([item.text(0), record["kind"]] +
                                 [str(value) for value in record["source"].values() if not isinstance(value, (dict, list))])
@@ -627,6 +671,8 @@ class LayoutPanel(QWidget):
         self.mapped_values.clear()
         self.mapped_values.hide()
         self.match_details.clear()
+        self.cache_source.clear()
+        self.cached_content.clear()
         if current is None:
             for box in (self.name, self.kind, self.condition, self.path, self.source):
                 box.clear()
@@ -639,6 +685,9 @@ class LayoutPanel(QWidget):
         self.mapped_values.setVisible(record["kind"] in {"Iteration", "Field"})
         self.name.setText(current.data(0, ROLE + 4))
         self.kind.setText(record["kind"])
+        self.cache_source.setPlainText(pretty(record.get('cache_source', {})))
+        if record['kind'] == 'Content' and record.get('cache_source'):
+            self.cached_content.setPlainText(cached_content_text(record['cache_source']))
         self.condition.setPlainText(str(source.get("Condition", "")))
         self.path.setPlainText(str(source.get("Path", "")))
         excluded = {"$$Id", "Name", "Id", "Condition", "Path"}
@@ -676,6 +725,10 @@ class LayoutPanel(QWidget):
         self.source.setPlainText(pretty(source))
         state = record["state"]
         self.mapping_status.setText(("PASS · " if state else "FAIL · ") + record.get("reason", "") if state is not None else "Map JSON data to inspect trigger state")
+        if record.get('readonly'):
+            self.mapping_status.setText(record.get('cache_status', '') + (' · ' + record['cache_warning'] if record.get('cache_warning') else ''))
+        elif record.get('cache_warning'):
+            self.mapping_status.setText(self.mapping_status.text() + ' · ' + record['cache_warning'])
         self.mapping_status.setStyleSheet(f"color:{BLUE if state else RED}" if state is not None else "")
         for row in record["rows"] if state is not None else []:
             values = pretty(row["values"]) if row["values"] else "No mapped value"
@@ -1074,6 +1127,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.updating_layout = False
         self.documents.selected.connect(self.document_selected)
         self.layouts.tree.currentItemChanged.connect(self.layout_selected)
+        self.layouts.cache_path = lambda: self.comms.settings.get('comms_cache_dir') or ''
         self.create_actions()
         self.package_label = QLabel("Package: (none)")
         self.package_label.setMargin(5)
@@ -1296,7 +1350,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
                                     "Document", record["name"] if record else "")
         else:
             node = current.data(0, ROLE)
-            self.clauses.set_target(node["source"], node["kind"], current.data(0, ROLE + 4))
+            self.clauses.set_target(None if node.get('readonly') else node["source"], node["kind"], current.data(0, ROLE + 4))
 
     def open_package(self, path: Path) -> bool:
         if self.package_busy() or not self.confirm_discard():

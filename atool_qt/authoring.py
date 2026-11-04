@@ -359,7 +359,9 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         return item, item.data(0, Qt.ItemDataRole.UserRole) if item else None
 
     def layout_ancestor(self, kind):
-        item, _ = self.layout_selection()
+        item, selected = self.layout_selection()
+        if selected and selected.get('readonly'):
+            return None
         while item:
             node = item.data(0, Qt.ItemDataRole.UserRole)
             if node["kind"] == kind:
@@ -396,12 +398,12 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
 
     def remove_layout_item(self):
         _, node = self.layout_selection()
-        if node and QMessageBox.question(self, "Remove", "Remove this layout item and its children?") == QMessageBox.StandardButton.Yes:
+        if node and not node.get('readonly') and QMessageBox.question(self, "Remove", "Remove this layout item and its children?") == QMessageBox.StandardButton.Yes:
             self.edit(lambda: self.editor.remove_layout_item(self.active_document, node["key"]))
 
     def move_layout_item(self, direction):
         _, node = self.layout_selection()
-        if node:
+        if node and not node.get('readonly'):
             key = self.editor.move_layout_item(self.active_document, node["key"], direction)
             self.refresh_edit()
             self.select_layout_key(key)
@@ -412,6 +414,8 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         if not selected and current:
             selected.add(current)
         nodes = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.layouts.items() if item in selected]
+        if any(node.get('readonly') for node in nodes):
+            return
         kinds = {node['kind'] for node in nodes}
         if len(kinds) != 1 or ('Iteration' in kinds and len(nodes) != 1):
             self.report_error('Copy layout items', 'Select items of the same kind, or one iteration, to copy.')
@@ -425,6 +429,8 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         if not self.layout_clipboard or not self.active_document or not self.active_document.get('in_at', True):
             return
         _, node = self.layout_selection()
+        if node and node.get('readonly'):
+            return
         result = []
         def paste():
             result.append(self.editor.paste_layout_items(self.active_document, self.layout_clipboard_kind,
@@ -435,7 +441,8 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
     def enable_layout_properties(self, current, *_):
         panel = self.layouts
         document = self.selected_record('documents')
-        editable = bool(current and document and document.get('in_at', True) and self.session and not self.package_busy())
+        node = current.data(0, Qt.ItemDataRole.UserRole) if current else None
+        editable = bool(node and not node.get('readonly') and document and document.get('in_at', True) and self.session and not self.package_busy())
         for widget in (panel.name, panel.condition, panel.path):
             widget.setReadOnly(not editable)
         for key, widget in panel.property_controls.items():
@@ -485,7 +492,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         if self.refreshing or not self.editor:
             return
         item, node = self.layout_selection()
-        if not node:
+        if not node or node.get('readonly'):
             return
         values = {key: value for key, value in self.layout_values().items()
                   if value != getattr(self.layouts, "property_baseline", {}).get(key)}
@@ -541,7 +548,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
                 self.edit(lambda: self.editor.update_record(self.active_document, {"Condition": condition}, "documents"))
         else:
             _, node = self.layout_selection()
-            if node:
+            if node and not node.get('readonly'):
                 self.edit(lambda: self.editor.update_layout(self.active_document, node["key"], {"Condition": condition}))
 
 
@@ -619,7 +626,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
             values = self.changed_record_values(field, field_values)
             if values:
                 self.editor.update_record(field, values, "fields")
-        if node:
+        if node and not node.get('readonly'):
             values = {key: value for key, value in self.layout_values().items()
                       if value != getattr(self.layouts, "property_baseline", {}).get(key)}
             if values:

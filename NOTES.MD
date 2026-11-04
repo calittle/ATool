@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Show cached document layouts, nested layouts and associated content in Layout
+  Manager, including relationships absent from the Assembly Template. Merge AT
+  settings into their cached placements while keeping cached-only rows read-only.
+- Add an AT-only toggle, effective-date selection, cache-view refresh, source
+  labels, cached resource metadata and read-only cached text content inspection.
+  Missing resources remain visible with cache warnings; browsing does not modify
+  the template or request resources from Comms.
+
 ## v2.3.1
 
 - Give Layout Manager paths a three-line wrapping editor and reduce the space
