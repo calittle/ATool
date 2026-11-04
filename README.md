@@ -517,6 +517,35 @@ Editing leaves the original input file unchanged
 until you use Save or explicitly save over it; save a copy before mapping another file or
 closing the app to keep your changes. These controls apply to the native Qt app.
 
+### Compare resource versions
+
+Open **Resources → Compare Versions…**, use **Compare Versions…** in Content
+Manager, or right-click a document, layout, content or style row. Package and
+package-version pickers also provide the comparison action. Resource rows
+preselect their type and short name; the Resources menu supports all seven
+resource types without requiring an open package.
+
+For Content, Document, Package or Chart, choose **Live Comms versions** or
+**Versions in one cache**, then **Load Versions**, choose **Before** and **After**,
+and click **Compare**. **Two cache snapshots** can compare versioned resources
+from different downloads. Layout, Style and Font use two cache snapshots because
+they have no explicit resource versions. Cache paths point to export roots such
+as the folder containing `contents`, `layouts` and `documents`.
+
+The **Report** tab describes named resources, placement, text, field bindings,
+inclusion rules and formatting in context. **Markdown** contains its portable
+source. **Include technical appendix** is off by default; enable it to append
+exact identifiers, JSON paths and raw source evidence after the readable report. Use **Copy Markdown** or **Save Markdown…** to share it.
+Incomplete comparisons display the available findings and missing evidence.
+Changing sources or cancelling an operation prevents its late results from
+replacing the current comparison. Reports compare saved resource versions and
+exported snapshots; unsaved ATool edits are not included.
+
+This workflow requires an OCCS CLI containing `compare`. Source checkouts can
+use the updated sibling CLI; installed apps need an updated bundled CLI or a
+custom CLI Path in User Settings. The previous `template-compare` command is
+separate and is not used by this workflow.
+
 ### Inspect the complete cached document structure
 
 With a **Comms Cache Folder** configured in User Settings, Layout Manager's

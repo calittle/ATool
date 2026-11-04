@@ -155,6 +155,41 @@ class ContextMenuTests(unittest.TestCase):
         self.assertEqual(self.app.clipboard().text(), 'Amount')
         self.assertEqual(self.session.payload, original)
 
+    def test_mapped_value_menu_opens_source_elements_in_data_browser(self):
+        w = self.window
+        self.session.payload['Fields'][0]['Path'] = '$.rows[*].value'
+        session = PackageSession.from_payload(self.session.payload)
+        session.map_data({'rows': [{'value': 0}, {'value': False}, {'value': ''}]}, 'fixture.json')
+        w.set_session(session)
+        item = next(row for row in w.fields.items() if row.data(0, Qt.ItemDataRole.UserRole + 4) == 'Amount')
+        menu = self.menu(w.fields.tree, item, 1)
+        action(menu, 'Show in Data Browser').trigger()
+        self.assertEqual(w.data.tree.topLevelItemCount(), 3)
+        self.assertEqual(list(w.data.values.values()), [0, False, ''])
+        self.assertEqual(w.data.path.text(), '$.rows[0].value')
+        self.assertEqual(w.data.value.toPlainText(), '0')
+        w.data.clear_search()
+        menu = w.context_menus.control_menu(w.fields.result)
+        self.addCleanup(menu.deleteLater)
+        action(menu, 'Show in Data Browser').trigger()
+        self.assertEqual(w.data.tree.topLevelItemCount(), 3)
+        self.assertEqual(w.data.search.text(), '$.rows[*].value')
+
+    def test_mapped_value_navigation_requires_a_single_mapped_field(self):
+        w = self.window
+        tree = w.fields.tree
+        tree.selectAll()
+        menu = self.menu(tree, tree.currentItem(), 1, select=False)
+        self.assertFalse(action(menu, 'Show in Data Browser').isEnabled())
+        item = next(row for row in w.fields.items() if row.data(0, Qt.ItemDataRole.UserRole + 4) == 'Amount')
+        menu = self.menu(tree, item, 1)
+        w.session.mapped = False
+        with patch.object(w, 'browse_query') as browse:
+            action(menu, 'Show in Data Browser').trigger()
+        browse.assert_not_called()
+        menu = self.menu(tree, item, 1)
+        self.assertFalse(action(menu, 'Show in Data Browser').isEnabled())
+
     def test_multi_field_definition_copy_then_blank_space_paste_and_undo(self):
         tree = self.window.fields.tree
         tree.selectAll()

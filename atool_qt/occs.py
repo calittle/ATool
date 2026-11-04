@@ -47,7 +47,7 @@ class CommsSettings:
     def command(self, args):
         args = [str(arg) for arg in args]
         alias = str(self.get('session_alias', '') or '').strip()
-        if args and alias and '--session' not in args and args[0] in {'package', 'content', 'preview', 'convertxml', 'list-configs', 'list-emails', 'list-email-routes', 'create-config'}:
+        if args and alias and '--session' not in args and args[0] in {'package', 'content', 'compare', 'preview', 'convertxml', 'list-configs', 'list-emails', 'list-email-routes', 'create-config'}:
             args = [args[0], '--session', alias, *args[1:]]
         runtime = bundled_runtime()
         node = str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'

@@ -119,6 +119,8 @@ class ContentPanel(QWidget):
         self.save_button = toolbar.addAction('Save to Comms', self.save_content)
         toolbar.addAction('Open HTML…', self.open_html)
         toolbar.addAction('Save HTML As…', self.save_html)
+        self.compare_versions_action = toolbar.addAction('Compare Versions…', lambda: self.workspace.compare_versions(
+            'Content', self.short_name.text().strip(), self.version.currentText()))
         editor_layout.addWidget(toolbar)
         self.tabs = QTabWidget()
         self.rich_placeholder = QWidget()
@@ -199,6 +201,7 @@ class ContentPanel(QWidget):
         if not hasattr(self, 'save_button'):
             return
         busy = self.loading or self.saving
+        self.compare_versions_action.setEnabled(bool(self.short_name.text().strip()) and not busy)
         config = bool(self.workspace.comms.settings.get('last_config_id'))
         self.save_button.setEnabled(config and self.dirty and not busy)
         self.save_button.setToolTip('Active Config: ' + str(self.workspace.comms.settings.get('active_config_label') or self.workspace.comms.settings.get('last_config_id') or '(none)'))

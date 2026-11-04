@@ -309,6 +309,7 @@ class WorkspaceContextMenus(QObject):
         single = bool(record and len(tree.selectedItems()) == 1)
         if record:
             self.download_resource_action(menu, 'Document', record['name'], single)
+            self.compare_resource_action(menu, 'Document', record['name'], single)
             proxy(menu, w.trigger_clause_action, enabled=single)
             proxy(menu, w.package_actions['Edit Package Condition'], enabled=single)
             command(menu, 'Always Trigger', panel.always_trigger.click, single and panel.always_trigger.isEnabled(), checked=record.get('always_trigger', False))
@@ -348,12 +349,17 @@ class WorkspaceContextMenus(QObject):
 
         command(menu, 'Download Resource', download, single and bool(name))
 
+    def compare_resource_action(self, menu, resource_type, name, single=True, version=''):
+        command(menu, 'Compare Versions…', lambda: self.workspace.compare_versions(resource_type, name, version),
+                single and bool(name))
+
     def fields(self, menu, tree, item):
         w, panel = self.workspace, self.workspace.fields
         w.update_manager_controls()
         records = w.selected_fields() if item else []
         if records:
             proxy(menu, toolbar_action(panel, 'Browse Path'), enabled=len(records) == 1)
+            self.mapped_field_action(menu, records[0] if len(records) == 1 else None)
             proxy(menu, w.field_copy_action, 'Copy Field Definitions')
             copy_action(menu, 'Copy Names', '\n'.join(record['name'] for record in records))
             if len(records) == 1:
@@ -376,6 +382,18 @@ class WorkspaceContextMenus(QObject):
             command(menu, 'View by Name' if panel.field_view == 'path' else 'View by Path', panel.toggle_field_view)
             self.panel_actions(menu, tree, panel)
 
+    def mapped_field_action(self, menu, record):
+        w = self.workspace
+        session = w.session
+        path = record.get('true_path', '') if record else ''
+
+        def reveal():
+            if w.session is session and session.mapped and w.selected_record('fields') == record:
+                w.browse_query(path, 'JSONPath')
+
+        command(menu, 'Show in Data Browser', reveal,
+                bool(session and session.mapped and record and record.get('mapped_values') and path))
+
     def favorite_actions(self, menu, kind, names):
         w = self.workspace
         favorites = w.package_favorites().get(kind, [])
@@ -390,6 +408,7 @@ class WorkspaceContextMenus(QObject):
         if node:
             if node['kind'] in ('Layout', 'Content'):
                 self.download_resource_action(menu, node['kind'], node['source'].get('$$Id', ''), single)
+                self.compare_resource_action(menu, node['kind'], node['source'].get('$$Id', ''), single)
             for title in ('Add Content', 'Add Iteration', 'Add Field'):
                 action = toolbar_action(panel, title)
                 if action.isEnabled():
@@ -456,6 +475,7 @@ class WorkspaceContextMenus(QObject):
         panel.update_save_availability()
         if item:
             command(menu, 'Load Content', panel.load_selected, panel.load.isEnabled())
+            self.compare_resource_action(menu, 'Content', item.text(0), len(tree.selectedItems()) == 1)
             copy_action(menu, 'Copy Short Name', item.text(0))
             copy_action(menu, 'Copy Type', item.text(1))
         else:
@@ -475,6 +495,7 @@ class WorkspaceContextMenus(QObject):
 
     def content_styles(self, menu, tree, item):
         if item:
+            self.compare_resource_action(menu, 'Style', item.text(0), len(tree.selectedItems()) == 1)
             copy_action(menu, 'Copy Style Name', item.text(0))
             copy_action(menu, 'Copy CSS Classes', item.text(1))
 
@@ -591,6 +612,8 @@ class WorkspaceContextMenus(QObject):
             command(menu, 'Edit in Clause Manager', lambda: w.show_panel('clauses'), w.layout_selection()[1] is not None)
         if control is w.fields.true_path:
             proxy(menu, toolbar_action(w.fields, 'Browse Path'))
+        if control is w.fields.result:
+            self.mapped_field_action(menu, w.selected_record('fields'))
         if control is w.clauses.compose:
             for title in ('Insert Name', 'Apply Composed'):
                 proxy(menu, toolbar_action(w.clauses, title))

@@ -90,6 +90,8 @@ class ResourceModelActions:
         self.cancel_download_all_action = self.action('Cancel Download All', self.cancel_download_all)
         menu.addAction(self.cancel_download_all_action)
         self.cancel_download_all_action.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction(self.action('Compare Versions…', self.compare_versions))
         menu = self.menuBar().addMenu('&Model')
         self.model_actions = {}
         for title, callback in [('View', lambda: self.document_model(open_after=True)),
@@ -113,6 +115,16 @@ class ResourceModelActions:
     def open_resource_download(self, *, single=False):
         self.resource_dialog = ResourceDialog(self, single)
         self.resource_dialog.show()
+
+    def compare_versions(self, resource_type='Content', name='', version=''):
+        from .resource_compare import ResourceCompareDialog
+        # QAction.triggered may supply a boolean when opened from Resources.
+        if resource_type not in [row[0] for row in RESOURCE_TYPES]:
+            resource_type = 'Content'
+        dialog = ResourceCompareDialog(self, resource_type, name, version)
+        self.comparison_dialogs = [item for item in getattr(self, 'comparison_dialogs', []) if item.isVisible()]
+        self.comparison_dialogs.append(dialog)
+        dialog.show()
 
     def resource_cache(self):
         value = str(self.comms.settings.get('comms_cache_dir') or '').strip()

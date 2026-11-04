@@ -34,6 +34,14 @@ def populate_dialog_tree(menu, tree, item):
         return
     kind = type(dialog).__name__
     value = item.data(0, ROLE) if item else None
+    workspace = getattr(dialog, 'workspace', None)
+    if item and workspace and hasattr(workspace, 'compare_versions'):
+        if kind == 'PackagePicker':
+            command(menu, 'Compare Versions…', lambda: workspace.compare_versions('Package', item.text(0)))
+        elif kind == 'VersionPicker':
+            command(menu, 'Compare Versions…', lambda: workspace.compare_versions('Package', dialog.package, item.text(0)))
+        elif kind == 'SharedPicker' and isinstance(value, dict) and value.get('package_name'):
+            command(menu, 'Compare Versions…', lambda: workspace.compare_versions('Package', value['package_name'], value.get('version_name', '')))
     if kind == 'CatalogDialog':
         command(menu, 'Associate' if dialog.associate_name else 'Add', dialog.accept_selection,
                 item is not None and dialog.add_button.isEnabled())

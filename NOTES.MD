@@ -1,6 +1,20 @@
 # ATool Release Notes
 
-## Unreleased
+## v2.4.0
+
+- Add Show in Data Browser to Field Manager's field-row and mapped-value context
+  menus. Open the mapped source elements, including all matches for repeated data.
+
+- Show resource comparison findings as contextual explanations of named resources,
+  placements, text, fields, conditions and formatting, rather than raw API dumps.
+  Add an optional technical appendix checkbox for exact identifiers and source
+  evidence, keeping the default report focused on the changes being reviewed.
+
+- Add Resources → Compare Versions and comparison actions in Content Manager
+  and resource context menus. Compare saved Comms versions or cache snapshots
+  through OCCS CLI, view the standardized report, and copy or save Markdown.
+  Cancellation discards late results; incomplete comparisons remain reviewable
+  with their missing-evidence warnings. Requires a CLI with the compare command.
 
 - Show cached document layouts, nested layouts and associated content in Layout
   Manager, including relationships absent from the Assembly Template. Merge AT
