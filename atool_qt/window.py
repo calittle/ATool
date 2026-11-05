@@ -1479,6 +1479,8 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         if not self.prepare_shared_exit():
             event.ignore()
             return
+        if getattr(self,'smoke_dialog',None) and self.smoke_dialog.running:
+            self.smoke_dialog.stop()
         self.comms.shutdown()
         self.activity.shutdown()
         self.finish_publish()

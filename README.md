@@ -203,10 +203,43 @@ log in through the CLI for commands accessing OCCS. See the
 [OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for cache,
 graph and smoke-suite setup.
 
-Installing these tools enables the corresponding CLI commands; it does not add
-graph or smoke-test controls to ATool's interface. Run the bundled CLI using
+ATool also provides **Package → Run Smoke Tests…**, configured under
+**Settings → User Settings → Smoke Tests** (see below). Graph commands remain
+available through the CLI. Run the bundled CLI using
 the bundled Node.js shown above, and keep the application's runtime files
 together. Each ATool download retains its own bundled CLI version.
+
+### Running smoke tests from ATool
+
+In **Settings → User Settings → Smoke Tests**, select your suite JSON file and
+an output folder. The suite defines the packages, input files, and PDF/HTML
+outputs; input paths are relative to the suite file. Leave the output folder
+blank to save results beside the suite.
+
+Configure the standard tenancy (default **pre-prod**) and comparison source and
+target (default **non-prod → pre-prod**). Optional saved-session aliases override
+their corresponding tenancies. These settings override environment selections
+inside the suite without changing the original suite file. Existing saved CLI
+sessions are used; the CLI path is the same one configured on the Comms tab.
+
+Set the Chrome/Chromium executable if automatic browser detection is unsuitable.
+Use **Tool Folders (PATH)** for Poppler and ImageMagick folders that ATool cannot
+otherwise find; separate folders with colons on macOS or semicolons on Windows.
+Configure the per-request timeout, maximum time for each complete run, simultaneous
+previews (1 or 2), and allowed percentage of changed pixels (default **1%**).
+
+Choose **Package → Run Smoke Tests…**, select standard testing, comparison, or
+both, and click **Run**. An open package is not required. The saved suite and
+server packages are used; unsaved package edits are not included. Progress and
+failures appear in the run window, with **Cancel**, **Open Reports**, and
+**Open Output Folder** controls. Each run uses a timestamped output folder;
+**Resume** retries missing outputs in the most recent matching run. If test
+cases fail but produce a report, the requested comparison still runs. Setup
+failures, cancellation, and timeouts stop the remaining runs.
+
+Results include HTML reports, rendered previews, comparison images, and unsent
+email drafts. No email is sent by this action. Comparisons that need review are
+highlighted in the run output even if the CLI exits successfully.
 
 ## Moving an older ATool installation to the native app
 
@@ -707,6 +740,21 @@ sudo dnf install python3-tkinter
    - Windows/Linux: `Alt+M`
 
 ### Package Access And Publishing
+
+Use **Package → Copy To…** to copy the open package's AT JSON and document
+associations to another package/version in the configured shared storage folder.
+Choose **Target package**, then explicitly choose **Target version**, and confirm
+replacement. Only that version is updated; other versions are left unchanged.
+The selectors list versions already retrieved into shared storage. Document order and Always Trigger
+settings are copied; the destination retains its package/version identity and
+relationship IDs. Locked destinations (including your own locks) cannot receive
+a copy. The operation saves pending source edits, updates the destination in
+shared storage with the usual history and rollback protection, and keeps the
+source open. After copying, choose whether to publish the target to Comms now.
+The target uses the usual configuration selection, dry run, and publish review
+while the source stays open. Its temporary publish lock is released when the
+operation completes, is cancelled, or fails. Choose No to leave the copy in
+shared storage for publishing later.
 
 Comms and the shared package workspace are the authoritative package sources.
 ATool may create local working copies for edit and test sessions, but these are

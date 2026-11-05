@@ -26,8 +26,9 @@ class PublishConfigDialog(QDialog):
         form=QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-        form.addRow('Package',QLabel(' '.join(names(workspace.session.bundle['manifest']))))
-        folder=QPlainTextEdit(str(workspace.current_bundle_dir()))
+        root=workspace.publish_context['root']
+        form.addRow('Package',QLabel(' '.join(names(manifest(root)))))
+        folder=QPlainTextEdit(str(root))
         folder.setReadOnly(True)
         folder.setFixedHeight(folder.fontMetrics().lineSpacing()*3+16)
         form.addRow('Package Folder',folder)
@@ -72,25 +73,37 @@ class PackagePublishActions:
         if hasattr(self,'publish_action'):
             self.publish_action.setEnabled(self.shared_mode=='edit' and bool(self.current_bundle_dir()) and not self.package_busy())
 
-    def publish_package(self):
-        if self.package_busy() or not self.current_bundle_dir() or self.shared_mode!='edit' or not self.shared_package_dir:
+    def publish_package(self, *, target_entry=None):
+        detached=target_entry is not None
+        if self.package_busy() or (not detached and (not self.current_bundle_dir() or self.shared_mode!='edit' or not self.shared_package_dir)):
             self.report_error('Publish Package to Comms','Open a shared package for edit before publishing to Comms.')
             return False
+        temporary=None
+        target_lock=None
+        store=self.shared_store()
         try:
-            self.flush_properties()
-            if self.editor.dirty and not self.save_package():
-                return False
+            if detached:
+                if not self.require_shared_sync('lock the copied target for publishing'):
+                    return False
+                root=store.open_copy(target_entry, 'edit', require_unlocked=True)
+                shared_dir=target_entry['package_dir']
+                target_lock=store.entry(shared_dir)['lock']
+            else:
+                self.flush_properties()
+                if self.editor.dirty and not self.save_package():
+                    return False
+                root=self.current_bundle_dir().resolve()
+                shared_dir=self.shared_package_dir
             if self.comms.settings.get("check_jsonpath_length", False) is True:
-                require_valid_length_paths(self.session.payload)
-                require_valid_length_paths(read_json(bundle_paths(self.current_bundle_dir(), manifest(self.current_bundle_dir()))['assemblyTemplate']))
-            store=self.shared_store()
-            if not store.matches(self.current_bundle_dir(),self.shared_package_dir):
+                if not detached:
+                    require_valid_length_paths(self.session.payload)
+                require_valid_length_paths(read_json(bundle_paths(root, manifest(root))['assemblyTemplate']))
+            if not detached and not store.matches(root,shared_dir):
                 if not self.update_shared_package(release=False):
                     return False
-            store.verify_update(self.current_bundle_dir(),store.entry(self.shared_package_dir))
+            store.verify_update(root,store.entry(shared_dir))
             temporary=tempfile.TemporaryDirectory(prefix='atool-publish-')
             stage=(Path(temporary.name)/'bundle').resolve()
-            root=self.current_bundle_dir().resolve()
             hashes=bundle_hashes(root)
             original_manifest=copy.deepcopy(manifest(root))
             shutil.copytree(root,stage)
@@ -98,7 +111,8 @@ class PackagePublishActions:
             if bundle_hashes(root)!=hashes:
                 temporary.cleanup()
                 raise ValueError('The package changed while preparing its publish snapshot.')
-            self.publish_context=dict(temporary=temporary,stage=stage,root=root,shared_dir=self.shared_package_dir,
+            self.publish_context=dict(temporary=temporary,stage=stage,root=root,shared_dir=shared_dir,
+                detached=detached,target_lock=target_lock,active_root=self.current_bundle_dir(),
                 source_paths=source_paths,original_manifest=original_manifest,source_hashes=hashes,stage_hashes=bundle_hashes(stage),session=self.session,started=False,retried_configs=set(),
                 source_alias=str(self.comms.settings.get('config_source_session_alias') or 'np'))
             self.update_actions()
@@ -118,6 +132,11 @@ class PackagePublishActions:
                 on_failure=lambda message:self.publish_failed(message,'','configs'))
             return True
         except (OSError,ValueError) as error:
+            if self.publish_context is None:
+                if temporary:
+                    temporary.cleanup()
+                if target_lock:
+                    store.release(target_entry, expected=target_lock)
             self.finish_publish()
             self.report_error('Publish Package to Comms',str(error))
             return False
@@ -157,7 +176,7 @@ class PackagePublishActions:
 
     def verify_publish_snapshot(self):
         context=self.publish_context
-        if not context or self.session is not context['session'] or self.current_bundle_dir()!=context['root']:
+        if not context or self.session is not context['session'] or self.current_bundle_dir()!=context.get('active_root',context['root']):
             raise ValueError('The active package changed. Start a new publish dry run.')
         if bundle_hashes(context['root'])!=context['source_hashes']:
             raise ValueError('Local package files changed after the dry-run snapshot. Start a new dry run.')
@@ -246,22 +265,23 @@ class PackagePublishActions:
                     value.pop(key,None)
             files[context['source_paths']['manifest']]=encode(value)
             write_files(files)
-            previous=self.session
             refreshed=PackageSession.open(context['root'])
-            if previous.mapped:
-                refreshed.map_data(previous.data,previous.data_name)
-                refreshed.mapping_revision=previous.mapping_revision
-            previous_editor=self.editor
-            from .editor import PackageEditor
-            self.editor=PackageEditor(refreshed)
-            if previous_editor:
-                self.editor.retain_history(previous_editor)
-            self.set_session(refreshed,preserve_selection=True)
-            context['session']=refreshed
+            if not context.get('detached'):
+                previous=self.session
+                if previous.mapped:
+                    refreshed.map_data(previous.data,previous.data_name)
+                    refreshed.mapping_revision=previous.mapping_revision
+                previous_editor=self.editor
+                from .editor import PackageEditor
+                self.editor=PackageEditor(refreshed)
+                if previous_editor:
+                    self.editor.retain_history(previous_editor)
+                self.set_session(refreshed,preserve_selection=True)
+                context['session']=refreshed
             try:
                 if not self.require_shared_sync('update this shared package after publishing'):
                     raise ValueError('Shared storage was not updated because sync could not be confirmed.')
-                self.shared_store().publish(context['root'],context['shared_dir'],reason='publishedToComms',release=False)
+                self.shared_store().publish(context['root'],context['shared_dir'],reason='publishedToComms',release=bool(context.get('detached')))
                 baseline=context['root']/self.shared_store().BASELINE
                 from .shared_packages import json_object
                 metadata=json_object(baseline)
@@ -269,6 +289,8 @@ class PackagePublishActions:
                 write_files({baseline:encode(metadata)})
             except (OSError,ValueError) as error:
                 warning=str(error)
+                if context.get('detached'):
+                    warning+='\nRefreshed target files are retained at '+str(context['root'])
             self.record_package_mru(*names(refreshed.bundle['manifest']))
             message='Package published to Comms.\n\n'+self.publish_summary(result.value)
             if warning:
@@ -321,6 +343,15 @@ class PackagePublishActions:
         context=self.publish_context
         self.publish_context=None
         if context:
+            if context.get('target_lock'):
+                try:
+                    store=self.shared_store()
+                    entry=store.entry(context['shared_dir'])
+                    lock=entry.get('lock') if entry else None
+                    if lock and lock.get('lockToken')==context['target_lock'].get('lockToken'):
+                        store.release(entry, expected=lock)
+                except (OSError,ValueError) as error:
+                    self.report_error('Release Copied Package Lock',str(error))
             context['temporary'].cleanup()
         if hasattr(self,'publish_config_dialog') and self.publish_config_dialog.isVisible():
             self.publish_config_dialog.reject()

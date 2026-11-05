@@ -4,12 +4,14 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import re
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFontComboBox,
-                              QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
+                              QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
                               QToolButton, QVBoxLayout, QWidget, QMessageBox, QTableWidget,
                               QTableWidgetItem, QHeaderView, QAbstractItemView)
 from .occs import CommsSettings
@@ -36,6 +38,49 @@ class ActivityLogHandler(logging.Handler):
 
 
 DEFAULTS = json.loads(Path(__file__).with_name('settings_defaults.json').read_text())
+
+SMOKE_HELP = {
+    'suite_path': 'Select an existing smoke-suite.json defining the packages, input files, and PDF/HTML outputs to test. '
+                  'Relative input paths are resolved from the folder containing this suite file.',
+    'output_dir': 'Choose a writable folder for reports, previews, comparison images, and unsent email drafts. '
+                  'Leave blank to save beside the suite. New runs create timestamped subfolders.',
+    'run_standard': 'Select the standard test by default in the Run Smoke Tests window. '
+                    'It generates previews in one environment. You can change this choice before each run.',
+    'run_comparison': 'Select comparison testing by default in the Run Smoke Tests window. '
+                      'It renders the same inputs in the source and target environments and compares their appearance. '
+                      'You can change this choice before each run.',
+    'standard_tenancy': 'Tenancy for the standard test, for example pre-prod. Requires an existing authenticated CLI session. '
+                        'Used when Standard Session Alias is blank; overrides the environment in the suite.',
+    'standard_session': 'Optional saved CLI session alias, for example pp. Use an alias you have already logged in with. '
+                        'When supplied, it overrides Standard Tenancy. Leave blank to select by tenancy.',
+    'comparison_source_tenancy': 'First environment for the visual comparison, normally non-prod. '
+                                 'Used when Comparison Source Session Alias is blank. Requires an authenticated saved session.',
+    'comparison_source_session': 'Optional saved session alias for the first comparison environment, for example np. '
+                                 'Overrides Comparison Source Tenancy. Leave blank to select by tenancy.',
+    'comparison_target_tenancy': 'Second environment for the visual comparison, normally pre-prod. '
+                                 'Used when Comparison Target Session Alias is blank. Requires an authenticated saved session.',
+    'comparison_target_session': 'Optional saved session alias for the second comparison environment, for example pp. '
+                                 'Overrides Comparison Target Tenancy. Leave blank to select by tenancy.',
+    'browser_path': 'Full path to the Chrome or Chromium executable used for HTML screenshots and comparisons. '
+                    'Choose the executable, not the application folder. Leave blank for automatic detection. '
+                    'macOS example: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome. '
+                    'Windows example: C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe.',
+    'tools_path': 'Folders containing the Poppler tools pdftoppm and pdfinfo and the ImageMagick tools identify and compare. '
+                  'Enter folders, not executable files. These folders are added to the existing PATH for smoke tests. '
+                  'Browse adds a folder to the list without replacing folders already entered. '
+                  'Leave blank if ATool can already find these tools. '
+                  + ('Windows example: C:\\Tools\\poppler\\Library\\bin;C:\\Tools\\ImageMagick. Separate folders with semicolons.'
+                     if os.name == 'nt' else 'macOS Homebrew example: /opt/homebrew/bin. For multiple folders, use colons: /opt/homebrew/bin:/usr/local/bin.'),
+    'request_timeout_seconds': 'Maximum wait for each preview request, in seconds (default 60). '
+                                'Increase this for slow packages. This is separate from the time limit for the entire run.',
+    'run_timeout_minutes': 'Maximum time for one complete standard or comparison run, in minutes (default 120). '
+                            'The two runs each get this limit when both are selected. Reaching it stops remaining work.',
+    'concurrency': 'Maximum simultaneous previews: 1 runs requests sequentially; 2 can render both comparison environments '
+                   'at the same time (default 2). Use 1 to reduce server load.',
+    'comparison_threshold_percent': 'Maximum changed-pixel percentage allowed for a visual comparison to pass (default 1%). '
+                                    'Enter 1 for one percent, not 0.01. Enter 0 to require identical pixels. '
+                                    'Differences above this limit are marked for review; source data is not changed.',
+}
 
 
 def merge_settings(defaults, payload):
@@ -87,6 +132,8 @@ class UserSettings(CommsSettings):
                 raise ValueError(f'{title} must be a whole number between {minimum} and {maximum}.')
         if not isinstance(diagnostics.get('log_directory', ''), str):
             raise ValueError('Log Folder must be a path.')
+        from .smoke_tests import validate_smoke_settings
+        validate_smoke_settings(payload.get('smoke_tests', DEFAULTS['smoke_tests']))
         try:
             timeout = int(occs.get('request_timeout_seconds', 360))
         except (ValueError, TypeError):
@@ -180,6 +227,36 @@ class SettingsDialog(QDialog):
         self.controls[('occs', 'check_jsonpath_length')].setToolTip(
             'Check relative and recursive paths used with length() before saving, updating shared packages, or publishing. '
             'Off by default while the restriction is being clarified.')
+        smoke = self.add_tab('Smoke Tests')
+        for key,title,kind in (
+                ('suite_path','Suite JSON File','file'), ('output_dir','Output Folder','directory'),
+                ('run_standard','Run Standard Test',bool), ('run_comparison','Run Comparison',bool),
+                ('standard_tenancy','Standard Tenancy',str), ('standard_session','Standard Session Alias (optional)',str),
+                ('comparison_source_tenancy','Comparison Source Tenancy',str),
+                ('comparison_source_session','Comparison Source Session Alias (optional)',str),
+                ('comparison_target_tenancy','Comparison Target Tenancy',str),
+                ('comparison_target_session','Comparison Target Session Alias (optional)',str),
+                ('browser_path','Chrome / Chromium Executable','file'), ('tools_path','Tool Folders (PATH)','directories'),
+                ('request_timeout_seconds','Request Timeout (seconds)',int),
+                ('run_timeout_minutes','Maximum Time per Run (minutes)',int),
+                ('concurrency','Simultaneous Previews',int),
+                ('comparison_threshold_percent','Allowed Changed Pixels (%)',float)):
+            self.add_control(smoke,'smoke_tests',key,title,kind)
+        smoke_help=('The suite defines packages, input files, and PDF/HTML outputs. '
+                    'Input paths are relative to the suite.\n\n'
+                    'A session alias overrides its tenancy. Leave Output Folder blank to save beside the suite.\n\n'
+                    'Tool Folders adds Poppler/ImageMagick locations to PATH; separate multiple folders with '
+                    + ('semicolons.' if os.name == 'nt' else 'colons.') + '\n\n'
+                    'Run tests from Package → Run Smoke Tests…. Reports and email drafts are saved; email is not sent.\n\n'
+                    'Hover over any input or its label for guidance and examples.')
+        help_row=QHBoxLayout()
+        self.smoke_help_button=QToolButton()
+        self.smoke_help_button.setText('Help…')
+        self.smoke_help_button.setToolTip('Show smoke test setup guidance.')
+        self.smoke_help_button.clicked.connect(lambda:QMessageBox.information(self,'Smoke Tests Help',smoke_help))
+        help_row.addWidget(self.smoke_help_button)
+        help_row.addStretch()
+        smoke.addRow(help_row)
         preview = self.add_tab('Preview Programs')
         for render_type in DEFAULTS['occs']['preview_open_programs']:
             self.add_control(preview, 'preview_open_programs', render_type, render_type, 'file')
@@ -223,10 +300,17 @@ class SettingsDialog(QDialog):
             if section == 'diagnostics':
                 widget.setRange(*{'activity_backlog_kib': (16, 102400),
                                   'log_file_max_mib': (1, 1024), 'log_backup_count': (1, 100)}[key])
+            elif section == 'smoke_tests':
+                widget.setRange(*{'request_timeout_seconds':(1,86400), 'run_timeout_minutes':(1,1440), 'concurrency':(1,2)}[key])
             try:
                 widget.setValue(int(value))
             except (ValueError, TypeError):
                 widget.setValue(360)
+        elif kind is float:
+            widget=QDoubleSpinBox()
+            widget.setRange(0,100)
+            widget.setDecimals(3)
+            widget.setValue(float(value))
         elif kind == 'font':
             widget = QFontComboBox()
             widget.insertItem(0, 'System Default')
@@ -239,26 +323,45 @@ class SettingsDialog(QDialog):
                 defaults = {'cli_path': self.store.cli, 'work_dir': str(self.store.work_dir), 'shared_workspace_dir': str(self.store.shared_dir)}
                 widget.setPlaceholderText(defaults.get(key, ''))
         self.controls[(section, key)] = widget
-        if kind in ('file', 'directory'):
+        help_text = SMOKE_HELP.get(key) if section == 'smoke_tests' else None
+        if help_text:
+            help_text = '<qt>' + escape(help_text) + '</qt>'
+            widget.setToolTip(help_text)
+        if kind in ('file', 'directory', 'directories'):
             row = QHBoxLayout()
             row.addWidget(widget)
             browse = QToolButton()
             browse.setText('Browse…')
             self.browse_controls[(section,key)] = browse
+            if help_text:
+                browse.setToolTip(help_text)
             def choose():
-                selected = QFileDialog.getExistingDirectory(self, title, widget.text()) if kind == 'directory' else QFileDialog.getOpenFileName(self, title, widget.text(), 'All Files (*)')[0]
+                initial=widget.text().split(os.pathsep)[0] if kind == 'directories' else widget.text()
+                selected = QFileDialog.getExistingDirectory(self, title, initial) if kind in ('directory','directories') else QFileDialog.getOpenFileName(self, title, initial, 'All Files (*)')[0]
                 if selected:
+                    if kind == 'directories':
+                        folders=[folder.strip() for folder in widget.text().split(os.pathsep) if folder.strip()]
+                        if selected not in folders:
+                            folders.append(selected)
+                        selected=os.pathsep.join(folders)
+                    elif section == 'smoke_tests' and key == 'browser_path':
+                        app=Path(selected)
+                        executable=app/'Contents'/'MacOS'/app.stem
+                        if app.suffix.lower()=='.app' and executable.is_file():
+                            selected=str(executable)
                     widget.setText(selected)
             browse.clicked.connect(choose)
             row.addWidget(browse)
             form.addRow(title, row)
         else:
             form.addRow(title, widget)
+        if help_text:
+            form.labelForField(row if kind in ('file', 'directory', 'directories') else widget).setToolTip(help_text)
 
     def save(self):
         payload = copy.deepcopy(self.store.payload)
         for (section, key), widget in self.controls.items():
-            value = widget.isChecked() if isinstance(widget, QCheckBox) else widget.value() if isinstance(widget, QSpinBox) else widget.currentText() if isinstance(widget, QComboBox) else widget.text().strip()
+            value = widget.isChecked() if isinstance(widget, QCheckBox) else widget.value() if isinstance(widget, (QSpinBox,QDoubleSpinBox)) else widget.currentText() if isinstance(widget, QComboBox) else widget.text().strip()
             if section == 'content_editor' and value == 'System Default':
                 value = ''
             if section == 'preview_open_programs':

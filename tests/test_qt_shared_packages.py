@@ -34,9 +34,188 @@ class SharedPackageTests(unittest.TestCase):
         self.assertEqual('preserved', json_object(local/'occs-package.json')['extra'])
         self.assertFalse(self.store.lock_path(self.entry['package_dir']).exists())
         self.assertTrue(self.store.matches(local, self.entry['package_dir']))
+
         at = local/'assembly-template.json'
         at.write_text(json.dumps(json_object(at), indent=8))
         self.assertTrue(self.store.matches(local, self.entry['package_dir']))
+
+    def copy_target(self):
+        import shutil
+        target = self.root / 'target'
+        shutil.copytree(self.original, target)
+        value = json_object(target / 'occs-package.json')
+        value.update(package={'shortName': 'Target', 'uuid': 'target-package'},
+                     version={'shortName': '2', 'uuid': 'target-version'})
+        (target / 'occs-package.json').write_bytes(encode(value))
+        (target / 'assembly-template.json').write_bytes(encode({'$$Id': 'Target', 'Documents': [], 'Fields': []}))
+        return self.store.publish(target, initial=True)
+
+    def test_copy_to_replaces_content_and_associations_but_preserves_target_identity(self):
+        target = self.copy_target()
+        at = {'$$Id': 'Bill', 'Documents': [{'$$Id': 'DOC', 'Condition': '', 'Layouts': []}],
+              'Fields': [{'Name': 'Field', 'Path': '$.field', 'Mandatory': True}], 'Meta': {'clause_library': []}}
+        (self.original / 'assembly-template.json').write_bytes(encode(at))
+        (self.original / 'document-associations.json').write_bytes(encode({'associations': [
+            dict(documentShortName='DOC', documentConfigUuid='doc-uuid', documentRelIndex=3,
+                 documentAlwaysTriggerInd=True, packageVersionConfigUuid='source-version',
+                 relUuid='source-relation', configId='source-config')]}))
+        source_hashes = bundle_hashes(self.original)
+        result = self.store.copy_to(self.original, target['package_dir'])
+        from atool_qt.session import PackageSession
+        session = PackageSession.open(result['published_dir'])
+        self.assertEqual(session.payload, {**at, '$$Id': 'Target'})
+        self.assertEqual(session.bundle['manifest']['version']['uuid'], 'target-version')
+        row = session.bundle['helper']['associations'][0]
+        self.assertEqual(row['packageVersionConfigUuid'], 'target-version')
+        self.assertEqual(row['relUuid'], '')
+        self.assertEqual(row['configId'], '')
+        self.assertEqual(session.documents[0]['order'], 3)
+        self.assertTrue(session.documents[0]['always_trigger'])
+        self.assertEqual(session.bundle['master']['unknown'], 'preserved')
+        self.assertIsNone(result['lock'])
+        self.assertEqual(result['publication']['operation']['reason'], 'copiedFromPackage')
+        self.assertEqual(source_hashes, bundle_hashes(self.original))
+
+    def test_copy_to_rejects_all_locks_and_same_source_version(self):
+        target = self.copy_target()
+        before = bundle_hashes(target['published_dir'])
+        for store in (self.store, SharedPackages(self.store.shared_dir, self.root / 'other', dict(user='bob', host='b'))):
+            lock = store.acquire(target)
+            lock_bytes = store.lock_path(target['package_dir']).read_bytes()
+            with self.assertRaisesRegex(ValueError, 'locked'):
+                self.store.copy_to(self.original, target['package_dir'])
+            self.assertEqual(lock_bytes, store.lock_path(target['package_dir']).read_bytes())
+            store.release(target, expected=lock)
+        with self.assertRaisesRegex(ValueError, 'different target'):
+            self.store.copy_to(self.original, self.entry['package_dir'])
+        self.assertEqual(before, bundle_hashes(target['published_dir']))
+
+    def test_copy_to_failure_leaves_target_intact_and_releases_temporary_lock(self):
+        target = self.copy_target()
+        before = bundle_hashes(target['published_dir'])
+        with patch.object(self.store, 'publish', side_effect=OSError('Injected publish failure')):
+            with self.assertRaises(OSError):
+                self.store.copy_to(self.original, target['package_dir'])
+        self.assertEqual(before, bundle_hashes(target['published_dir']))
+        self.assertFalse(self.store.lock_path(target['package_dir']).exists())
+
+    def test_copy_to_empty_associations_removes_target_membership(self):
+        from atool_qt.session import PackageSession
+        target = self.copy_target()
+        helper = target['published_dir'] / 'document-associations.json'
+        helper.write_bytes(encode({'associations': [dict(documentShortName='Old', documentConfigUuid='old', documentRelIndex=1)]}))
+        self.store.copy_to(self.original, target['package_dir'])
+        session = PackageSession.open(target['published_dir'])
+        self.assertEqual(session.documents, [])
+        self.assertEqual(session.bundle['helper']['associations'], [])
+        self.assertEqual(session.bundle['master']['CommunicationPackageVersionDocuments'], [])
+
+    def test_copy_to_detects_target_change_during_staging(self):
+        from atool_qt.shared_packages import copy_bundle_files
+        target = self.copy_target()
+        template = target['published_dir'] / 'assembly-template.json'
+        def changed(source, destination):
+            result = copy_bundle_files(source, destination)
+            template.write_bytes(encode({'Documents': [], 'Fields': [], 'external': True}))
+            return result
+        with patch('atool_qt.shared_packages.copy_bundle_files', side_effect=changed):
+            with self.assertRaisesRegex(ValueError, 'target changed'):
+                self.store.copy_to(self.original, target['package_dir'])
+        self.assertTrue(json_object(template)['external'])
+        self.assertFalse(self.store.lock_path(target['package_dir']).exists())
+
+    def test_copy_to_keeps_existing_target_relationship_ids(self):
+        from atool_qt.session import PackageSession
+        target = self.copy_target()
+        row = dict(documentShortName='DOC', documentConfigUuid='doc', documentRelIndex=1,
+                   documentAlwaysTriggerInd=False, packageVersionConfigUuid='source', relUuid='source-rel', configId='source-config')
+        (self.original / 'document-associations.json').write_bytes(encode({'associations': [row]}))
+        (target['published_dir'] / 'document-associations.json').write_bytes(encode({'associations': [
+            {**row, 'packageVersionConfigUuid': 'target-version', 'relUuid': 'target-rel', 'configId': 'target-config'}]}))
+        key = 'CommunicationPackageVersionConfigCommunicationDocumentConfigRel'
+        master = {'CommunicationPackageVersionDocuments': [{key+'Rec': {key+'Info': {
+            'Uuid': 'target-rel', 'CommunicationPackageVersionConfigUuid': 'target-version',
+            'CommunicationDocumentConfigUuid': 'doc', 'DocumentRelIndex': 1, 'DocumentAlwaysTriggerInd': False}}}]}
+        (target['published_dir'] / 'version-master.json').write_bytes(encode(master))
+        self.store.copy_to(self.original, target['package_dir'])
+        session = PackageSession.open(target['published_dir'])
+        result = session.bundle['helper']['associations'][0]
+        self.assertEqual(result['relUuid'], 'target-rel')
+        self.assertEqual(result['configId'], 'target-config')
+        self.assertEqual(session.bundle['master'], master)
+
+    def test_copy_asserts_true_and_false_in_helper_master_and_reopened_documents(self):
+        from atool_qt.editor import relationship_info
+        from atool_qt.session import PackageSession
+        target = self.copy_target()
+        flags = {'ExistingTrue': True, 'ExistingFalse': False, 'NewTrue': True, 'NewFalse': False}
+        rows = [dict(documentShortName=name, documentConfigUuid=name, documentRelIndex=index,
+                     documentAlwaysTriggerInd=flag, packageVersionConfigUuid='source-version')
+                for index, (name, flag) in enumerate(flags.items(), 1)]
+        def relations(items, version):
+            return [{'CommunicationPackageVersionConfigCommunicationDocumentConfigRelRec': {
+                'CommunicationPackageVersionConfigCommunicationDocumentConfigRelInfo': {
+                    'CommunicationPackageVersionConfigUuid': version, 'CommunicationDocumentConfigUuid': row['documentConfigUuid'],
+                    'DocumentRelIndex': row['documentRelIndex'], 'DocumentAlwaysTriggerInd': row['documentAlwaysTriggerInd']}}}
+                    for row in items]
+        (self.original/'assembly-template.json').write_bytes(encode({'Documents': [
+            {'$$Id': name, 'Condition': '$[?(@.flag == true)]', 'Layouts': []} for name in flags], 'Fields': []}))
+        for source_kind in ('helper', 'master'):
+            with self.subTest(source_kind=source_kind):
+                # Opposite values in existing target relations must be replaced in both directions.
+                old = [{**row, 'documentAlwaysTriggerInd': not row['documentAlwaysTriggerInd']} for row in rows[:2]]
+                (target['published_dir']/'document-associations.json').write_bytes(encode({'associations': old}))
+                (target['published_dir']/'version-master.json').write_bytes(encode({
+                    'CommunicationPackageVersionDocuments': relations(old, 'target-version')}))
+                helper = rows if source_kind == 'helper' else [{**row, 'documentAlwaysTriggerInd': not row['documentAlwaysTriggerInd']} for row in rows]
+                (self.original/'document-associations.json').write_bytes(encode({'associations': helper}))
+                (self.original/'version-master.json').write_bytes(encode({} if source_kind == 'helper' else {
+                    'CommunicationPackageVersionDocuments': relations(rows, 'source-version')}))
+                self.store.copy_to(self.original, target['package_dir'])
+                # Repeat with identical membership and a stale helper: this must still rewrite both files.
+                for stale_helper in (False, True):
+                    if stale_helper:
+                        (target['published_dir']/'document-associations.json').write_bytes(encode({'associations': [
+                            {**row, 'packageVersionConfigUuid': 'target-version',
+                             'relUuid': '', 'configId': '', 'documentAlwaysTriggerInd': not row['documentAlwaysTriggerInd']}
+                            for row in rows]}))
+                        self.store.copy_to(self.original, target['package_dir'])
+                    session = PackageSession.open(target['published_dir'])
+                    helper_flags = {row['documentConfigUuid']: row['documentAlwaysTriggerInd'] for row in session.bundle['helper']['associations']}
+                    master_flags = {info['CommunicationDocumentConfigUuid']: info['DocumentAlwaysTriggerInd']
+                                    for rel in session.bundle['master']['CommunicationPackageVersionDocuments']
+                                    if (info := relationship_info(rel))}
+                    document_flags = {doc['name']: doc['always_trigger'] for doc in session.documents}
+                    for actual in (helper_flags, master_flags, document_flags):
+                        self.assertEqual(flags.keys(), actual.keys())
+                        for name, flag in flags.items():
+                            self.assertIs(actual[name], flag)
+
+    def test_copy_rejects_missing_false_trigger_before_publishing(self):
+        from atool_qt.editor import PackageEditor, relationship_info
+        target = self.copy_target()
+        (self.original/'document-associations.json').write_bytes(encode({'associations': [
+            dict(documentShortName='DOC', documentConfigUuid='doc', documentRelIndex=1, documentAlwaysTriggerInd=False)]}))
+        before = bundle_hashes(target['published_dir'])
+        save = PackageEditor.save
+        for location in ('helper', 'master'):
+            with self.subTest(location=location):
+                def lose_false(editor, **kwargs):
+                    result = save(editor, **kwargs)
+                    path = editor.session.bundle[location+'_path']
+                    value = json_object(path)
+                    if location == 'helper':
+                        value['associations'][0].pop('documentAlwaysTriggerInd')
+                    else:
+                        relationship_info(value['CommunicationPackageVersionDocuments'][0]).pop('DocumentAlwaysTriggerInd')
+                    path.write_bytes(encode(value))
+                    return result
+                with patch.object(PackageEditor, 'save', lose_false), patch.object(self.store, 'publish') as publish:
+                    with self.assertRaisesRegex(ValueError, 'Always Trigger values'):
+                        self.store.copy_to(self.original, target['package_dir'])
+                publish.assert_not_called()
+                self.assertEqual(before, bundle_hashes(target['published_dir']))
+                self.assertFalse(self.store.lock_path(target['package_dir']).exists())
 
     def test_edit_lock_resume_update_history_and_release(self):
         local = self.store.open_copy(self.entry, 'edit')
@@ -219,6 +398,86 @@ class SharedPackageInterfaceTests(unittest.TestCase):
         window.comms.settings = self.window.comms.settings
         self.addCleanup(window.close)
         return window
+
+    def test_copy_picker_and_copy_keep_source_open_and_block_locked_targets(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
+        source = self.root / 'original'
+        self.assertTrue(self.window.open_package(source))
+        target_manifest = json_object(source / 'occs-package.json')
+        target_manifest.update(package={'shortName': 'Target'}, version={'shortName': '2'})
+        (source / 'occs-package.json').write_bytes(encode(target_manifest))
+        target = self.window.shared_store().publish(source, initial=True)
+        # The active source retains its original identity; restore its file as well.
+        (source / 'occs-package.json').write_bytes(encode(self.entry['manifest']))
+        session = self.window.session
+        self.assertIn(self.window.package_copy_action, self.window.package_menu.actions())
+        self.window.package_copy_action.trigger()
+        picker = self.window.copy_picker
+        self.assertTrue(picker.isVisible())
+        self.assertEqual(picker.tree.topLevelItemCount(), 1)
+        self.assertEqual(picker.tree.topLevelItem(0).text(0), 'Target')
+        with patch.object(QMessageBox, 'question', side_effect=[QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]), \
+                patch.object(self.window, 'require_shared_sync', return_value=True):
+            self.assertTrue(self.window.copy_package_to(target, session))
+        self.assertIs(self.window.session, session)
+        self.assertEqual(self.errors, [])
+        store = self.window.shared_store()
+        lock = store.acquire(target)
+        picker.refresh()
+        self.assertFalse(picker.tree.topLevelItem(0).flags() & Qt.ItemFlag.ItemIsEnabled)
+        with patch.object(QMessageBox, 'question') as confirm:
+            self.assertFalse(self.window.copy_package_to(target, session))
+        confirm.assert_not_called()
+        self.assertIn('locked', self.errors[-1][1])
+        store.release(target, expected=lock)
+        picker.close()
+
+    def test_copy_targets_explicit_version_and_leaves_other_versions_unchanged(self):
+        import shutil
+        from PySide6.QtWidgets import QMessageBox
+        source=self.root/'original'
+        self.assertTrue(self.window.open_package(source))
+        store=self.window.shared_store()
+        targets={}
+        for version in ('1','2','3'):
+            root=self.root/('target-'+version)
+            shutil.copytree(source,root)
+            value=json_object(root/'occs-package.json')
+            value.update(package={'shortName':'Target'},version={'shortName':version,'uuid':'target-'+version})
+            (root/'occs-package.json').write_bytes(encode(value))
+            (root/'assembly-template.json').write_bytes(encode({'$$Id':'Target','Documents':[],'Fields':[], 'originalVersion':version}))
+            targets[version]=store.publish(root,initial=True)
+        lock=store.acquire(targets['3'])
+        self.addCleanup(lambda:store.release(targets['3'],expected=lock))
+        before={version:bundle_hashes(entry['published_dir']) for version,entry in targets.items()}
+        self.window.show_copy_package()
+        picker=self.window.copy_picker
+        self.addCleanup(picker.close)
+        self.assertEqual(picker.target_package.currentIndex(),-1)
+        self.assertFalse(picker.open_button.isEnabled())
+        picker.target_package.setCurrentText('Target')
+        self.assertEqual(picker.target_version.count(),3)
+        self.assertEqual(picker.target_version.currentIndex(),-1)
+        self.assertFalse(picker.open_button.isEnabled())
+        self.assertFalse(picker.target_version.model().item(picker.target_version.findText('3')).isEnabled())
+        picker.target_version.setCurrentText('2')
+        self.assertEqual(picker.tree.currentItem().text(1),'2')
+        self.assertTrue(picker.open_button.isEnabled())
+        # Refresh retains the exact version, rather than selecting another version.
+        picker.refresh()
+        self.assertEqual(picker.target_version.currentText(),'2')
+        with patch.object(QMessageBox,'question',side_effect=[QMessageBox.StandardButton.Yes,QMessageBox.StandardButton.No]) as confirm, \
+                patch.object(self.window,'require_shared_sync',return_value=True):
+            picker.open_button.click()
+        self.assertIn('Target 2',confirm.call_args_list[0].args[2])
+        self.assertEqual([],self.errors)
+        self.assertNotIn('originalVersion',json_object(targets['2']['published_dir']/'assembly-template.json'))
+        for version in ('1','3'):
+            self.assertEqual(before[version],bundle_hashes(targets[version]['published_dir']))
+        self.assertEqual('2',store.entry(targets['2']['package_dir'])['manifest']['version']['shortName'])
+        self.assertEqual('target-2',store.entry(targets['2']['package_dir'])['manifest']['version']['uuid'])
+        self.assertIsNone(store.entry(targets['2']['package_dir'])['lock'])
 
     def test_second_window_cannot_open_same_package_via_shared_local_raw_or_download(self):
         from PySide6.QtWidgets import QMessageBox

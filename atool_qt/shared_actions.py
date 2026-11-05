@@ -9,19 +9,35 @@ from .grids import configure_grid
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
 from .session import PackageSession, read_json
-from .shared_packages import SharedPackages, bundle_paths, manifest
+from .shared_packages import SharedPackages, bundle_paths, manifest, names
 
 
 class SharedPicker(QDialog):
-    def __init__(self, workspace, unlock=False):
+    def __init__(self, workspace, unlock=False, copy_to=False):
         super().__init__(workspace)
         self.workspace, self.unlock = workspace, unlock
-        self.setWindowTitle('Manual Shared Package Unlock' if unlock else 'Open Shared Package')
+        self.copy_to, self.source_session = copy_to, workspace.session
+        self.setWindowTitle('Copy Package To' if copy_to else 'Manual Shared Package Unlock' if unlock else 'Open Shared Package')
         self.resize(960, 560)
         layout=QVBoxLayout(self)
+        if copy_to:
+            form=QFormLayout()
+            self.target_package=QComboBox()
+            self.target_package.setPlaceholderText('Select a target package')
+            self.target_version=QComboBox()
+            self.target_version.setPlaceholderText('Select a target version')
+            self.target_version.setEnabled(False)
+            form.addRow('Target package',self.target_package)
+            form.addRow('Target version',self.target_version)
+            layout.addLayout(form)
+            help_text=QLabel('Choose an existing version in shared storage. To add a missing version, retrieve it using Package → Get Packages from Comms… first.')
+            help_text.setWordWrap(True)
+            layout.addWidget(help_text)
+            self.target_package.currentIndexChanged.connect(self.choose_copy_package)
+            self.target_version.currentIndexChanged.connect(self.choose_copy_version)
         self.filter=QLineEdit()
         self.filter.setPlaceholderText('Filter package, version, owner, or status')
         layout.addWidget(self.filter)
@@ -41,11 +57,12 @@ class SharedPicker(QDialog):
         row.addWidget(refresh)
         row.addStretch()
         retrieve=QPushButton('Retrieve from Comms…')
+        retrieve.setVisible(not copy_to)
         row.addWidget(retrieve)
         retrieve.clicked.connect(self.retrieve)
-        self.open_button=QPushButton('Unlock…' if unlock else 'Open…')
+        self.open_button=QPushButton('Copy To…' if copy_to else 'Unlock…' if unlock else 'Open…')
         row.addWidget(self.open_button)
-        if not unlock:
+        if not unlock and not copy_to:
             edit,testing=QPushButton('Open for Edit'),QPushButton('Open Testing Copy')
             row.addWidget(edit)
             row.addWidget(testing)
@@ -56,6 +73,8 @@ class SharedPicker(QDialog):
         refresh.clicked.connect(self.refresh)
         self.open_button.clicked.connect(lambda:self.select(None))
         self.tree.itemDoubleClicked.connect(lambda *_:self.select(None))
+        if copy_to:
+            self.tree.currentItemChanged.connect(self.update_copy_selection)
         self.refresh()
 
     def retrieve(self):
@@ -63,13 +82,22 @@ class SharedPicker(QDialog):
         self.accept()
 
     def refresh(self):
+        previous=self.tree.currentItem()
+        previous_dir=previous.data(0,Qt.ItemDataRole.UserRole)['package_dir'] if previous else None
         self.tree.clear()
+        if self.copy_to:
+            self.target_package.blockSignals(True)
+            self.target_package.clear()
+            self.target_package.blockSignals(False)
+            self.populate_copy_versions('')
         try:
             entries=self.workspace.shared_store().entries()
         except (OSError,ValueError) as error:
             self.status.setText(str(error))
             return
         for entry in entries:
+            if self.copy_to and names(self.source_session.bundle['manifest']) == (entry['package_name'], entry['version_name']):
+                continue
             lock=entry.get('lock')
             if self.unlock and not lock:
                 continue
@@ -80,26 +108,80 @@ class SharedPicker(QDialog):
             item=QTreeWidgetItem([entry['package_name'],entry['version_name'],str(publication.get('publishedAt') or entry['manifest'].get('createdAt') or ''),
                 str(owner.get('displayName') or owner.get('user') or ''),status])
             item.setData(0,Qt.ItemDataRole.UserRole,entry)
+            if self.copy_to and (lock is not None or entry.get('unavailable_reason')):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
             for column in range(5):
                 item.setToolTip(column,item.text(column))
             self.tree.addTopLevelItem(item)
-        if self.tree.topLevelItemCount():
+        if self.copy_to:
+            self.target_package.blockSignals(True)
+            self.target_package.addItems(sorted({self.tree.topLevelItem(index).text(0) for index in range(self.tree.topLevelItemCount())},key=str.casefold))
+            self.target_package.setCurrentIndex(-1)
+            self.target_package.blockSignals(False)
+            if previous_dir:
+                item=next((self.tree.topLevelItem(index) for index in range(self.tree.topLevelItemCount())
+                           if self.tree.topLevelItem(index).data(0,Qt.ItemDataRole.UserRole)['package_dir']==previous_dir),None)
+                if item:
+                    self.tree.setCurrentItem(item)
+        elif self.tree.topLevelItemCount():
             self.tree.setCurrentItem(next((self.tree.topLevelItem(index) for index in range(self.tree.topLevelItemCount()) if self.tree.topLevelItem(index).data(0,Qt.ItemDataRole.UserRole)['package_dir']==self.workspace.shared_package_dir),self.tree.topLevelItem(0)))
         self.status.setText(f'{self.tree.topLevelItemCount()} shared package versions. '+str(self.workspace.shared_store().shared_dir))
         self.apply_filter()
+        if self.copy_to:
+            self.update_copy_selection()
+
+    def update_copy_selection(self, *_):
+        item = self.tree.currentItem()
+        if item:
+            self.target_package.blockSignals(True)
+            self.target_package.setCurrentText(item.text(0))
+            self.target_package.blockSignals(False)
+            self.populate_copy_versions(item.text(0),item.text(1))
+        self.open_button.setEnabled(bool(item and not item.isHidden() and item.flags() & Qt.ItemFlag.ItemIsEnabled))
+
+    def populate_copy_versions(self, package, version=None):
+        self.target_version.blockSignals(True)
+        self.target_version.clear()
+        for index in range(self.tree.topLevelItemCount()):
+            item=self.tree.topLevelItem(index)
+            if item.text(0)!=package:
+                continue
+            self.target_version.addItem(item.text(1),item.data(0,Qt.ItemDataRole.UserRole)['package_dir'])
+            option=self.target_version.model().item(self.target_version.count()-1)
+            option.setEnabled(bool(item.flags() & Qt.ItemFlag.ItemIsEnabled))
+            option.setToolTip(item.text(4))
+        self.target_version.setCurrentIndex(self.target_version.findText(version) if version is not None else -1)
+        self.target_version.setEnabled(bool(self.target_version.count()))
+        self.target_version.blockSignals(False)
+
+    def choose_copy_package(self, *_):
+        self.tree.setCurrentItem(None)
+        self.populate_copy_versions(self.target_package.currentText())
+        self.apply_filter()
+
+    def choose_copy_version(self, *_):
+        directory=self.target_version.currentData()
+        item=next((self.tree.topLevelItem(index) for index in range(self.tree.topLevelItemCount())
+                   if self.tree.topLevelItem(index).data(0,Qt.ItemDataRole.UserRole)['package_dir']==directory),None)
+        self.tree.setCurrentItem(item)
+        self.update_copy_selection()
 
     def apply_filter(self,*_):
         query=self.filter.text().casefold()
         for index in range(self.tree.topLevelItemCount()):
             item=self.tree.topLevelItem(index)
-            item.setHidden(query not in ' '.join(item.text(column) for column in range(5)).casefold())
+            package=self.target_package.currentText() if self.copy_to else ''
+            item.setHidden((bool(package) and item.text(0)!=package) or query not in ' '.join(item.text(column) for column in range(5)).casefold())
+        if self.copy_to:
+            self.update_copy_selection()
 
     def select(self,mode):
         item=self.tree.currentItem()
-        if not item:
+        if not item or item.isHidden() or not item.flags() & Qt.ItemFlag.ItemIsEnabled:
             return
         entry=item.data(0,Qt.ItemDataRole.UserRole)
-        success=self.workspace.unlock_shared_entry(entry) if self.unlock else self.workspace.open_shared_entry(entry,mode)
+        success=(self.workspace.copy_package_to(entry, self.source_session) if self.copy_to else
+                 self.workspace.unlock_shared_entry(entry) if self.unlock else self.workspace.open_shared_entry(entry,mode))
         if success:
             self.accept()
         else:
@@ -207,10 +289,12 @@ class SharedPackageActions:
         self.shared_open_action=self.action('Open Shared Package…',self.show_shared_packages,QKeySequence.StandardKey.Open)
         self.shared_close_action=self.action('Close Package',self.close_package)
         self.shared_update_action=self.action('Update Shared Package',self.update_shared_package,'Ctrl+U')
+        self.package_copy_action=self.action('Copy To…',self.show_copy_package)
         self.shared_release_action=self.action('Release Shared Package Lock',self.release_shared_lock)
         self.package_menu.addActions([self.shared_open_action,self.shared_close_action])
         self.package_menu.addSeparator()
         self.package_menu.addAction(self.shared_update_action)
+        self.package_menu.addAction(self.package_copy_action)
         self.package_menu.addAction(self.action('Check Shared Folder Sync…',self.check_shared_sync))
         self.package_menu.addSeparator()
         self.package_menu.addAction(self.shared_release_action)
@@ -234,6 +318,7 @@ class SharedPackageActions:
         busy=self.package_busy()
         self.shared_close_action.setEnabled(bool(self.session) and not busy)
         self.shared_update_action.setEnabled(self.shared_mode=='edit' and bool(self.current_bundle_dir()) and not busy)
+        self.package_copy_action.setEnabled(bool(self.session and self.session.bundle) and not busy)
         self.shared_release_action.setEnabled(bool(self.shared_package_dir) and not busy)
         self.shared_open_action.setEnabled(not busy)
         if hasattr(self,'get_packages_action'):
@@ -249,6 +334,45 @@ class SharedPackageActions:
     def show_cleanup(self):
         self.cleanup_dialog=CleanupDialog(self)
         self.cleanup_dialog.show()
+
+    def show_copy_package(self):
+        if self.package_busy() or not self.session or not self.session.bundle:
+            return
+        self.copy_picker=SharedPicker(self, copy_to=True)
+        self.copy_picker.show()
+
+    def copy_package_to(self, entry, source_session):
+        if self.package_busy() or self.session is not source_session:
+            self.report_error('Copy Package', 'The source package changed. Reopen Copy To before continuing.')
+            return False
+        try:
+            self.flush_properties()
+            if self.editor.dirty and not self.save_package():
+                return False
+            store=self.shared_store()
+            fresh=store.entry(entry['package_dir'])
+            if not fresh or fresh.get('unavailable_reason') or fresh.get('lock') is not None:
+                raise ValueError('The target package version is unavailable or locked. Refresh and choose an unlocked version.')
+            source=' '.join(names(self.session.bundle['manifest']))
+            target=fresh['package_name']+' '+fresh['version_name']
+            if QMessageBox.question(self, 'Copy Package',
+                    f'Copy {source} to {target}?\n\nThis replaces the target AT JSON and all document associations, including order and Always Trigger settings. The target package and version identity are retained.\n\nThe copy updates shared storage. You can publish the target to Comms after copying.',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
+                return False
+            if not self.require_shared_sync('copy to this shared package'):
+                return False
+            store.copy_to(self.current_bundle_dir(), fresh['package_dir'],
+                          check_length_paths=self.comms.settings.get('check_jsonpath_length', False) is True)
+            self.statusBar().showMessage('Copied '+source+' to '+target+' in shared storage.', 10000)
+            if QMessageBox.question(self, 'Publish Copied Package',
+                    f'{target} was copied successfully.\n\nPublish this target to Comms now? You will select a configuration and review the dry run before publishing.',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+                self.publish_package(target_entry=fresh)
+            return True
+        except (OSError, ValueError) as error:
+            self.report_error('Copy Package', str(error))
+            return False
 
     def open_shared_entry(self,entry,mode=None):
         if self.package_busy():

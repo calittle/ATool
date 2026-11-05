@@ -125,6 +125,109 @@ class PublishTests(unittest.TestCase):
         self.assertEqual('11',self.window.comms.settings.get('last_config_id'))
         return self.window.publish_context
 
+    def copied_target(self):
+        import shutil
+        root=self.root/'target'
+        shutil.copytree(self.root/'original', root)
+        value=json_object(root/'occs-package.json')
+        value.update(package={'shortName':'Target'}, version={'shortName':'3', 'uuid':'target-version'})
+        (root/'occs-package.json').write_bytes(encode(value))
+        payload=json_object(root/'assembly-template.json')
+        payload['$$Id']='Target'
+        (root/'assembly-template.json').write_bytes(encode(payload))
+        return self.window.shared_store().publish(root,initial=True)
+
+    def test_copy_offers_target_publish_without_switching_source(self):
+        from atool_qt.shared_packages import bundle_hashes
+        target=self.copied_target()
+        window=self.window
+        session,editor=window.session,window.editor
+        source_root=window.current_bundle_dir()
+        session.bundle['manifest']['version']['uuid']='source-version'
+        editor.associations=[dict(documentShortName=name, documentConfigUuid=name, documentRelIndex=index,
+                                  documentAlwaysTriggerInd=flag, packageVersionConfigUuid='source-version')
+                             for index,(name,flag) in enumerate((('DOC',False),('AlwaysDoc',True)),1)]
+        editor.save()
+        window.refresh_edit()
+        source_hashes=bundle_hashes(source_root)
+        source_lock=window.shared_store().lock_path(window.shared_package_dir).read_bytes()
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.Yes), \
+                patch.object(window,'require_shared_sync',return_value=True):
+            self.assertTrue(window.copy_package_to(target,session))
+        context=window.publish_context
+        self.assertTrue(context['detached'])
+        self.assertEqual(target['package_dir'],context['shared_dir'])
+        self.assertEqual('Target',json_object(context['stage']/'occs-package.json')['package']['shortName'])
+        from atool_qt.editor import relationship_info
+        def assert_triggers(root):
+            helper=json_object(root/'document-associations.json')['associations']
+            master=json_object(root/'version-master.json')['CommunicationPackageVersionDocuments']
+            for actual in ({row['documentConfigUuid']:row['documentAlwaysTriggerInd'] for row in helper},
+                           {info['CommunicationDocumentConfigUuid']:info['DocumentAlwaysTriggerInd']
+                            for rel in master if (info:=relationship_info(rel))}):
+                self.assertIs(actual['DOC'],False)
+                self.assertIs(actual['AlwaysDoc'],True)
+        assert_triggers(context['stage'])
+        self.complete(0,{'configs':[{'id':'11','shortName':'CFG11','status':'Open'}]})
+        from PySide6.QtWidgets import QLabel
+        labels=[label.text() for label in window.publish_config_dialog.findChildren(QLabel)]
+        self.assertIn('Target 3',labels)
+        window.publish_config_dialog.submit()
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.Yes):
+            self.complete(1,{'changes':{'assemblyTemplate':True}})
+        refreshed=json_object(context['stage']/'occs-package.json')
+        refreshed['sourceHashes']={'assemblyTemplate':'server-refreshed'}
+        (context['stage']/'occs-package.json').write_bytes(encode(refreshed))
+        with patch.object(window,'require_shared_sync',return_value=True):
+            self.complete(2,{'changes':{'assemblyTemplate':True}})
+        self.assertIs(window.session,session)
+        self.assertIs(window.editor,editor)
+        self.assertEqual(source_hashes,bundle_hashes(source_root))
+        self.assertEqual(source_lock,window.shared_store().lock_path(window.shared_package_dir).read_bytes())
+        self.assertIsNone(window.publish_context)
+        result=window.shared_store().entry(target['package_dir'])
+        self.assertIsNone(result['lock'])
+        self.assertEqual('server-refreshed',result['manifest']['sourceHashes']['assemblyTemplate'])
+        assert_triggers(result['published_dir'])
+        self.assertEqual([],self.errors)
+
+    def test_target_publish_cancel_no_changes_and_failure_release_lock(self):
+        from atool_qt.shared_packages import bundle_hashes
+        target=self.copied_target()
+        before=bundle_hashes(target['published_dir'])
+        session=self.window.session
+        for outcome in ('cancel','config-cancel','decline-review','no-changes','failure'):
+            with self.subTest(outcome=outcome):
+                self.calls.clear()
+                with patch.object(self.window,'require_shared_sync',return_value=True):
+                    self.assertTrue(self.window.publish_package(target_entry=target))
+                if outcome=='cancel':
+                    self.complete(0,cancelled=True)
+                elif outcome=='failure':
+                    self.complete(0,code=1)
+                else:
+                    self.complete(0,{'configs':[{'id':'11','status':'Open'}]})
+                    if outcome=='config-cancel':
+                        self.window.publish_config_dialog.reject()
+                    else:
+                        self.window.publish_config_dialog.submit()
+                        with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.No):
+                            self.complete(1,{'changes':{'assemblyTemplate':outcome=='decline-review'}})
+                self.assertIsNone(self.window.publish_context)
+                self.assertIsNone(self.window.shared_store().entry(target['package_dir'])['lock'])
+                self.assertEqual(before,bundle_hashes(target['published_dir']))
+                self.assertIs(self.window.session,session)
+
+    def test_target_publish_rejects_existing_lock_including_own_lock(self):
+        target=self.copied_target()
+        store=self.window.shared_store()
+        lock=store.acquire(target)
+        with patch.object(self.window,'require_shared_sync',return_value=True):
+            self.assertFalse(self.window.publish_package(target_entry=target))
+        self.assertEqual(lock,store.entry(target['package_dir'])['lock'])
+        self.assertFalse(self.calls)
+        store.release(target,expected=lock)
+
     def test_dry_run_uses_staged_snapshot_and_no_changes_never_publishes(self):
         context=self.begin()
         stage=context['stage']

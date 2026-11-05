@@ -125,7 +125,7 @@ class PackageDownloadActions:
         self.package_menu.insertSeparator(self.shared_update_action)
 
     def package_busy(self):
-        return self.job is not None or (not getattr(self,'package_installing',False) and (getattr(self,'publish_context',None) is not None or any(not job.done for job in getattr(self,'package_download_jobs',[]))))
+        return bool(getattr(getattr(self,'smoke_dialog',None),'running',False)) or self.job is not None or (not getattr(self,'package_installing',False) and (getattr(self,'publish_context',None) is not None or any(not job.done for job in getattr(self,'package_download_jobs',[]))))
 
     def list_comms_packages(self):
         self.package_query_revision+=1

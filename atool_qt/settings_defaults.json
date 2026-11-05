@@ -22,6 +22,24 @@
       {"label": "Chinese", "data": "CHINESE", "short_name": "ZF"}
     ]
   },
+  "smoke_tests": {
+    "suite_path": "",
+    "output_dir": "",
+    "run_standard": true,
+    "run_comparison": true,
+    "standard_tenancy": "pre-prod",
+    "standard_session": "",
+    "comparison_source_tenancy": "non-prod",
+    "comparison_source_session": "",
+    "comparison_target_tenancy": "pre-prod",
+    "comparison_target_session": "",
+    "browser_path": "",
+    "tools_path": "",
+    "request_timeout_seconds": 60,
+    "run_timeout_minutes": 120,
+    "concurrency": 2,
+    "comparison_threshold_percent": 1.0
+  },
   "occs": {
     "cli_path": "",
     "work_dir": "",

@@ -204,10 +204,12 @@ class SharedPackages:
         payload.setdefault('lockToken', uuid4().hex)
         return payload
 
-    def acquire(self, entry, local=None):
+    def acquire(self, entry, local=None, *, require_unlocked=False):
         path = self.lock_path(entry['package_dir'])
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
+            if require_unlocked:
+                raise ValueError('The target package version is locked.')
             previous_bytes = path.read_bytes()
             previous = json_object(path)
             if not self.owned(previous, self.owner):
@@ -238,7 +240,7 @@ class SharedPackages:
             raise ValueError('The shared lock changed. Refresh before unlocking.')
         path.unlink()
 
-    def open_copy(self, entry, mode):
+    def open_copy(self, entry, mode, *, require_unlocked=False):
         entry = self.entry(entry['package_dir'])
         if not entry or entry['unavailable_reason']:
             raise ValueError('The shared package version is unavailable.')
@@ -255,7 +257,7 @@ class SharedPackages:
             if mode == 'edit':
                 lock_path = self.lock_path(entry['package_dir'])
                 lock_before = lock_path.read_bytes() if lock_path.exists() else None
-                self.acquire(entry, local)
+                self.acquire(entry, local, require_unlocked=require_unlocked)
                 acquired = True
             retry_shared_operation(lambda: shutil.copytree(entry['published_dir'], local, dirs_exist_ok=True), 'copy shared package to local folder')
             copy_bundle_files(entry['published_dir'], local)
@@ -328,6 +330,85 @@ class SharedPackages:
         if baseline.get('sharedHashes') != current:
             raise ValueError('This local copy is based on an older shared version. Open the latest copy before updating.')
         return lock, current
+
+    def copy_to(self, source, package_dir, *, check_length_paths=False):
+        """Replace an unlocked destination's AT and membership, retaining its identity."""
+        from .editor import PackageEditor, relationship_info
+        from .session import PackageSession
+
+        source = Path(source).resolve()
+        entry = self.entry(package_dir)
+        if not entry or entry['unavailable_reason']:
+            raise ValueError('The target shared package version is unavailable.')
+        if names(manifest(source)) == (entry['package_name'], entry['version_name']):
+            raise ValueError('Choose a different target package version.')
+        if entry['lock'] is not None:
+            raise ValueError('The target package version is locked. Release its lock before copying.')
+        source_hashes = bundle_hashes(source)
+        source_session = PackageSession.open(source)
+        source_editor = PackageEditor(source_session)
+        if source_editor.associations is None:
+            helper = source_session.bundle.get('helper') or {}
+            master = source_session.bundle.get('master') or {}
+            if not isinstance(helper.get('associations'), list) and not isinstance(master.get('CommunicationPackageVersionDocuments'), list):
+                raise ValueError('The source document associations are unavailable.')
+        # Exclusive creation also rejects our own locks and a lock acquired since listing.
+        lock_path = self.lock_path(entry['package_dir'])
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='atool-copy-') as temporary:
+            local = Path(temporary) / 'target'
+            lock = self.lock_payload(entry, local)
+            with lock_path.open('xb') as stream:
+                stream.write(encode(lock))
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                copy_bundle_files(entry['published_dir'], local)
+                if bundle_hashes(entry['published_dir']) != lock['sharedBaselineHashes']:
+                    raise ValueError('The target changed while preparing the copy. Refresh and retry.')
+                write_files({local / self.BASELINE: encode(self.baseline(local, entry, 'opened-edit'))})
+                target = PackageSession.open(local)
+                editor = PackageEditor(target)
+                version_uuid = editor.version_uuid()
+                existing = {row.get('documentConfigUuid'): row for row in editor.associations or []}
+                rows = copy.deepcopy(source_editor.associations or [])
+                if rows and not version_uuid:
+                    raise ValueError('The target package version UUID is required to copy document associations.')
+                for row in rows:
+                    previous = existing.get(row.get('documentConfigUuid'), {})
+                    row.update(packageVersionConfigUuid=version_uuid,
+                               relUuid=previous.get('relUuid', ''), configId=previous.get('configId', ''),
+                               documentAlwaysTriggerInd=bool(row['documentAlwaysTriggerInd']))
+                payload = copy.deepcopy(source_session.payload)
+                if '$$Id' in target.payload:
+                    payload['$$Id'] = target.payload['$$Id']
+                else:
+                    payload.pop('$$Id', None)
+                target.payload = payload
+                target.clauses = copy.deepcopy(source_session.clauses)
+                editor.associations = rows
+                # Rewrite both representations even when membership is unchanged:
+                # an existing helper may disagree with the authoritative master.
+                editor.saved['associations'] = None
+                editor.save(check_length_paths=check_length_paths)
+                saved_paths = bundle_paths(local, manifest(local))
+                expected = {row['documentConfigUuid']: row['documentAlwaysTriggerInd'] for row in rows}
+                helper_rows = json_object(saved_paths['documentAssociations'])['associations']
+                master_rows = [info for relation in json_object(saved_paths['versionMaster'])['CommunicationPackageVersionDocuments']
+                               if (info := relationship_info(relation)) and info.get('CommunicationDocumentConfigUuid')]
+                for records, uuid_key, trigger_key in (
+                        (helper_rows, 'documentConfigUuid', 'documentAlwaysTriggerInd'),
+                        (master_rows, 'CommunicationDocumentConfigUuid', 'DocumentAlwaysTriggerInd')):
+                    actual = {row[uuid_key]: row.get(trigger_key) for row in records}
+                    if actual.keys() != expected.keys() or any(actual[uuid] is not flag for uuid, flag in expected.items()):
+                        raise ValueError('Copied document Always Trigger values do not match the source. The target was not updated.')
+                if bundle_hashes(source) != source_hashes:
+                    raise ValueError('The source changed while preparing the copy. Retry the copy.')
+                return self.publish(local, entry['package_dir'], reason='copiedFromPackage', release=True)
+            finally:
+                # Never remove a lock replaced by another operation.
+                if lock_path.exists() and json_object(lock_path).get('lockToken') == lock['lockToken']:
+                    self.release(entry, expected=json_object(lock_path))
 
     def publish(self, local, package_dir=None, *, reason='updateFromLocal', release=False, initial=False):
         """Stage current/history first; restore the prior version if any commit step fails."""

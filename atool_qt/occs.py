@@ -169,6 +169,15 @@ class CommandJob(QObject):
                 return
         command = self.settings.command(args)
         environment = QProcessEnvironment.systemEnvironment()
+        if self.args[:1] == ['smoke']:
+            smoke=self.settings.payload.get('smoke_tests',{})
+            browser=str(smoke.get('browser_path') or '').strip()
+            if browser:
+                environment.insert('OCCS_SMOKE_BROWSER',str(Path(browser).expanduser()))
+            folders=str(smoke.get('tools_path') or '').strip()
+            if folders:
+                expanded=os.pathsep.join(str(Path(folder.strip()).expanduser()) for folder in folders.split(os.pathsep) if folder.strip())
+                environment.insert('PATH',expanded+os.pathsep+environment.value('PATH'))
         debug = bool(self.settings.payload.get('diagnostics', {}).get('debug_logging'))
         environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] != ['login'] else '0')
         self.process.setProcessEnvironment(environment)

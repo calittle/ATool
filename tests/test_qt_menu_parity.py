@@ -78,7 +78,8 @@ class MenuParityTests(unittest.TestCase):
 
     def test_package_menu_order_and_advanced_controls_match_original(self):
         names = [action.text().replace('…', '...') for action in self.window.package_menu.actions() if not action.isSeparator()]
-        self.assertEqual(names, ['Preview...', 'Send Email...', 'Cancel All Previews', 'Open Shared Package...', 'Close Package', 'Get Packages from Comms...', 'Audit JSONPaths...', 'Update Shared Package', 'Publish Package to Comms...', 'Check Shared Folder Sync...', 'Release Shared Package Lock', 'Manual Shared Package Unlock...', 'Advanced'])
+        self.assertEqual(names, ['Preview...', 'Send Email...', 'Cancel All Previews', 'Open Shared Package...', 'Close Package', 'Get Packages from Comms...', 'Audit JSONPaths...', 'Update Shared Package', 'Copy To...', 'Publish Package to Comms...', 'Run Smoke Tests...', 'Check Shared Folder Sync...', 'Release Shared Package Lock', 'Manual Shared Package Unlock...', 'Advanced'])
+        self.assertIn(self.window.package_copy_action, self.window.package_menu.actions())
         advanced = self.window.package_menu.actions()[-1].menu()
         self.assertEqual([action.text() for action in advanced.actions() if not action.isSeparator()], ['Open Local Package…', 'Open Raw AT…', 'Clean Local Packages…'])
 

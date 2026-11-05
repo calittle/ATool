@@ -262,7 +262,7 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
     def test_settings_all_browse_buttons_update_only_their_draft_field(self):
         from PySide6.QtWidgets import QFileDialog
         dialog=SettingsDialog(self.window)
-        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir','log_directory'}
+        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir','log_directory','output_dir','tools_path'}
         for key,button in dialog.browse_controls.items():
             widget=dialog.controls[key]
             old=widget.text()
