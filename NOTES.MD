@@ -1,5 +1,21 @@
 # ATool Release Notes
 
+## v2.4.1
+
+- Copy the open package's Assembly Template and document associations to a chosen
+  package/version in shared storage, retaining the destination identity and
+  relationship IDs. Preserve document order and Always Trigger settings, reject
+  locked destinations, and retain history and rollback protection.
+- Offer to publish the copied target to Comms while keeping the source package
+  open, with configuration selection, dry run, publish review and automatic
+  release of the temporary target lock.
+- Run standard and comparison smoke tests from the Package menu using a saved
+  suite and configurable tenancies, browser, tool folders, timeouts and comparison
+  threshold. Show progress, cancellation, report links and resumable output folders.
+- Bundle OCCS CLI v1.3.1 (previously v1.3.0), fixing document model previews of
+  conditional content split across styled spans, including adjacent conditions,
+  Chinese text and embedded field references.
+
 ## v2.4.0
 
 - Add Show in Data Browser to Field Manager's field-row and mapped-value context
