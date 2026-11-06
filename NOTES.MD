@@ -1,6 +1,6 @@
 # ATool Release Notes
 
-## Unreleased
+## v2.5.0
 
 - Add Settings → Sign In to Comms (SSO)… for browser sign-in with QR code and
   phone/passkey approval. Reuse saved session targets or create a new alias,
@@ -12,6 +12,11 @@
   or operation replay. Retain password-session recovery.
 - Explain the SSO migration-source limitation before starting migration
   refreshes, and redact session identifiers from diagnostics.
+- Document setup, standalone-browser requirements, CLI overrides, and the XML
+  conversion and migration limits. Automated checks cover the ATool UI and
+  session handling; real phone/browser approval from ATool still needs live
+  validation. The OCCS CLI login, session reuse, reads, ConfigId creation and
+  JSON-to-PDF preview have been verified live.
 
 ## v2.4.1
 

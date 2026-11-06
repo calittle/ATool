@@ -216,9 +216,8 @@ together. Each ATool download retains its own bundled CLI version.
 
 ### Browser SSO sign-in
 
-This action is implemented in the updated Qt source and is not yet included in
-a newly published ATool release. An older app needs an ATool upgrade to gain
-the menu action; changing only its CLI Path does not add new UI.
+This action is available from ATool **2.5.0**. An older app needs an ATool
+upgrade to gain the menu action; changing only its CLI Path does not add new UI.
 
 Choose **Settings → Sign In to Comms (SSO)…**. Select an existing saved session
 or enter a new alias, customer, region/environment and tenancy, then click

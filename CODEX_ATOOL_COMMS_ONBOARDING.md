@@ -125,8 +125,8 @@ The current Qt source provides **Settings → Sign In to Comms (SSO)…**. Read
 `atool_qt/comms_login.py` for the dialog and saved target metadata,
 `atool_qt/occs.py` for process timeouts, cancellation and session-expiry handling,
 and `atool_qt/user_settings.py` for the action and SSO preferences. The current
-flow requires OCCS CLI 1.4.0+ plus Chrome, Edge or Chromium. It is a source change
-pending an ATool release; an older app does not gain the action from a CLI update.
+flow is available from ATool 2.5.0 and requires OCCS CLI 1.4.0+ plus Chrome, Edge
+or Chromium. An older app does not gain the action from a CLI update.
 
 ATool only reads customer/region/tenancy, alias and authentication-method metadata
 from `~/.occs-session.json`. OCCS CLI owns encrypted passwords, SSO cookies and
