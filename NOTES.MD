@@ -1,5 +1,11 @@
 # ATool Release Notes
 
+## Unreleased
+
+- Follow GitHub's default supported macOS ARM64 image with `macos-latest`,
+  reducing failures caused by retirement of a pinned OS image. Keep Intel
+  builds explicitly on `macos-15-intel`.
+
 ## v2.5.0
 
 - Build macOS ARM64 artifacts on the supported `macos-15` runner, replacing

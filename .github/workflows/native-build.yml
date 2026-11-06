@@ -72,7 +72,7 @@ jobs:
       matrix:
         include:
           - platform: macos-arm64
-            runner: macos-15
+            runner: macos-latest
             bundle: dist/native/ATool.app
           - platform: macos-x86_64
             runner: macos-15-intel
