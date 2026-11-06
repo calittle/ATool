@@ -90,7 +90,8 @@ differs from the AT, or because the wrong local/shared package copy is being use
 
 Main files:
 
-- `ATool.py`: the desktop app implementation.
+- `ATool_Qt.py` and `atool_qt/`: the current Qt application, including Comms SSO sign-in.
+- `ATool.py`: the original desktop implementation; the new SSO menu is in Qt.
 - `README.md`: installation, run workflow, clause manager, mapping, save behavior.
 - `NOTES.MD`: recent features and behavior changes.
 - `BUILD.md`: packaging guidance.
@@ -98,7 +99,13 @@ Main files:
 - `Run_ATool.bat`: Windows launcher.
 - `tools/build_artifact.py`: release zip builder.
 
-Run locally:
+Run the current Qt UI from an environment with the README dependencies installed:
+
+```bash
+python3 ATool_Qt.py
+```
+
+Run the original application locally:
 
 ```bash
 python3 ATool.py
@@ -111,6 +118,35 @@ zsh Run_ATool.zsh
 ```
 
 Normal users should not need `pip install`.
+
+### Comms SSO integration
+
+The current Qt source provides **Settings → Sign In to Comms (SSO)…**. Read
+`atool_qt/comms_login.py` for the dialog and saved target metadata,
+`atool_qt/occs.py` for process timeouts, cancellation and session-expiry handling,
+and `atool_qt/user_settings.py` for the action and SSO preferences. The current
+flow requires OCCS CLI 1.4.0+ plus Chrome, Edge or Chromium. It is a source change
+pending an ATool release; an older app does not gain the action from a CLI update.
+
+ATool only reads customer/region/tenancy, alias and authentication-method metadata
+from `~/.occs-session.json`. OCCS CLI owns encrypted passwords, SSO cookies and
+`~/.occs-cli/credential-key`. Keep their values out of logs, settings and fixtures;
+use synthetic session metadata and a fake CLI in tests. The default SSO timeout
+is 300 seconds and is independent of the API request timeout. On expiry, ask the
+user to sign in explicitly and retry; do not reopen a browser or replay a write.
+Password-session automatic recovery remains supported.
+
+An SSO migration source requires an explicit bearer token at the CLI; ATool's
+migration UI instead requires a password-authenticated source alias. SSO targets
+are supported. Oracle-hosted XML conversion still needs password authentication;
+use local XSD conversion or JSON for SSO preview.
+
+For user instructions and validation status, see the README's Browser SSO
+sign-in section. The CLI sign-in, persisted session, reads, ConfigId creation
+and PDF preview have been verified live. ATool's new UI has synthetic coverage
+in `tests/test_qt_sso_login.py`; a real phone/browser sign-in from ATool is still
+pending. Native builds select the latest published stable CLI at build time,
+while an existing installed app retains its bundled version and any CLI override.
 
 ### macOS Python Selection
 

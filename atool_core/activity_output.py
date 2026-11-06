@@ -66,7 +66,7 @@ def masked_scalar(value):
 
 def sanitized_http_value(value, key='', *, mapped_input=False):
     """Keep useful routing/address context while masking customer data and credentials."""
-    if re.search(r'authorization|cookie|password|credential|token|secret|api.?key|private.?key', key, re.I):
+    if re.search(r'authorization|cookie|password|credential|token|secret|api.?key|private.?key|session.?id|access.?info', key, re.I):
         return '[redacted]'
     if re.fullmatch(r'contactValue|email|emailAddress|recipient|recipients|to|cc|bcc', key, re.I):
         return mask_email_address(value)

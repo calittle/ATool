@@ -21,10 +21,10 @@ or user-specific files under `~/.atool/`.
 
 ## Automated Build Artifact
 
-GitHub Actions builds a ZIP from every push to `main`. The ZIP is available
-from the corresponding Actions run as an artifact. On a pushed version tag
-such as `v1.0.1`, GitHub Actions builds the same ZIP and attaches it to a
-GitHub Release, creating that release with generated notes if needed.
+Version-tag pushes (`v*`) trigger the release workflow. Commits to `main` do
+not trigger builds. The workflow builds native applications and the source ZIP,
+then publishes the release artifacts after the required checks pass. A manual
+workflow run can rebuild an existing tag. See [native packaging](packaging/README.md).
 
 The build writes:
 
@@ -56,3 +56,32 @@ workflow**, and provide the tag name. The workflow packages that exact tag.
 Do not create release ZIPs locally. GitHub Actions is the only artifact build
 environment. Local development should run focused checks such as Python syntax
 validation and tests instead.
+
+## SSO release requirements
+
+The SSO action needs both the ATool Qt UI changes and OCCS CLI 1.4.0 or later.
+Native builds select the latest published stable OCCS release once and use its
+exact commit on all platforms. OCCS v1.4.0 is published; verify the version and
+commit actually bundled in `RUNTIME_INFO.json` before describing a dependency
+update in release notes. An older installed ATool keeps its original runtime.
+A custom CLI Path overrides the bundled CLI, so validate both selections.
+
+Chrome, Edge or Chromium must be installed separately for SSO. Qt WebEngine is
+not a replacement for this executable. SSO timeout and browser-path preferences
+live in the user profile. Never include sessions, credential keys, HAR files or
+preview inputs/outputs in a source or native artifact.
+
+Before releasing the ATool UI, run the focused synthetic checks:
+
+```sh
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -p 'test_qt_sso_login.py'
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -p 'test_qt_settings_config.py'
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -p 'test_qt_comms.py'
+```
+
+Native runtime/package checks and the extracted-app offline CLI smoke check do
+not prove live SSO. With a user available for phone/passkey approval, check the
+Settings sign-in action in the built app, cancellation and timeout, a read and
+PDF preview using the selected alias, and the expired-session sign-in guidance.
+The CLI's core SSO flow has been verified live; the new ATool browser/phone flow
+has not. Keep those validation claims separate in release notes.

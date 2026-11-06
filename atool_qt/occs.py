@@ -44,8 +44,21 @@ class CommsSettings:
         except (TypeError, ValueError):
             return 360000
 
+    @property
+    def sso_timeout_ms(self):
+        try:
+            return max(1000, int(self.get('sso_timeout_seconds', 300)) * 1000)
+        except (TypeError, ValueError):
+            return 300000
+
     def command(self, args):
         args = [str(arg) for arg in args]
+        if args[:1] == ['login'] and '--sso' in args:
+            if '--sso-timeout' not in args:
+                args += ['--sso-timeout', str(self.sso_timeout_ms)]
+            browser = str(self.get('sso_browser_path') or '').strip()
+            if browser and '--browser-executable' not in args:
+                args += ['--browser-executable', str(Path(browser).expanduser())]
         alias = str(self.get('session_alias', '') or '').strip()
         if args and alias and '--session' not in args and args[0] in {'package', 'content', 'compare', 'preview', 'convertxml', 'list-configs', 'list-emails', 'list-email-routes', 'create-config'}:
             args = [args[0], '--session', alias, *args[1:]]
@@ -129,6 +142,7 @@ class CommandJob(QObject):
         self.login_alias = None
         self.original_failure = None
         self.resource_download = None
+        self.running_sso_login = False
         self.service = parent
         self.process.readyReadStandardOutput.connect(self.read_stdout)
         self.process.readyReadStandardError.connect(self.read_stderr)
@@ -168,6 +182,7 @@ class CommandJob(QObject):
                 self.finish(-1)
                 return
         command = self.settings.command(args)
+        self.running_sso_login = args[:1] == ['login'] and '--sso' in args
         environment = QProcessEnvironment.systemEnvironment()
         if self.args[:1] == ['smoke']:
             smoke=self.settings.payload.get('smoke_tests',{})
@@ -185,6 +200,8 @@ class CommandJob(QObject):
             self.process.setWorkingDirectory(self.settings.cwd)
         self.process.start(command[0], command[1:])
         self.process.closeWriteChannel()
+        if args[:1] == ['login'] and '--sso' in args and timeout_ms is None:
+            timeout_ms = self.settings.sso_timeout_ms + 30000
         self.timer.start(timeout_ms or self.timeout_ms)
 
     def read_stdout(self):
@@ -245,12 +262,17 @@ class CommandJob(QObject):
         else:
             if os.name != 'nt' and self.process.processId():
                 try:
-                    os.killpg(int(self.process.processId()), signal.SIGKILL)
+                    # Playwright handles SIGTERM by closing the sign-in browser.
+                    os.killpg(int(self.process.processId()), signal.SIGTERM if self.running_sso_login else signal.SIGKILL)
                 except ProcessLookupError:
+                    self.process.kill()
+            elif self.running_sso_login and self.process.processId():
+                started, _ = QProcess.startDetached('taskkill', ['/PID', str(self.process.processId()), '/T', '/F'])
+                if not started:
                     self.process.kill()
             else:
                 self.process.kill()
-            QTimer.singleShot(1000, self.kill_if_running)
+            QTimer.singleShot(3000 if self.running_sso_login else 1000, self.kill_if_running)
 
     def kill_if_running(self):
         if not self.done and self.process.state() != QProcess.ProcessState.NotRunning:
@@ -281,7 +303,15 @@ class CommandJob(QObject):
             if not result.cancelled and not result.timed_out:
                 result = CommandResult(-1, '', self.original_failure.message + '\n\nAutomatic login failed: ' + result.message, None)
         elif not result.successful and not self.cancelled and not self.timed_out:
-            if not self.login_attempted and self.args[:1] != ['login'] and unauthorized_error(result.message):
+            from .comms_login import login_args, sso_expired_error
+            try:
+                alias = str(self.args[self.args.index('--session') + 1])
+            except (ValueError, IndexError):
+                alias = str(self.settings.get('session_alias') or '')
+            sso_expired = sso_expired_error(result.message) or (unauthorized_error(result.message) and '--sso' in login_args(alias))
+            if self.args[:1] != ['login'] and sso_expired:
+                result = CommandResult(code or -1, '', 'Your Comms SSO session expired or was rejected. Choose Settings → Sign In to Comms (SSO)… and sign in again, then retry this operation.', None)
+            elif not self.login_attempted and self.args[:1] != ['login'] and unauthorized_error(result.message):
                 self.login_attempted = True
                 self.original_failure = result
                 try:
@@ -309,9 +339,10 @@ class CommandJob(QObject):
         self.completed.emit(result)
 
     def start_login(self):
-        from .configuration import login_args
+        from .comms_login import login_args
         self.phase = 'login'
-        self.start_command(login_args(self.login_alias), self.settings.timeout_ms)
+        args = login_args(self.login_alias)
+        self.start_command(args, None if '--sso' in args else self.settings.timeout_ms)
 
 
 def unauthorized_error(message):
@@ -375,6 +406,8 @@ class CommsService(QObject):
                 return args[args.index(name) + 1].strip().casefold()
             except (ValueError, IndexError):
                 return ''
+        if args[:1] == ['login']:
+            return 'login:' + option('--session')
         config = option('--config-id')
         if config and ((args[:1] == ['package'] and 'save' in args) or args[:1] in (['content'], ['close-config'])):
             return 'config:' + config
@@ -420,6 +453,6 @@ class CommsService(QObject):
     def shutdown(self):
         self.cancel_all()
         for job in list(self.active):
-            if not job.process.waitForFinished(1000):
+            if not job.process.waitForFinished(3500 if job.running_sso_login else 1000):
                 job.process.kill()
                 job.process.waitForFinished(1000)

@@ -108,6 +108,31 @@ commits the draft; conflicts from external changes are reported. Reopening loads
 fresh preferences and retains unknown settings. Comms operations use the configured
 CLI, aliases, cache and shared folders.
 
+## Browser SSO authentication
+
+The updated Qt source exposes **Settings → Sign In to Comms (SSO)…**. The dialog
+reads saved target metadata only, supports a new or existing alias, and submits
+`occs login --sso` with customer, region and tenancy. Successful sign-in makes
+the chosen alias the normal Comms session. The CLI owns browser/phone approval
+and encrypted cookie storage. No passwords or cookie values are copied into
+ATool settings or Activity output.
+
+Requires OCCS CLI 1.4.0+ and an installed Chrome, Edge or Chromium. The Comms
+settings tab has separate SSO timeout and optional browser-path controls.
+Cancellation requests login-process/browser cleanup; failures and timeouts
+allow retry. Expired SSO sessions direct users back to sign-in rather than
+launching a browser or replaying the failed operation automatically. Password
+sessions retain automatic recovery. Migration in ATool requires a password
+source; an SSO target is supported. Oracle-hosted XML conversion needs password
+authentication; JSON and local-XSD preview can use SSO.
+
+Synthetic tests cover the UI, command/session contracts, cancellation, timeout,
+expiry, password recovery and redaction. The CLI flow has live validation for
+sign-in, separate-command reads, ConfigId creation and JSON-to-PDF preview.
+The ATool browser/phone flow, real expiry/renewal and other writes still need
+live validation. An older installed ATool needs an updated app build to gain
+the action, even if its configured CLI has already been upgraded.
+
 ## Persistence and release files
 
 Local authoring uses one editable model with undo/redo. Save preserves unknown JSON
@@ -125,7 +150,7 @@ builder's normal publication remains controlled by GitHub Actions.
 
 ## Verification
 
-The full automated suite currently passes 246 tests:
+Run the automated suite (use the test output for the current count):
 
 ```sh
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests

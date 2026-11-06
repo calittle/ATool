@@ -41,7 +41,9 @@ package in its current window before opening it in another.
 These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
 its npm dependencies. No Python/Node installation, virtual environment,
 dependency installation, or terminal launcher is needed. Configure your OCCS
-connection and credentials in ATool after launching. Existing settings and
+connection after launching. For SSO, use **Settings → Sign In to Comms (SSO)…**
+in a build containing that action; password sessions can be created with OCCS
+CLI. See [Browser SSO sign-in](#browser-sso-sign-in). Existing settings and
 sessions remain in your user profile. An explicitly configured CLI path still
 overrides the bundled CLI; clear that setting to use the included version.
 
@@ -62,6 +64,7 @@ separately:
 | Poppler (`pdftoppm`, `pdfinfo`) | PDF smoke-test thumbnails, page counts, and rasterizing PDF pages for visual comparisons |
 | ImageMagick (`identify`, `compare`) | Visual comparisons of PDF or HTML outputs in two-tenancy smoke tests |
 | Chrome or Chromium | HTML smoke-test thumbnails and HTML visual comparisons |
+| Chrome, Edge or Chromium | Browser SSO sign-in (OCCS CLI 1.4.0+) |
 
 Follow the [OCCS CLI prerequisite installation instructions](https://github.com/calittle/OCCS-CLI#prerequisites)
 for your operating system. When using ATool's bundled CLI, skip the separate
@@ -85,7 +88,9 @@ The CLI checks common Chrome/Chromium installation locations. For a browser in
 another location, set `OCCS_SMOKE_BROWSER` to its executable's full path, as in
 the examples below. ATool's embedded Qt WebEngine includes Chromium for the
 editor, but does not supply the standalone browser executable these CLI
-commands need.
+commands need. SSO has its own optional browser setting: `OCCS_SSO_BROWSER`
+for direct CLI use, or **User Settings → Comms → SSO Browser Executable** in
+ATool. `OCCS_SMOKE_BROWSER` controls smoke-test screenshots only.
 
 **macOS — Terminal**
 
@@ -198,8 +203,8 @@ standalone `occs` command as well, name the function `atool-occs` instead and us
 that name for the bundled CLI.
 
 Use `occs graph --help`, `occs smoke --help`, and `occs login --help` for command
-options. CLI sessions are stored in your user profile; use a saved session or
-log in through the CLI for commands accessing OCCS. See the
+options. CLI sessions are stored in your user profile; use a saved session,
+the SSO sign-in action below, or CLI login for commands accessing OCCS. See the
 [OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for cache,
 graph and smoke-suite setup.
 
@@ -208,6 +213,50 @@ ATool also provides **Package → Run Smoke Tests…**, configured under
 available through the CLI. Run the bundled CLI using
 the bundled Node.js shown above, and keep the application's runtime files
 together. Each ATool download retains its own bundled CLI version.
+
+### Browser SSO sign-in
+
+This action is implemented in the updated Qt source and is not yet included in
+a newly published ATool release. An older app needs an ATool upgrade to gain
+the menu action; changing only its CLI Path does not add new UI.
+
+Choose **Settings → Sign In to Comms (SSO)…**. Select an existing saved session
+or enter a new alias, customer, region/environment and tenancy, then click
+**Sign In**. Complete your organisation's browser login, including QR code and
+phone/passkey approval. After success, ATool uses that alias for normal Comms
+operations. Passwords are not entered or saved in this dialog; OCCS CLI stores
+the encrypted Comms session cookies.
+
+Requires OCCS CLI **1.4.0 or later**, plus an installed Chrome, Edge or Chromium.
+Native builds select the latest published stable OCCS CLI release at build time;
+existing installed ATool bundles retain their bundled CLI. Until upgrading that
+bundle, select an updated standalone CLI under **User Settings → Comms → CLI Path**.
+For example, a source installation can select its `OCCS-CLI/bin/occs.js` file.
+That path overrides the bundled CLI until you clear it. An older ATool app
+can reuse an SSO session created with the updated CLI by setting its normal
+Comms session alias to that saved alias.
+
+In the updated app, the Comms tab also offers a separate **SSO Sign-In Timeout**
+(five minutes by default) and optional **SSO Browser Executable**. The API
+request timeout is independent.
+
+The sign-in window stays responsive and can cancel the browser sign-in. Failures
+and timeouts leave it available for another attempt. Login output and credentials
+are omitted from Activity diagnostics. If an SSO session expires during work,
+ATool directs you back to **Sign In to Comms (SSO)…**. Sign in and retry the
+operation; ATool does not automatically reopen the browser or replay a write.
+Saved password sessions retain their existing automatic login recovery.
+
+JSON previews and previews with local XSD conversion can use SSO. Oracle-hosted
+XML conversion still requires a password session. ATool migration requires a
+password-authenticated source alias; an SSO target is supported. Advanced CLI
+migration can instead accept an explicit source bearer token.
+
+Live CLI checks have confirmed browser/phone sign-in, saved-session reuse,
+reads, ConfigId creation and PDF preview from JSON. The ATool UI has automated
+coverage for command arguments, success/failure, cancellation, timeout and
+expiry handling, but its complete browser/phone flow still needs a live check.
+Other write operations and real session expiry/renewal also need live validation.
 
 ### Running smoke tests from ATool
 
@@ -281,7 +330,7 @@ native-app users can use the same steps to replace an older native download.
 Keep the user-profile `.atool` directory and all configured package, cache,
 model and shared-storage folders. Also retain `.occs-session.json` and the
 `.occs-cli` directory in your user profile: the latter contains the key used
-to read saved CLI credentials. On macOS the user profile is your home folder;
+to read saved CLI password credentials and SSO session cookies. On macOS the user profile is your home folder;
 on Windows it is `%USERPROFILE%`. These are user data, not disposable
 application runtime files. ATool does not automatically delete old installations.
 
@@ -289,7 +338,8 @@ application runtime files. ATool does not automatically delete old installations
 
 - Python 3.10–3.15 (required by the pinned PySide6 version)
 - PySide6 (installed from `requirements.txt`)
-- OCCS CLI access for OCCS package, preview, mapping, and conversion actions
+- OCCS CLI access for OCCS package, preview, mapping, and conversion actions; version 1.4.0 or later for SSO
+- An installed Chrome, Edge or Chromium browser when using SSO
 - `tkinter` is needed only for the original application
 
 **Qt is not included with standard Python.** ATool 1.x users may never have

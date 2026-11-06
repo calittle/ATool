@@ -105,6 +105,9 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
 
     def setUp(self):
         from atool_qt.window import WorkspaceWindow
+        login_target = patch('atool_qt.configuration.login_args', side_effect=lambda alias: ['login', '--session', alias])
+        login_target.start()
+        self.addCleanup(login_target.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -299,6 +302,18 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
         self.assertEqual(menu.title(), '&Activity')
         actions = [action for action in menu.actions() if not action.isSeparator()]
         self.assertEqual(actions, list(self.window.activity.menu_actions.values()))
+
+    def test_sso_sign_in_action_and_settings_are_exposed(self):
+        dialog = SettingsDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertEqual(dialog.controls[('occs', 'sso_timeout_seconds')].value(), 300)
+        self.assertIn(('occs', 'sso_browser_path'), dialog.browse_controls)
+        self.window.comms_login_action.trigger()
+        login = self.window.comms_login_dialog
+        self.addCleanup(login.close)
+        self.assertTrue(login.isVisible())
+        self.window.comms_login_action.trigger()
+        self.assertIs(self.window.comms_login_dialog, login)
 
     def test_settings_save_installs_validated_draft_and_reopen_can_resolve_file_conflict(self):
         from PySide6.QtWidgets import QDialogButtonBox

@@ -1,5 +1,18 @@
 # ATool Release Notes
 
+## Unreleased
+
+- Add Settings → Sign In to Comms (SSO)… for browser sign-in with QR code and
+  phone/passkey approval. Reuse saved session targets or create a new alias,
+  and use the signed-in alias for Comms operations. Requires OCCS CLI 1.4.0+.
+- Add a separate SSO sign-in timeout and optional browser executable setting.
+  Allow cancellation and retry without exposing login output in Activity.
+- Preserve the saved login method for explicit session refresh. Expired SSO
+  sessions direct users to sign in again without automatic browser launches
+  or operation replay. Retain password-session recovery.
+- Explain the SSO migration-source limitation before starting migration
+  refreshes, and redact session identifiers from diagnostics.
+
 ## v2.4.1
 
 - Copy the open package's Assembly Template and document associations to a chosen

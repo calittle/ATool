@@ -44,6 +44,8 @@
     "cli_path": "",
     "work_dir": "",
     "request_timeout_seconds": 360,
+    "sso_timeout_seconds": 300,
+    "sso_browser_path": "",
     "session_alias": "",
     "pre_prod_session_alias": "",
     "config_source_session_alias": "np",

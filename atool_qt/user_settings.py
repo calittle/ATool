@@ -140,6 +140,12 @@ class UserSettings(CommsSettings):
             raise ValueError('Request Timeout must be a positive number of seconds.')
         if timeout < 1:
             raise ValueError('Request Timeout must be a positive number of seconds.')
+        try:
+            sso_timeout = int(occs.get('sso_timeout_seconds', 300))
+        except (TypeError, ValueError):
+            raise ValueError('SSO Sign-In Timeout must be a positive number of seconds.')
+        if sso_timeout < 1:
+            raise ValueError('SSO Sign-In Timeout must be a positive number of seconds.')
         pattern = str(occs.get('config_id_filter') or '').strip()
         try:
             re.compile(pattern)
@@ -215,6 +221,8 @@ class SettingsDialog(QDialog):
         comms = self.add_tab('Comms')
         entries = [('cli_path', 'CLI Path', 'file'), ('work_dir', 'Local Package Folder', 'directory'),
                    ('request_timeout_seconds', 'Request Timeout (seconds)', int),
+                   ('sso_timeout_seconds', 'SSO Sign-In Timeout (seconds)', int),
+                   ('sso_browser_path', 'SSO Browser Executable (optional)', 'file'),
                    ('session_alias', 'Non-Prod Session Alias', str), ('pre_prod_session_alias', 'Pre-Prod Session Alias', str),
                    ('config_source_session_alias', 'Migrate Source Alias', str), ('config_target_session_alias', 'Migrate Target Alias', str),
                    ('config_id_filter', 'Configuration Filter', str), ('shared_workspace_dir', 'Shared Package Folder', 'directory'),
@@ -392,9 +400,22 @@ class SettingsDialog(QDialog):
 class SettingsActions:
     def install_settings_actions(self):
         menu = self.menuBar().addMenu('&Settings')
+        self.comms_login_action = self.action('Sign In to Comms (SSO)…', self.open_comms_login)
+        menu.addAction(self.comms_login_action)
+        menu.addSeparator()
         self.settings_action = self.action('User Settings…', self.open_user_settings)
         menu.addAction(self.settings_action)
         self.apply_user_settings()
+
+    def open_comms_login(self):
+        from .comms_login import CommsLoginDialog
+        current = getattr(self, 'comms_login_dialog', None)
+        if current and current.isVisible():
+            current.raise_()
+            current.activateWindow()
+            return
+        self.comms_login_dialog = CommsLoginDialog(self)
+        self.comms_login_dialog.show()
 
     def open_user_settings(self):
         current = getattr(self, 'user_settings_dialog', None)

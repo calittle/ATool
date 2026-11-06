@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTimeEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 from .storage import write_files
+from .comms_login import login_args
 
 
 def normalize_configs(value):
@@ -32,30 +33,6 @@ def filtered_configs(configs, pattern=''):
     expression = re.compile(pattern) if pattern else None
     return [config for config in configs if config['status'].casefold() != 'closed' and
             (not expression or expression.search(' '.join(config.get(key, '') for key in ('shortName', 'name', 'id'))))]
-
-
-def login_args(alias, session_path=None):
-    args = ['login']
-    alias = str(alias or '').strip()
-    if not alias:
-        return args
-    args += ['--session', alias]
-    path = Path(session_path or Path.home() / '.occs-session.json')
-    try:
-        store = json.loads(path.read_text())
-        sessions, aliases = store.get('sessions'), store.get('aliases')
-        if not isinstance(sessions, dict):
-            key = '.'.join(str(store.get(key) or '').strip() for key in ('customer', 'region'))
-            tenancy = str(store.get('tenancy') or '').strip()
-            sessions = {f'{key}/{tenancy}': store} if key and tenancy else {}
-        session_key = aliases.get(alias, alias) if isinstance(aliases, dict) else alias
-        session = sessions.get(session_key, {})
-        if isinstance(session, dict) and all(session.get(key) for key in ('customer', 'region', 'tenancy')):
-            for key in ('customer', 'region', 'tenancy'):
-                args += [f'--{key}', str(session[key]).strip()]
-    except (ValueError, OSError, AttributeError):
-        pass
-    return args
 
 
 class ConfigLockouts:
@@ -520,6 +497,9 @@ class ConfigurationActions:
         settings = self.comms.settings
         source, target = settings.get('config_source_session_alias', 'np'), settings.get('config_target_session_alias', 'pp')
         identity = settings.get('last_config_protection_id') or settings.get('last_config_id') or ''
+        if '--sso' in login_args(source):
+            self.report_error('Migrate Config', 'The migration source uses SSO. Select a password-authenticated source session, or run OCCS CLI migrate with an explicit --source-token. The target can use SSO.')
+            return
         if not self.config_lifecycle_allowed(identity):
             return
         if confirm and QMessageBox.question(self, 'Confirm Migrate Config', f'Run OCCS migrate?\n\nSource: {source}\nTarget: {target}') != QMessageBox.StandardButton.Yes:
