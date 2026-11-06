@@ -2,6 +2,9 @@
 
 ## v2.5.0
 
+- Build macOS ARM64 artifacts on the supported `macos-15` runner, replacing
+  the retired `macos-14` image that prevented ARM builds from starting.
+
 - Add Settings → Sign In to Comms (SSO)… for browser sign-in with QR code and
   phone/passkey approval. Reuse saved session targets or create a new alias,
   and use the signed-in alias for Comms operations. Requires OCCS CLI 1.4.0+.

@@ -5,14 +5,20 @@ Version tag pushes (`v*`) trigger the release workflow, which calls
 An existing version tag can also be rebuilt through the release workflow's
 manual **Run workflow** control.
 
-The matrix builds on macOS ARM64, macOS Intel and Windows x64 runners using
-Python 3.12, pinned PyInstaller/PySide6, and the Node version and CLI repository in
-`runtime-versions.json`. The workflow selects GitHub's latest published stable
+The matrix uses `macos-15` for ARM64, `macos-15-intel` for Intel, and
+`windows-2022` for Windows x64, using Python 3.12, pinned PyInstaller/PySide6,
+and the Node version and CLI repository in `runtime-versions.json`. The workflow selects GitHub's latest published stable
 OCCS CLI release once before starting the platform builds. All platforms use
 that release's exact commit; `npm ci --omit=dev` uses its lockfile on each OS.
 Drafts and prereleases are excluded. A missing release or failed lookup stops
 the build. Publish the OCCS CLI release before tagging ATool to include new CLI
 fixes. Rebuilding an existing ATool tag selects the latest CLI release again.
+
+GitHub retired `macos-14` on November 2, 2026. ARM builds use `macos-15`;
+rerunning an old tagged workflow that still selects `macos-14` cannot fix runner
+allocation. For that case, dispatch the release workflow from `main` with the
+existing release `tag` and the full runner-fix commit as `source_ref`. The tag
+stays unchanged. See the [GitHub retirement notice](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/).
 
 The builder stages only CLI runtime directories, manifests and license notices.
 It never copies a developer checkout's settings, sessions, `.env`, outputs or
