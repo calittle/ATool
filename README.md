@@ -11,6 +11,11 @@
 
 ATool (Assembly Template Tool) is a cross-platform Python desktop app for working with Oracle Communications Cloud Service (OCCS) Packages and Assembly Templates.
 
+## Staying Informed About ATool Releases
+
+ATool releases are published through GitHub as part of the standard build and release process. Users are responsible for staying informed about new releases. To receive automatic notifications, navigate to the ATool GitHub repository and select **Watch → Custom → Releases → Apply**. Alternatively, users can periodically check the repository's Releases section for the latest version and release notes.
+
+
 ## Native application downloads
 
 | Download | Computer | Launch |
