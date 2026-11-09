@@ -11,13 +11,7 @@
 
 ATool (Assembly Template Tool) is a cross-platform Python desktop app for working with Oracle Communications Cloud Service (OCCS) Packages and Assembly Templates.
 
-Version 2.0.2 uses a unified Qt workspace with dockable, tabbed, detachable panels
-for Documents, Layouts, Fields, Clauses, Data and Content. The original Tkinter
-application remains available through the legacy launchers.
-
 ## Native application downloads
-
-GitHub Actions builds three native ZIPs for version releases:
 
 | Download | Computer | Launch |
 | --- | --- | --- |
@@ -31,30 +25,19 @@ Extract the ZIP, then double-click the application. On macOS you can move
 `ATool.app` to Applications; on Windows keep `ATool.exe` with its `_internal`
 folder.
 
-Use **File → New Window** (**Cmd+N** on macOS, **Ctrl+N** on Windows) to open
-another independent copy of ATool. Each window can open its own package and map
-its own data, and closing one leaves the others running.
-Each package can be open in only one ATool window on your computer, including
-local copies, testing copies and other versions of that package. Close the
-package in its current window before opening it in another.
-
 These downloads include Python, Qt/PySide6, Qt WebEngine, Node.js, OCCS CLI and
 its npm dependencies. No Python/Node installation, virtual environment,
-dependency installation, or terminal launcher is needed. Configure your OCCS
-connection after launching. For SSO, use **Settings → Sign In to Comms (SSO)…**
-in a build containing that action; password sessions can be created with OCCS
-CLI. See [Browser SSO sign-in](#browser-sso-sign-in). Existing settings and
-sessions remain in your user profile. An explicitly configured CLI path still
-overrides the bundled CLI; clear that setting to use the included version.
+dependency installation, or terminal launcher is needed. 
 
-The native apps are not currently Developer ID signed/notarized on macOS or
-Authenticode signed on Windows. Standard operating-system trust checks may
+The native apps are not currently Authenticode signed on Windows. Standard operating-system trust checks may 
 apply to downloaded builds. SHA-256 checksum files accompany the ZIPs.
 
 ### Using the bundled OCCS CLI directly
 
 You can run OCCS CLI from a native ATool download without installing a separate
 Node.js or OCCS CLI. The bundle includes the CLI's JavaScript dependencies.
+
+## Optional External Programs
 Some optional CLI commands also need external programs, which you install
 separately:
 
@@ -202,22 +185,9 @@ runtime path in the startup/profile file. If you want to keep an existing
 standalone `occs` command as well, name the function `atool-occs` instead and use
 that name for the bundled CLI.
 
-Use `occs graph --help`, `occs smoke --help`, and `occs login --help` for command
-options. CLI sessions are stored in your user profile; use a saved session,
-the SSO sign-in action below, or CLI login for commands accessing OCCS. See the
-[OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for cache,
-graph and smoke-suite setup.
-
-ATool also provides **Package → Run Smoke Tests…**, configured under
-**Settings → User Settings → Smoke Tests** (see below). Graph commands remain
-available through the CLI. Run the bundled CLI using
-the bundled Node.js shown above, and keep the application's runtime files
-together. Each ATool download retains its own bundled CLI version.
+See the [OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for additional details.
 
 ### Browser SSO sign-in
-
-This action is available from ATool **2.5.0**. An older app needs an ATool
-upgrade to gain the menu action; changing only its CLI Path does not add new UI.
 
 Choose **Settings → Sign In to Comms (SSO)…**. Select an existing saved session
 or enter a new alias, customer, region/environment and tenancy, then click
@@ -250,44 +220,6 @@ JSON previews and previews with local XSD conversion can use SSO. Oracle-hosted
 XML conversion still requires a password session. ATool migration requires a
 password-authenticated source alias; an SSO target is supported. Advanced CLI
 migration can instead accept an explicit source bearer token.
-
-Live CLI checks have confirmed browser/phone sign-in, saved-session reuse,
-reads, ConfigId creation and PDF preview from JSON. The ATool UI has automated
-coverage for command arguments, success/failure, cancellation, timeout and
-expiry handling, but its complete browser/phone flow still needs a live check.
-Other write operations and real session expiry/renewal also need live validation.
-
-### Running smoke tests from ATool
-
-In **Settings → User Settings → Smoke Tests**, select your suite JSON file and
-an output folder. The suite defines the packages, input files, and PDF/HTML
-outputs; input paths are relative to the suite file. Leave the output folder
-blank to save results beside the suite.
-
-Configure the standard tenancy (default **pre-prod**) and comparison source and
-target (default **non-prod → pre-prod**). Optional saved-session aliases override
-their corresponding tenancies. These settings override environment selections
-inside the suite without changing the original suite file. Existing saved CLI
-sessions are used; the CLI path is the same one configured on the Comms tab.
-
-Set the Chrome/Chromium executable if automatic browser detection is unsuitable.
-Use **Tool Folders (PATH)** for Poppler and ImageMagick folders that ATool cannot
-otherwise find; separate folders with colons on macOS or semicolons on Windows.
-Configure the per-request timeout, maximum time for each complete run, simultaneous
-previews (1 or 2), and allowed percentage of changed pixels (default **1%**).
-
-Choose **Package → Run Smoke Tests…**, select standard testing, comparison, or
-both, and click **Run**. An open package is not required. The saved suite and
-server packages are used; unsaved package edits are not included. Progress and
-failures appear in the run window, with **Cancel**, **Open Reports**, and
-**Open Output Folder** controls. Each run uses a timestamped output folder;
-**Resume** retries missing outputs in the most recent matching run. If test
-cases fail but produce a report, the requested comparison still runs. Setup
-failures, cancellation, and timeouts stop the remaining runs.
-
-Results include HTML reports, rendered previews, comparison images, and unsent
-email drafts. No email is sent by this action. Comparisons that need review are
-highlighted in the run output even if the CLI exits successfully.
 
 ## Moving an older ATool installation to the native app
 
