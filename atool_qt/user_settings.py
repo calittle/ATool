@@ -399,6 +399,7 @@ class SettingsDialog(QDialog):
 
 class SettingsActions:
     def install_settings_actions(self):
+        self.comms.sign_in_required.connect(self.open_comms_login)
         menu = self.menuBar().addMenu('&Settings')
         self.comms_login_action = self.action('Sign In to Comms (SSO)…', self.open_comms_login)
         menu.addAction(self.comms_login_action)
@@ -407,7 +408,7 @@ class SettingsActions:
         menu.addAction(self.settings_action)
         self.apply_user_settings()
 
-    def open_comms_login(self):
+    def open_comms_login(self, alias=None):
         from .comms_login import CommsLoginDialog
         current = getattr(self, 'comms_login_dialog', None)
         if current and current.isVisible():
@@ -415,6 +416,8 @@ class SettingsActions:
             current.activateWindow()
             return
         self.comms_login_dialog = CommsLoginDialog(self)
+        if isinstance(alias, str) and alias.strip():
+            self.comms_login_dialog.alias.setCurrentText(alias.strip())
         self.comms_login_dialog.show()
 
     def open_user_settings(self):

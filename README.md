@@ -216,8 +216,9 @@ request timeout is independent.
 
 The sign-in window stays responsive and can cancel the browser sign-in. Failures
 and timeouts leave it available for another attempt. Login output and credentials
-are omitted from Activity diagnostics. If an SSO session expires during work,
-ATool directs you back to **Sign In to Comms (SSO)…**. Sign in and retry the
+are omitted from Activity diagnostics. If a Comms session is missing or an SSO
+session expires during work, ATool opens **Sign In to Comms (SSO)…** with the
+requested session alias selected. Click **Sign In**, then retry the
 operation; ATool does not automatically reopen the browser or replay a write.
 Saved password sessions retain their existing automatic login recovery.
 

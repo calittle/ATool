@@ -309,8 +309,11 @@ class CommandJob(QObject):
             except (ValueError, IndexError):
                 alias = str(self.settings.get('session_alias') or '')
             sso_expired = sso_expired_error(result.message) or (unauthorized_error(result.message) and '--sso' in login_args(alias))
-            if self.args[:1] != ['login'] and sso_expired:
-                result = CommandResult(code or -1, '', 'Your Comms SSO session expired or was rejected. Choose Settings → Sign In to Comms (SSO)… and sign in again, then retry this operation.', None)
+            missing_session = 'session not found' in result.message.casefold()
+            if self.args[:1] != ['login'] and (sso_expired or missing_session):
+                reason = 'Your Comms session was not found.' if missing_session else 'Your Comms SSO session expired or was rejected.'
+                result = CommandResult(code or -1, '', reason + ' Sign in using the Comms sign-in window, then retry this operation. You can also open it from Settings → Sign In to Comms (SSO)….', None)
+                self.service.sign_in_required.emit(alias)
             elif not self.login_attempted and self.args[:1] != ['login'] and unauthorized_error(result.message):
                 self.login_attempted = True
                 self.original_failure = result
@@ -360,6 +363,7 @@ class CommsService(QObject):
     """Bounded command queue; job-specific and all-job cancellation."""
     changed = Signal()
     submitted = Signal(object)
+    sign_in_required = Signal(str)
 
     def __init__(self, settings=None, parent=None, concurrency=4):
         super().__init__(parent)

@@ -16,6 +16,7 @@ from atool_qt.activity import ActivityLog
 from atool_qt.comms_login import CommsLoginDialog, login_args, saved_login_targets
 from atool_qt.occs import CommsService
 from atool_qt.user_settings import UserSettings
+from atool_qt.user_settings import SettingsActions
 from atool_core.activity_output import sanitized_http_value
 
 
@@ -51,6 +52,13 @@ elif mode == 'expired':
 elif mode == 'expired-json':
     print(json.dumps({{'ok': False, 'error': {{'message': 'SSO session expired or was rejected.'}}}}))
     sys.exit(0)
+elif mode in ('missing', 'missing-json'):
+    message = 'Session not found. Run `occs login` first.'
+    if mode == 'missing-json':
+        print(json.dumps({{'ok': False, 'error': {{'message': message}}}}))
+        sys.exit(0)
+    print(message, file=sys.stderr)
+    sys.exit(1)
 elif mode == 'password':
     marker = pathlib.Path({str(self.root / 'authenticated')!r})
     if args[0] == 'login': marker.touch()
@@ -165,12 +173,41 @@ print(json.dumps({{'ok': True, 'args': args}}))
     def test_sso_expiry_never_opens_browser_or_replays_operation(self):
         self.mode.write_text('expired')
         results = []
+        requested = []
+        self.workspace.comms.sign_in_required.connect(requested.append)
         self.workspace.comms.submit(['preview', '--session', 'sso'], results.append)
         self.until(lambda: bool(results))
         self.assertFalse(results[0].successful)
         self.assertIn('Settings → Sign In to Comms (SSO)', results[0].message)
         self.assertEqual(len(self.recorded()), 1)
         self.assertFalse(self.workspace.comms.logins)
+        self.assertEqual(requested, ['sso'])
+
+    def test_missing_session_opens_sign_in_with_requested_alias_without_replay(self):
+        for mode, args, alias in (
+            ('missing-json', ['package', 'list', '--json'], 'np'),
+            ('missing', ['package', '--session', 'other', 'list'], 'other'),
+        ):
+            with self.subTest(mode=mode):
+                self.mode.write_text(mode)
+                results = []
+                self.workspace.comms.sign_in_required.connect(
+                    lambda requested: SettingsActions.open_comms_login(self.workspace, requested))
+                self.workspace.comms.submit(args, results.append)
+                self.until(lambda: bool(results))
+                self.assertFalse(results[0].successful)
+                dialog = self.workspace.comms_login_dialog
+                self.addCleanup(dialog.close)
+                self.assertTrue(dialog.isVisible())
+                self.assertEqual(dialog.alias.currentText(), alias)
+                self.assertIsNone(dialog.job)
+                self.assertFalse(self.workspace.comms.logins)
+                # Concurrent failures reuse the visible sign-in window.
+                SettingsActions.open_comms_login(self.workspace, alias)
+                self.assertIs(self.workspace.comms_login_dialog, dialog)
+                dialog.close()
+                self.workspace.comms.sign_in_required.disconnect()
+        self.assertEqual([args[0] for args in self.recorded()], ['package', 'package'])
 
     def test_password_login_recovery_still_retries_once(self):
         self.mode.write_text('password')

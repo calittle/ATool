@@ -1,6 +1,11 @@
 # ATool Release Notes
 
-## Unreleased
+## v2.5.1
+
+- Open the Comms sign-in dialog automatically when a session is missing or an
+  SSO session expires, selecting the requested alias. Click Sign In to launch
+  the browser, then retry the operation. Previously, missing sessions only
+  displayed the CLI error and expired SSO sessions only showed instructions.
 
 - Follow GitHub's default supported macOS ARM64 image with `macos-latest`,
   reducing failures caused by retirement of a pinned OS image. Keep Intel
