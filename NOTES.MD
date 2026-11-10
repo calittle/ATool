@@ -2,6 +2,14 @@
 
 ## v2.5.1
 
+- Show concise SSO sign-in failures with expandable, scrollable diagnostics
+  instead of allowing browser logs to stretch the dialog beyond the screen.
+  Redact credential headers from those diagnostics and clear them on retry.
+- Bundle OCCS CLI v1.4.1 (previously v1.4.0). Browser closure or disconnection
+  during sign-in now produces clear retry guidance while retaining the
+  underlying diagnostics. Cleanup errors no longer hide the original failure.
+  These changes do not resolve the trusted-workstation Microsoft SSO handoff.
+
 - Open the Comms sign-in dialog automatically when a session is missing or an
   SSO session expires, selecting the requested alias. Click Sign In to launch
   the browser, then retry the operation. Previously, missing sessions only

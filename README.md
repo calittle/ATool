@@ -215,7 +215,9 @@ In the updated app, the Comms tab also offers a separate **SSO Sign-In Timeout**
 request timeout is independent.
 
 The sign-in window stays responsive and can cancel the browser sign-in. Failures
-and timeouts leave it available for another attempt. Login output and credentials
+and timeouts leave it available for another attempt. If the browser closes or
+disconnects, the dialog shows retry guidance. **Show diagnostics** expands the
+error details in a scrollable panel, with credential headers redacted. Login output and credentials
 are omitted from Activity diagnostics. If a Comms session is missing or an SSO
 session expires during work, ATool opens **Sign In to Comms (SSO)…** with the
 requested session alias selected. Click **Sign In**, then retry the

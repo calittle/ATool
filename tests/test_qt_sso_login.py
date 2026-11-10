@@ -166,9 +166,46 @@ print(json.dumps({{'ok': True, 'args': args}}))
         self.mode.write_text('failure')
         dialog.sign_in.click()
         self.until(lambda: dialog.job.done)
-        self.assertIn('browser was closed', dialog.status.text())
+        self.assertIn('browser closed or disconnected', dialog.status.text())
         self.assertTrue(dialog.sign_in.isEnabled())
         self.assertEqual(self.settings.get('session_alias'), 'np')
+
+    def test_browser_failure_diagnostics_are_collapsed_bounded_and_cleared_on_retry(self):
+        dialog = self.dialog()
+        dialog.show()
+        details = ('SSO login failed: browserContext.cookies: Target page, context or browser has been closed\n'
+                   'Browser logs:\n' + '--browser-argument ' * 1000
+                   + '\nAuthorization: Bearer SYNTHETIC_LOGIN_SECRET')
+        dialog.login_finished(Mock(cancelled=False, timed_out=False, successful=False, message=details))
+        self.app.processEvents()
+        self.assertIn('keep the browser open', dialog.status.text())
+        self.assertNotIn('Browser logs', dialog.status.text())
+        self.assertFalse(dialog.diagnostics.isVisible())
+        self.assertTrue(dialog.diagnostics_toggle.isVisible())
+        dialog.diagnostics_toggle.click()
+        self.app.processEvents()
+        self.assertTrue(dialog.diagnostics.isVisible())
+        self.assertGreater(dialog.sign_in.y(), dialog.diagnostics.geometry().bottom())
+        self.assertIn('browserContext.cookies', dialog.diagnostics.toPlainText())
+        self.assertNotIn('SYNTHETIC_LOGIN_SECRET', dialog.diagnostics.toPlainText())
+        self.assertLess(dialog.minimumSizeHint().width(), 1000)
+        self.assertLess(dialog.minimumSizeHint().height(), 800)
+        dialog.diagnostics_toggle.click()
+        self.assertFalse(dialog.diagnostics.isVisible())
+        dialog.sign_in.click()
+        self.assertTrue(dialog.diagnostics_toggle.isHidden())
+        self.assertEqual(dialog.diagnostics.toPlainText(), '')
+        self.until(lambda: dialog.job.done)
+        self.assertIn('Signed in.', dialog.status.text())
+        self.assertTrue(dialog.diagnostics_toggle.isHidden())
+
+    def test_other_login_errors_are_plain_text_and_available_in_diagnostics(self):
+        dialog = self.dialog()
+        details = '<b>unrecognised failure</b>\n' + 'details ' * 1000
+        dialog.login_finished(Mock(cancelled=False, timed_out=False, successful=False, message=details))
+        self.assertIn('SSO sign-in failed.', dialog.status.text())
+        self.assertNotIn('<b>', dialog.status.text())
+        self.assertEqual(dialog.diagnostics.toPlainText(), details.strip())
 
     def test_sso_expiry_never_opens_browser_or_replays_operation(self):
         self.mode.write_text('expired')

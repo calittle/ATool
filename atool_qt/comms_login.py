@@ -6,8 +6,11 @@ import json
 import re
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout,
-                              QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout)
+                              QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout)
+
+from atool_core.activity_output import activity_text
 
 
 def saved_login_targets(session_path=None):
@@ -88,7 +91,19 @@ class CommsLoginDialog(QDialog):
         self.status = QLabel('Requires OCCS CLI 1.4.0 or later and Chrome, Edge or Chromium. '
                              'Browser and sign-in timeout options are in User Settings → Comms.')
         self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status.setMinimumWidth(0)
         layout.addWidget(self.status)
+        self.diagnostics_toggle = QPushButton('Show diagnostics')
+        self.diagnostics_toggle.setCheckable(True)
+        self.diagnostics_toggle.hide()
+        layout.addWidget(self.diagnostics_toggle)
+        self.diagnostics = QPlainTextEdit()
+        self.diagnostics.setReadOnly(True)
+        self.diagnostics.setFixedHeight(150)
+        self.diagnostics.hide()
+        layout.addWidget(self.diagnostics)
+        self.diagnostics_toggle.toggled.connect(self.toggle_diagnostics)
         buttons = QHBoxLayout()
         buttons.addStretch()
         self.sign_in = QPushButton('Sign In')
@@ -101,6 +116,18 @@ class CommsLoginDialog(QDialog):
         self.select_target(self.alias.currentText())
         self.sign_in.clicked.connect(self.start_login)
         self.close_button.clicked.connect(self.reject)
+
+    def toggle_diagnostics(self, expanded):
+        self.diagnostics.setVisible(expanded)
+        self.diagnostics_toggle.setText('Hide diagnostics' if expanded else 'Show diagnostics')
+        self.layout().activate()
+        self.resize(self.width(), self.sizeHint().height())
+
+    def clear_diagnostics(self):
+        self.diagnostics_toggle.setChecked(False)
+        self.diagnostics_toggle.hide()
+        self.diagnostics.clear()
+        self.diagnostics.hide()
 
     def select_target(self, alias):
         target = self.targets.get(alias, {})
@@ -117,6 +144,7 @@ class CommsLoginDialog(QDialog):
     def start_login(self):
         if self.job is not None and not self.job.done:
             return
+        self.clear_diagnostics()
         alias = self.alias.currentText().strip()
         target = {key: field.text().strip() for key, field in self.fields.items()}
         if not alias or not all(target.values()):
@@ -136,16 +164,31 @@ class CommsLoginDialog(QDialog):
 
     def login_finished(self, result):
         self.set_running(False)
+        self.clear_diagnostics()
         if result.cancelled:
             self.status.setText('Sign-in cancelled. You can try again when ready.')
         elif result.timed_out:
             self.status.setText('SSO sign-in timed out. Click Sign In to try again.')
         elif not result.successful:
-            message = result.message
-            if 'unknown option' in message.casefold() and '--sso' in message:
+            message = activity_text(result.message)
+            details = message
+            lowered = message.casefold()
+            if ('target page, context or browser has been closed' in lowered
+                    or 'browser closed or disconnected' in lowered
+                    or 'browser was closed' in lowered):
+                message = ('The sign-in browser closed or disconnected before sign-in completed. '
+                           'Click Sign In to retry and keep the browser open until sign-in is confirmed. '
+                           'If this repeats, try another browser under User Settings → Comms → SSO Browser Executable.')
+            elif 'sso sign-in timed out' in lowered:
+                message = 'SSO sign-in timed out. Click Sign In to try again.'
+            elif 'unknown option' in lowered and '--sso' in message:
                 message = ('The configured OCCS CLI does not support SSO sign-in. Update to OCCS CLI 1.4.0 or later, '
                            'then select it under User Settings → Comms → CLI Path.')
+            else:
+                message = 'SSO sign-in failed. Click Sign In to retry. Expand diagnostics for details.'
             self.status.setText(message)
+            self.diagnostics.setPlainText(details)
+            self.diagnostics_toggle.show()
         else:
             settings = self.workspace.comms.settings
             payload = copy.deepcopy(settings.payload)
