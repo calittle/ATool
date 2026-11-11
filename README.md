@@ -194,9 +194,12 @@ See the [OCCS CLI user guide](https://github.com/calittle/OCCS-CLI#readme) for a
 
 ### Browser SSO sign-in
 
-Choose **Settings → Sign In to Comms (SSO)…**. Select an existing saved session
-or enter a new alias, customer, region/environment and tenancy, then click
-**Sign In**. Complete your organisation's browser login, including QR code and
+Choose **Settings → Sign In to Comms…**. Select an existing saved session
+or enter a new alias, customer, region/environment and tenancy. The login method
+follows the saved session; unknown aliases default to **Password (saved CLI credentials)**.
+Password sign-in reuses saved CLI or environment credentials. For first-time
+password setup, run `occs login` in a terminal. To use SSO, explicitly select
+**Browser SSO**, then click **Sign In**. Complete your organisation's browser login, including QR code and
 phone/passkey approval. After success, ATool uses that alias for normal Comms
 operations. Passwords are not entered or saved in this dialog; OCCS CLI stores
 the encrypted Comms session cookies.
@@ -219,8 +222,8 @@ and timeouts leave it available for another attempt. If the browser closes or
 disconnects, the dialog shows retry guidance. **Show diagnostics** expands the
 error details in a scrollable panel, with credential headers redacted. Login output and credentials
 are omitted from Activity diagnostics. If a Comms session is missing or an SSO
-session expires during work, ATool opens **Sign In to Comms (SSO)…** with the
-requested session alias selected. Click **Sign In**, then retry the
+session expires during work, ATool opens **Sign In to Comms…** with the
+requested session alias and its saved login method selected. Click **Sign In**, then retry the
 operation; ATool does not automatically reopen the browser or replay a write.
 Saved password sessions retain their existing automatic login recovery.
 
@@ -228,6 +231,14 @@ JSON previews and previews with local XSD conversion can use SSO. Oracle-hosted
 XML conversion still requires a password session. ATool migration requires a
 password-authenticated source alias; an SSO target is supported. Advanced CLI
 migration can instead accept an explicit source bearer token.
+
+The XML conversion dialog shows the session's saved login method and lets you
+select a password alias for that conversion without changing the default session.
+OCCS CLI stores one login record per customer/region/tenancy: aliases for the
+same target share that record. Signing in through SSO replaces that target's
+password session, including its stored password credentials. A second alias for
+the same target does not preserve a separate password session; use password
+login again when Oracle-hosted XML conversion is needed, or use local XSD conversion.
 
 ## Moving an older ATool installation to the native app
 

@@ -312,7 +312,7 @@ class CommandJob(QObject):
             missing_session = 'session not found' in result.message.casefold()
             if self.args[:1] != ['login'] and (sso_expired or missing_session):
                 reason = 'Your Comms session was not found.' if missing_session else 'Your Comms SSO session expired or was rejected.'
-                result = CommandResult(code or -1, '', reason + ' Sign in using the Comms sign-in window, then retry this operation. You can also open it from Settings → Sign In to Comms (SSO)….', None)
+                result = CommandResult(code or -1, '', reason + ' Sign in using the Comms sign-in window, then retry this operation. You can also open it from Settings → Sign In to Comms….', None)
                 self.service.sign_in_required.emit(alias)
             elif not self.login_attempted and self.args[:1] != ['login'] and unauthorized_error(result.message):
                 self.login_attempted = True

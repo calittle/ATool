@@ -401,7 +401,7 @@ class SettingsActions:
     def install_settings_actions(self):
         self.comms.sign_in_required.connect(self.open_comms_login)
         menu = self.menuBar().addMenu('&Settings')
-        self.comms_login_action = self.action('Sign In to Comms (SSO)…', self.open_comms_login)
+        self.comms_login_action = self.action('Sign In to Comms…', self.open_comms_login)
         menu.addAction(self.comms_login_action)
         menu.addSeparator()
         self.settings_action = self.action('User Settings…', self.open_user_settings)
@@ -412,6 +412,8 @@ class SettingsActions:
         from .comms_login import CommsLoginDialog
         current = getattr(self, 'comms_login_dialog', None)
         if current and current.isVisible():
+            if isinstance(alias, str) and alias.strip() and (current.job is None or current.job.done):
+                current.alias.setCurrentText(alias.strip())
             current.raise_()
             current.activateWindow()
             return

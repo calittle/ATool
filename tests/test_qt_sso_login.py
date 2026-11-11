@@ -215,7 +215,7 @@ print(json.dumps({{'ok': True, 'args': args}}))
         self.workspace.comms.submit(['preview', '--session', 'sso'], results.append)
         self.until(lambda: bool(results))
         self.assertFalse(results[0].successful)
-        self.assertIn('Settings → Sign In to Comms (SSO)', results[0].message)
+        self.assertIn('Settings → Sign In to Comms', results[0].message)
         self.assertEqual(len(self.recorded()), 1)
         self.assertFalse(self.workspace.comms.logins)
         self.assertEqual(requested, ['sso'])
@@ -261,7 +261,7 @@ print(json.dumps({{'ok': True, 'args': args}}))
         self.workspace.comms.submit(['package', '--session', 'sso', 'list', '--json'], results.append)
         self.until(lambda: bool(results))
         self.assertFalse(results[0].successful)
-        self.assertIn('Sign In to Comms (SSO)', results[0].message)
+        self.assertIn('Sign In to Comms', results[0].message)
 
     def test_generic_unauthorized_for_saved_sso_does_not_fall_back_to_password_login(self):
         self.mode.write_text('password')
@@ -270,8 +270,62 @@ print(json.dumps({{'ok': True, 'args': args}}))
             self.workspace.comms.submit(['package', '--session', 'sso', 'list'], results.append)
             self.until(lambda: bool(results))
         self.assertFalse(results[0].successful)
-        self.assertIn('Sign In to Comms (SSO)', results[0].message)
+        self.assertIn('Sign In to Comms', results[0].message)
         self.assertEqual(len(self.recorded()), 1)
+
+    def test_password_target_never_adds_sso_and_keeps_password_guidance(self):
+        store = json.loads(self.sessions.read_text())
+        store['sessions']['example.region/non-prod']['authType'] = 'password'
+        self.sessions.write_text(json.dumps(store))
+        dialog = self.dialog()
+        self.assertEqual(dialog.method.currentData(), 'password')
+        self.assertIn('password', dialog.help_text.text())
+        dialog.sign_in.click()
+        self.until(lambda: dialog.job.done)
+        self.assertNotIn('--sso', self.recorded()[0])
+        self.assertEqual(self.recorded()[0][:3], ['login', '--session', 'sso'])
+
+    def test_unknown_alias_defaults_to_password_and_method_can_be_chosen(self):
+        dialog = self.dialog()
+        self.assertEqual(dialog.method.currentData(), 'sso')
+        dialog.alias.setCurrentText('new-password')
+        self.assertEqual(dialog.method.currentData(), 'password')
+        self.assertNotIn('SSO sign-in', dialog.status.text())
+        dialog.method.setCurrentIndex(1)
+        self.assertEqual(dialog.method.currentData(), 'sso')
+
+    def test_password_failure_does_not_tell_user_to_fix_sso(self):
+        dialog = self.dialog()
+        dialog.method.setCurrentIndex(0)
+        self.mode.write_text('failure')
+        dialog.sign_in.click()
+        self.until(lambda: dialog.job.done)
+        self.assertIn('Password sign-in failed', dialog.status.text())
+        self.assertNotIn('--sso', self.recorded()[0])
+
+    def test_xml_conversion_can_select_password_without_changing_default(self):
+        from atool_qt.data_actions import XmlConversionDialog
+        self.workspace.session = None
+        self.workspace.settings = Mock()
+        self.settings.payload['occs']['session_alias'] = 'browser'
+        targets = {'browser': {'authType': 'sso'}, 'password': {'authType': 'password'}}
+        with patch('atool_qt.data_actions.saved_login_targets', return_value=(targets, 'browser')):
+            dialog = XmlConversionDialog(self.workspace)
+        self.addCleanup(dialog.close)
+        self.assertIn('uses SSO', dialog.login_info.text())
+        dialog.session_alias.setCurrentText('password')
+        self.assertIn('password login', dialog.login_info.text())
+        xml = self.root / 'convert.xml'
+        xml.write_text('<bill/>')
+        dialog.xml.setText(str(xml))
+        with patch.object(self.workspace.comms, 'submit', return_value=Mock(done=True)) as submit:
+            dialog.run_conversion()
+        args = submit.call_args.args[0]
+        self.assertEqual(args[args.index('--session') + 1], 'password')
+        self.assertNotIn('--sso', args)
+        command = self.settings.command(args)
+        self.assertEqual(command.count('--session'), 1)
+        self.assertEqual(self.settings.get('session_alias'), 'browser')
 
     def test_sso_source_migration_stops_before_refreshing_sessions(self):
         from atool_qt.configuration import ConfigurationActions

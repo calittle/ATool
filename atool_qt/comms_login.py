@@ -63,21 +63,25 @@ class CommsLoginDialog(QDialog):
     def __init__(self, workspace, session_path=None):
         super().__init__(workspace)
         self.workspace = workspace
+        self.session_path = session_path
         self.job = None
         self.targets, current = saved_login_targets(session_path)
-        self.setWindowTitle('Sign In to Comms (SSO)')
+        self.setWindowTitle('Sign In to Comms')
         self.resize(550, 350)
         layout = QVBoxLayout(self)
-        help_text = QLabel('Sign in through your organisation’s browser login. Complete any QR code, '
-                           'phone or passkey approval in the browser window. No password is entered in ATool.')
-        help_text.setWordWrap(True)
-        layout.addWidget(help_text)
+        self.help_text = QLabel()
+        self.help_text.setWordWrap(True)
+        layout.addWidget(self.help_text)
         form = QFormLayout()
         self.alias = QComboBox()
         self.alias.setEditable(True)
         self.alias.addItems(sorted(self.targets))
-        self.alias.setCurrentText(str(workspace.comms.settings.get('session_alias') or current or 'sso'))
+        self.alias.setCurrentText(str(workspace.comms.settings.get('session_alias') or current or 'comms'))
         form.addRow('Session alias', self.alias)
+        self.method = QComboBox()
+        self.method.addItem('Password (saved CLI credentials)', 'password')
+        self.method.addItem('Browser SSO', 'sso')
+        form.addRow('Login method', self.method)
         self.fields = {}
         for key, title, hint in [('customer', 'Customer', 'Customer short name'),
                                  ('region', 'Region / environment', 'For example: sin-fscloud'),
@@ -113,6 +117,7 @@ class CommsLoginDialog(QDialog):
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
         self.alias.currentTextChanged.connect(self.select_target)
+        self.method.currentIndexChanged.connect(self.update_method_help)
         self.select_target(self.alias.currentText())
         self.sign_in.clicked.connect(self.start_login)
         self.close_button.clicked.connect(self.reject)
@@ -131,11 +136,27 @@ class CommsLoginDialog(QDialog):
 
     def select_target(self, alias):
         target = self.targets.get(alias, {})
+        self.method.setCurrentIndex(1 if target.get('authType') == 'sso' else 0)
+        self.update_method_help()
         for key, field in self.fields.items():
             field.setText(target.get(key, ''))
 
+    def update_method_help(self):
+        if self.method.currentData() == 'sso':
+            self.status.setText('Requires OCCS CLI 1.4.0 or later and Chrome, Edge or Chromium. '
+                                'Browser and sign-in timeout options are in User Settings → Comms.')
+            self.help_text.setText('Complete browser and phone/passkey approval. SSO replaces saved password '
+                                   'credentials for all aliases of this customer/region/tenancy. Oracle-hosted '
+                                   'XML conversion requires password login; local XSD conversion supports SSO.')
+        else:
+            self.status.setText('Uses saved password credentials. For first-time setup, run occs login in a terminal.')
+            self.help_text.setText('Sign in using credentials already saved by OCCS CLI or configured in its '
+                                   'environment. For first-time password setup, run occs login in a terminal. '
+                                   'No browser SSO is used. Oracle-hosted XML conversion supports password sessions.')
+
     def set_running(self, running):
         self.alias.setEnabled(not running)
+        self.method.setEnabled(not running)
         for field in self.fields.values():
             field.setEnabled(not running)
         self.sign_in.setEnabled(not running)
@@ -154,12 +175,14 @@ class CommsLoginDialog(QDialog):
             self.status.setText('Customer, region and tenancy must contain letters, numbers or hyphens.')
             return
         self.login_alias = alias
-        args = ['login', '--sso', '--session', alias]
+        self.login_method = self.method.currentData()
+        args = ['login'] + (['--sso'] if self.login_method == 'sso' else []) + ['--session', alias]
         for key, value in target.items():
             args += [f'--{key}', value]
         self.set_running(True)
         self.status.setText('Complete sign-in in the browser, including phone/passkey approval. '
-                            'You can cancel here or close the sign-in browser.')
+                            'You can cancel here or close the sign-in browser.' if self.login_method == 'sso'
+                            else 'Signing in using saved CLI password credentials…')
         self.job = self.workspace.comms.submit(args, self.login_finished)
 
     def login_finished(self, result):
@@ -168,12 +191,15 @@ class CommsLoginDialog(QDialog):
         if result.cancelled:
             self.status.setText('Sign-in cancelled. You can try again when ready.')
         elif result.timed_out:
-            self.status.setText('SSO sign-in timed out. Click Sign In to try again.')
+            self.status.setText('Sign-in timed out. Click Sign In to try again.')
         elif not result.successful:
             message = activity_text(result.message)
             details = message
             lowered = message.casefold()
-            if ('target page, context or browser has been closed' in lowered
+            if self.method.currentData() != 'sso':
+                message = ('Password sign-in failed. Check the saved CLI credentials or run occs login in a terminal '
+                           'to set them up, then retry. Expand diagnostics for details.')
+            elif ('target page, context or browser has been closed' in lowered
                     or 'browser closed or disconnected' in lowered
                     or 'browser was closed' in lowered):
                 message = ('The sign-in browser closed or disconnected before sign-in completed. '
@@ -190,6 +216,7 @@ class CommsLoginDialog(QDialog):
             self.diagnostics.setPlainText(details)
             self.diagnostics_toggle.show()
         else:
+            self.targets, _ = saved_login_targets(self.session_path)
             settings = self.workspace.comms.settings
             payload = copy.deepcopy(settings.payload)
             payload.setdefault('occs', {})['session_alias'] = self.login_alias

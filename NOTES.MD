@@ -1,5 +1,19 @@
 # ATool Release Notes
 
+## v2.5.3
+
+- Preserve the saved password or SSO login method in the Comms sign-in window
+  instead of always launching SSO. Offer an explicit method choice and default
+  unknown aliases to password login using saved CLI or environment credentials.
+  First-time password setup remains available through `occs login` in a terminal.
+- Show the saved login method in XML conversion and allow a password session
+  to be selected for that conversion without changing the default Comms session.
+  Explain that Oracle-hosted XML conversion requires password login, while local
+  XSD conversion supports SSO.
+- Explain that SSO sign-in replaces saved password credentials for all aliases
+  of the same customer/region/tenancy. Use method-specific sign-in failure guidance
+  and select the requested alias when reusing an idle sign-in window.
+
 ## v2.5.2
 
 - Allow field paths containing array wildcards (`[*]`) inside `length` as well

@@ -17,6 +17,7 @@ from atool_core.layout_resolver import LayoutResolver, format_report
 from .sample_data import SampleBuilder
 from .grids import configure_grid
 from .resource_actions import RESOURCE_TYPES
+from .comms_login import saved_login_targets
 
 
 def xml_bill_ids(path):
@@ -101,6 +102,17 @@ class XmlConversionDialog(QDialog):
         form.addRow('XML File', row)
         form.addRow('Reroot (auto)', self.reroot)
         form.addRow('Bill ID', self.bill)
+        self.login_targets, current = saved_login_targets()
+        self.session_alias = QComboBox()
+        self.session_alias.setEditable(True)
+        self.session_alias.addItems(sorted(self.login_targets))
+        self.session_alias.setCurrentText(str(workspace.comms.settings.get('session_alias') or current or ''))
+        form.addRow('Comms session', self.session_alias)
+        self.login_info = QLabel()
+        self.login_info.setWordWrap(True)
+        form.addRow(self.login_info)
+        self.session_alias.currentTextChanged.connect(self.update_login_info)
+        self.update_login_info()
         layout.addLayout(form)
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -119,6 +131,18 @@ class XmlConversionDialog(QDialog):
         self.cancel_button.clicked.connect(lambda: self.job.cancel() if self.job else None)
         self.xml.editingFinished.connect(self.refresh_bill_ids)
         self.finished.connect(lambda: self.job.cancel() if self.job and not self.job.done else None)
+
+    def update_login_info(self):
+        target = self.login_targets.get(self.session_alias.currentText().strip(), {})
+        if self.workspace.comms.settings.get('use_static_xsd_conversion', False):
+            text = 'Local XSD conversion does not require a Comms login.'
+        elif target.get('authType') == 'sso':
+            text = 'This session uses SSO. Select a password session for Oracle-hosted conversion, or enable local XSD conversion in User Settings.'
+        elif target:
+            text = 'This session uses password login for Oracle-hosted conversion.'
+        else:
+            text = 'Oracle-hosted conversion requires a password session. Select its alias; login details are managed under Settings → Sign In to Comms.'
+        self.login_info.setText(text)
 
     def browse(self, *, initial=False):
         settings = self.workspace.settings
@@ -149,6 +173,9 @@ class XmlConversionDialog(QDialog):
     def run_conversion(self):
         try:
             args = conversion_args(self.workspace.comms.settings, self.xml.text(), self.reroot.text(), self.bill.currentText())
+            alias = self.session_alias.currentText().strip()
+            if alias:
+                args += ['--session', alias]
         except ValueError as error:
             self.status.setText(str(error))
             return
