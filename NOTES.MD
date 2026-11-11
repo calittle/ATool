@@ -1,5 +1,11 @@
 # ATool Release Notes
 
+## v2.5.2
+
+- Allow field paths containing array wildcards (`[*]`) inside `length` as well
+  as `concat`, so count mappings such as `$.length($.rows[*])` can be applied
+  and pasted. Update validation guidance to show both supported functions.
+
 ## v2.5.1
 
 - Show concise SSO sign-in failures with expandable, scrollable diagnostics

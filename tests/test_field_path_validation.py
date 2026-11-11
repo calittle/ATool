@@ -59,9 +59,9 @@ class FieldPathValidationTests(unittest.TestCase):
         self.assertFalse(editor.dirty)
         self.assertEqual(editor.undo_stack, [])
 
-    def test_array_wildcards_require_an_enclosing_concat_call(self):
+    def test_array_wildcards_require_an_enclosing_concat_or_length_call(self):
         paths = [BILL_PATH, '$.rows[*].amount', '$.rows[ * ].amount',
-                 '$.length($.rows[*])',
+                 '$.length($.good) + $.rows[*].amount',
                  "$.concat($.good, '[*]') + $.rows[*].amount",
                  "$.concat($.good, '') + $.rows[*].amount"]
         for validator in self.validators():
@@ -69,14 +69,20 @@ class FieldPathValidationTests(unittest.TestCase):
                 with self.subTest(validator=type(validator).__name__, path=path):
                     valid, reason = validator._validate_field_path(path)
                     self.assertFalse(valid)
-                    self.assertIn('must use concat', reason)
+                    self.assertIn('must use concat or length', reason)
             self.assertFalse(validator._validate_field_path("$.notconcat($.rows[*].amount, '')")[0])
+            self.assertFalse(validator._validate_field_path('$.notlength($.rows[*])')[0])
 
-    def test_concat_handles_wildcards_without_matching_literal_text(self):
+    def test_concat_and_length_handle_wildcards_without_matching_literal_text(self):
         paths = ["$.concat($.rows[*].amount, ', ')",
                  "$.concat($.rows[ * ].amount, '')",
                  "$.concat($.groups[*].rows[*].amount, '')",
                  "$.length($.concat($.rows[*].amount, ''))",
+                 '$.length($.rows[*])',
+                 '$.length($.rows[ * ].amount)',
+                 '$.length($.groups[*].rows[*].amount)',
+                 f'$.length({BILL_PATH})',
+                 "$.concat($.length($.rows[*]), '')",
                  "$['literal[*]']", '$.rows[?(@.name == "[*]")].amount']
         for validator in self.validators():
             for path in paths:
@@ -98,3 +104,13 @@ class FieldPathValidationTests(unittest.TestCase):
         self.assertEqual(editor.undo_stack, [])
         editor.update_record(session.fields[0], {'Path': "$.concat($.rows[*].amount, '')"}, 'fields')
         self.assertEqual(session.fields[0]['source']['Path'], "$.concat($.rows[*].amount, '')")
+
+    def test_apply_and_paste_allow_length_with_array_wildcards(self):
+        session = PackageSession.from_payload({'Documents': [], 'Fields': [
+            {'Name': 'Count', 'Path': '$.count'}]})
+        editor = PackageEditor(session)
+        editor.update_record(session.fields[0], {'Path': '$.length($.rows[*])'}, 'fields')
+        self.assertEqual(session.fields[0]['source']['Path'], '$.length($.rows[*])')
+        editor.paste_fields([{'Name': 'ItemCount', 'Path': '$.length($.groups[*].items[*])'}])
+        self.assertEqual(session.fields[-1]['source']['Path'], '$.length($.groups[*].items[*])')
+        self.assertTrue(editor.dirty)
