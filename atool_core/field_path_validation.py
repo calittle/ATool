@@ -2,6 +2,43 @@
 import re
 
 
+def iteration_path_error(expression: str) -> str:
+    """Reject concat calls in iteration mappings, ignoring quoted keys/values."""
+    quote = ''
+    escaped = False
+    for index, char in enumerate(expression):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote:
+                quote = ''
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == '(' and re.search(r'\bconcat\s*$', expression[:index]):
+            return ('Iterator paths cannot use concat. Select the collection to iterate over; '
+                    'concat is allowed in field mappings within the iterator.')
+    return ''
+
+
+def iteration_path_issues(value, path='$', *, iteration=False):
+    """Check nested iteration owners without restricting their field mappings."""
+    issues = []
+    if isinstance(value, dict):
+        if iteration or value.get('Type') in ('Iterator', 'Spliterator'):
+            error = iteration_path_error(str(value.get('Path') or ''))
+            if error:
+                issues.append(f'{path}.Path: {error}')
+        for key, item in value.items():
+            issues.extend(iteration_path_issues(item, f'{path}.{key}', iteration=key.lower() == 'iteration'))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            issues.extend(iteration_path_issues(item, f'{path}[{index}]', iteration=iteration))
+    return issues
+
+
 def separator_error(expression: str) -> str:
     """Leave quoted keys/values and filter spacing untouched."""
     quote = ''

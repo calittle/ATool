@@ -293,6 +293,33 @@ class AuthoringInterfaceTests(unittest.TestCase):
         actions['Add Iteration'].trigger()
         self.assertEqual('Iterator', window.layout_selection()[1]['source']['Type'])
 
+    def test_apply_rejects_iterator_concat_but_accepts_it_for_iteration_field(self):
+        window = self.window
+        content = window.editor.add_layout_item(window.session.documents[0], 'Content', 'layout/0')
+        iteration = window.editor.add_layout_item(window.session.documents[0], 'Iteration', content)
+        window.refresh_edit()
+        window.select_layout_key(iteration)
+        action = next(action for action in window.layouts.authoring_toolbar.actions() if action.text() == 'Apply')
+        button = window.layouts.authoring_toolbar.widgetForAction(action)
+        before = window.editor.snapshot()
+        window.layouts.path.setPlainText("$.concat($.rows[*], '')")
+        with patch.object(window, 'report_error') as error:
+            self.assertTrue(button.isEnabled())
+            button.click()
+        error.assert_called_once()
+        self.assertIn('cannot use concat', error.call_args.args[1])
+        self.assertEqual(before, window.editor.snapshot())
+        window.layouts.path.setPlainText('$.rows[*]')
+        button.click()
+        self.assertEqual('$.rows[*]', window.editor.layout_source(window.session.documents[0], iteration)[0]['Path'])
+        field = window.editor.add_layout_item(window.session.documents[0], 'Field', iteration)
+        window.refresh_edit()
+        window.select_layout_key(field)
+        window.layouts.path.setPlainText("$.concat($.values[*], ', ')")
+        button.click()
+        self.assertEqual("$.concat($.values[*], ', ')",
+                         window.editor.layout_source(window.session.documents[0], field)[0]['Path'])
+
     def test_initial_layout_properties_are_editable_and_iteration_type_validated(self):
         window = self.window
         doc = window.session.documents[0]

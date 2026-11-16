@@ -1,7 +1,10 @@
 """Field authoring must validate input before the resolver trims segments."""
 import unittest
+import tempfile
+from pathlib import Path
 
 from ATool import AToolApp
+from atool_core.field_path_validation import iteration_path_error, iteration_path_issues
 from atool_qt.data_queries import DataQueries
 from atool_qt.editor import PackageEditor
 from atool_qt.session import PackageSession
@@ -11,6 +14,63 @@ BILL_PATH = (
     "$.billPrint.premise.premList[*].serviceAgreement.saList[?(@.saType != 'E-FIT')]"
     ".billSegment.bsegList[*].bsegSQ.bsegSQList[?(@.uom == 'KWH' && @.sqi == 'BILL')].billSq"
 )
+
+
+class IteratorPathValidationTests(unittest.TestCase):
+    def make_editor(self):
+        session = PackageSession.from_payload({'Documents': [{'$$Id': 'Doc', 'Layouts': [
+            {'Contents': [{'Iteration': {'Type': 'Iterator', 'Path': '$.rows[*]', 'Fields': [
+                {'Name': 'Joined', 'Path': "$.concat($.values[*], ', ')"}]}}]}]}], 'Fields': []})
+        return session, PackageEditor(session)
+
+    def test_concat_calls_rejected_but_literal_text_and_collection_paths_allowed(self):
+        for path in ("$.concat($.rows[*], '')", "$.concat ($.rows[*], '')",
+                     "$.length($.concat($.rows[*], ''))"):
+            with self.subTest(path=path):
+                self.assertIn('cannot use concat', iteration_path_error(path))
+        for path in ('$', '$.rows[*]', "$['concat(foo)']", '$.rows[?(@.name == "concat(foo)")]',
+                     '$.concatItems[*]'):
+            with self.subTest(path=path):
+                self.assertEqual('', iteration_path_error(path))
+
+    def test_invalid_edit_and_paste_leave_model_and_history_untouched(self):
+        session, editor = self.make_editor()
+        before = editor.snapshot()
+        document = session.documents[0]
+        with self.assertRaisesRegex(ValueError, 'cannot use concat'):
+            editor.update_layout(document, 'layout/0/Contents/0/Iteration', {'Path': "$.concat($.rows[*], '')"})
+        for kind, clipboard in (
+            ('Iteration', [{'Path': "$.concat($.rows[*], '')"}]),
+            ('Content', [{'iteration': {'Path': "$.concat($.rows[*], '')"}}]),
+            ('Layout', [{'Contents': [{'Iteration': {'Path': "$.concat($.rows[*], '')"}}]}])):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'cannot use concat'):
+                editor.paste_layout_items(document, kind, clipboard, 'layout/0')
+        self.assertEqual(before, editor.snapshot())
+        self.assertEqual([], editor.undo_stack)
+
+    def test_iterator_fields_allow_concat_and_save_round_trip(self):
+        session, editor = self.make_editor()
+        editor.update_layout(session.documents[0], 'layout/0/Contents/0/Iteration/Fields/0',
+                             {'Path': "$.concat($.values[*], ' / ')"})
+        self.assertEqual([], iteration_path_issues(session.payload))
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'AT.json'
+            editor.save(target)
+            reopened = PackageSession.open(target)
+            iteration = reopened.payload['Documents'][0]['Layouts'][0]['Contents'][0]['Iteration']
+            self.assertEqual('$.rows[*]', iteration['Path'])
+            self.assertEqual("$.concat($.values[*], ' / ')", iteration['Fields'][0]['Path'])
+
+    def test_save_rejects_imported_iterator_concat_without_writing(self):
+        session, editor = self.make_editor()
+        session.payload['Documents'][0]['Layouts'][0]['Contents'][0]['Iteration']['Path'] = "$.concat($.rows[*], '')"
+        before = editor.snapshot()
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'AT.json'
+            with self.assertRaisesRegex(ValueError, 'cannot use concat'):
+                editor.save(target)
+            self.assertFalse(target.exists())
+        self.assertEqual(before, editor.snapshot())
 
 
 class FieldPathValidationTests(unittest.TestCase):

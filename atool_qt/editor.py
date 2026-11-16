@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from atool_core.field_path_validation import iteration_path_error, iteration_path_issues
 from .session import PackageSession
 from .storage import write_files
 from .validation import PayloadValidation
@@ -288,6 +289,10 @@ class PackageEditor:
 
     def update_layout(self, document, key, values):
         source, _, _ = self.layout_source(document, key)
+        if key.endswith('/Iteration') and 'Path' in values:
+            error = iteration_path_error(str(values['Path'] or ''))
+            if error:
+                raise ValueError(error)
         if key.endswith('/Iteration') and values.get('Type') and values['Type'] not in {'Iterator', 'Spliterator'}:
             raise ValueError("Iteration Type must be either 'Iterator' or 'Spliterator'.")
         if key.count('/') == 2 and key.endswith('/Iteration') and 'Type' in values and values['Type'] != 'Spliterator':
@@ -356,6 +361,9 @@ class PackageEditor:
             raise ValueError('Copy layout items of one kind before pasting.')
         if kind == 'Iteration' and len(clipboard) != 1:
             raise ValueError('Select one iteration to copy.')
+        issues = iteration_path_issues(clipboard, iteration=kind == 'Iteration')
+        if issues:
+            raise ValueError('\n'.join(issues))
         parent_kind = {'Content': 'Layout', 'Iteration': 'Content', 'Field': 'Iteration'}.get(kind)
         selected_source = self.layout_source(document, selected_key)[0] if selected_key else None
         ancestor = selected_key
@@ -610,6 +618,7 @@ class PackageEditor:
         else:
             meta["clause_library"] = copy.deepcopy(self.session.clauses)
         issues = PayloadValidation._payload_condition_validation_issues(payload, check_length_paths=check_length_paths)
+        issues.extend(iteration_path_issues(payload))
         if issues:
             raise ValueError('Invalid Conditions or JSONPaths:\n' + '\n'.join(issues[:8]))
         def encoded(value):
