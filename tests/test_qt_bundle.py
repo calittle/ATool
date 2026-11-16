@@ -32,6 +32,26 @@ def make_bundle(root):
 
 
 class BundleTests(unittest.TestCase):
+    def test_add_trigger_for_existing_association_round_trips_without_changing_membership(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = make_bundle(root)
+            editor = PackageEditor(session)
+            associations = json.loads(json.dumps(editor.associations))
+            record = next(row for row in session.documents if row['name'] == 'Missing')
+            editor.update_document_condition(record, '$[?(@.active == true)]')
+            self.assertEqual(associations, editor.associations)
+            self.assertEqual(1, len(editor.undo_stack))
+            editor.save()
+            reopened = PackageSession.open(root)
+            added = next(row for row in reopened.documents if row['name'] == 'Missing')
+            self.assertTrue(added['in_at'])
+            self.assertTrue(added['associated'])
+            self.assertEqual(50, added['order'])
+            self.assertEqual('$[?(@.active == true)]', added['condition'])
+            self.assertEqual([], added['source']['Layouts'])
+            self.assertEqual(associations, editor.associations)
+
     def test_order_trigger_membership_and_unknown_metadata_round_trip(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

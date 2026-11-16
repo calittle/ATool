@@ -82,7 +82,7 @@ class PackageDocumentControlTests(unittest.TestCase):
         self.assertEqual(condition, self.window.session.documents[0]['condition'])
         dialog.reject()
 
-    def test_refresh_retains_memory_edits_and_ghost_condition_button_disabled(self):
+    def test_refresh_retains_memory_edits_and_package_only_condition_button_enabled(self):
         self.window.documents.description.setPlainText('Pending description')
         self.window.package_actions['Refresh'].trigger()
         self.assertEqual(self.window.session.documents[0]['descr'],'Pending description')
@@ -91,7 +91,51 @@ class PackageDocumentControlTests(unittest.TestCase):
         self.window.package_actions['Refresh'].trigger()
         self.assertEqual(self.window.editor.undo_stack,history)
         self.window.select_name(self.window.documents,'Ghost')
-        self.assertFalse(self.window.package_actions['Edit Package Condition'].isEnabled())
+        self.assertTrue(self.window.package_actions['Edit Package Condition'].isEnabled())
+
+    def test_package_only_document_composer_creates_trigger_and_supports_undo(self):
+        window = self.window
+        before = window.editor.snapshot()
+        window.select_name(window.documents, 'Ghost')
+        self.assertEqual('Target: Document Ghost', window.clauses.target_label.text())
+        self.assertIn('No AT trigger', window.documents.package_status.text())
+        self.assertEqual(before, window.editor.snapshot())
+        self.assertTrue(window.trigger_clause_action.isEnabled())
+        apply = next(action for action in window.clauses.authoring_toolbar.actions()
+                     if action.text() == 'Apply Composed')
+        button = window.clauses.authoring_toolbar.widgetForAction(apply)
+        self.assertTrue(button.isEnabled())
+        window.clauses.compose.setPlainText('RAW{@.flag == true}')
+        button.click()
+        record = window.selected_record('documents')
+        self.assertEqual('Ghost', record['name'])
+        self.assertTrue(record['in_at'])
+        self.assertTrue(record['triggered'])
+        self.assertEqual(1, len(window.editor.undo_stack))
+        window.undo_change()
+        self.assertEqual(before, window.editor.snapshot())
+        self.assertEqual('Target: Document Ghost', window.clauses.target_label.text())
+        self.assertFalse(window.selected_record('documents')['in_at'])
+        self.assertTrue(button.isEnabled())
+        window.redo_change()
+        self.assertTrue(window.selected_record('documents')['triggered'])
+
+    def test_package_only_document_json_condition_creates_entry_and_rejects_stale_dialog(self):
+        window = self.window
+        window.select_name(window.documents, 'Ghost')
+        window.package_actions['Edit Package Condition'].trigger()
+        dialog = window.package_condition_dialog
+        stale = PackageConditionDialog(window, window.selected_record('documents'))
+        dialog.condition.setPlainText('$[?(@.flag == false)]')
+        dialog.apply()
+        record = window.selected_record('documents')
+        self.assertTrue(record['in_at'])
+        self.assertFalse(record['triggered'])
+        with patch.object(window, 'report_error') as error:
+            stale.apply()
+        error.assert_called_once()
+        self.assertEqual('$[?(@.flag == false)]', record['condition'])
+        stale.reject()
 
     def test_catalog_fuzzy_filter_hidden_selection_and_json_contract(self):
         cache=self.root/'catalog.json';cache.write_bytes(encode({'documents':[{'uuid':'a','shortName':'Bill','name':'Electric Bill','description':'Customer statement'}, {'uuid':'b','shortName':'Welcome','name':'Welcome','description':'Greeting'}]}))

@@ -282,7 +282,7 @@ class ManagerPanel(QWidget):
         for index, record in enumerate(self.records()):
             if self.kind == "documents":
                 match = "PASS" if record.get("triggered") else "FAIL"
-                membership = ("Missing AT" if not record.get("in_at", True) else "AT only" if record.get("associated") is False
+                membership = ("No AT trigger" if not record.get("in_at", True) else "AT only" if record.get("associated") is False
                               else "In both" if record.get("associated") else "Unknown")
                 columns = [record["name"], str(record["order"]) if record.get("order") is not None else "—",
                            membership, match if session.mapped else "—"]
@@ -424,7 +424,7 @@ class ManagerPanel(QWidget):
             diagnostic_tree(self.clauses_tree, condition_details(self.session, record.get("condition", "")))
             if not record.get("in_at", True):
                 self.clauses_tree.clear()
-                self.source.setPlainText("No source condition: document is missing from the Assembly Template.")
+                self.source.setPlainText("No Assembly Template trigger entry. Apply a condition to add one for this package document.")
             self.selected.emit(record)
             return
         self.result.setPlainText(result)
@@ -1338,7 +1338,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
             self.layouts.set_document(record, self.session)
         finally:
             self.updating_layout = False
-        self.clauses.set_target(record["source"] if record and record.get("in_at", True) else None,
+        self.clauses.set_target(record["source"] if record else None,
                                 "Document", record["name"] if record else "")
 
     def layout_selected(self, current, *_):
@@ -1346,7 +1346,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
             return
         if current is None:
             record = self.active_document
-            self.clauses.set_target(record["source"] if record and record.get("in_at", True) else None,
+            self.clauses.set_target(record["source"] if record else None,
                                     "Document", record["name"] if record else "")
         else:
             node = current.data(0, ROLE)

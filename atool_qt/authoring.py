@@ -548,7 +548,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
             return
         if self.clauses.target_label.text().startswith("Target: Document"):
             if self.active_document:
-                self.edit(lambda: self.editor.update_record(self.active_document, {"Condition": condition}, "documents"))
+                self.edit(lambda: self.editor.update_document_condition(self.active_document, condition))
         else:
             _, node = self.layout_selection()
             if node and not node.get('readonly'):

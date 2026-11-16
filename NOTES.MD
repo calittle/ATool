@@ -1,5 +1,15 @@
 # ATool Release Notes
 
+## v2.5.4
+
+- Allow documents added through Comms package associations to remain selected
+  as trigger targets when they have no Assembly Template trigger entry. Enable
+  Edit Trigger Clause, Apply Composed, and Edit Condition JSON for these documents;
+  applying a condition creates the missing entry with undo/redo support while
+  preserving the package association and document order.
+- Show these documents as "No AT trigger" instead of "Missing AT", with guidance
+  to apply a condition to add their trigger entry.
+
 ## v2.5.3
 
 - Preserve the saved password or SSO login method in the Comms sign-in window

@@ -195,6 +195,7 @@ class PackageConditionDialog(QDialog):
         super().__init__(workspace)
         self.workspace, self.session = workspace, workspace.session
         self.name, self.original = record['name'], str(record['source'].get('Condition') or '')
+        self.original_in_at = record.get('in_at', True)
         self.setWindowTitle('Package Document Condition — ' + self.name)
         self.setModal(True)
         self.resize(720, 360)
@@ -221,10 +222,10 @@ class PackageConditionDialog(QDialog):
         if warnings and QMessageBox.question(self, 'Review Condition', '\n'.join(warnings) + '\n\nApply it anyway?') != QMessageBox.StandardButton.Yes:
             return
         current = next((record for record in workspace.session.documents if record['name'] == self.name), None) if workspace.session is self.session else None
-        if not current or not current.get('in_at') or str(current['source'].get('Condition') or '') != self.original:
+        if not current or current.get('in_at', True) != self.original_in_at or str(current['source'].get('Condition') or '') != self.original:
             workspace.report_error('Condition Changed', 'The document changed while this editor was open. Reopen its condition before applying.')
             return
-        if workspace.edit(lambda: workspace.editor.update_record(current, {'Condition': text}, 'documents')):
+        if workspace.edit(lambda: workspace.editor.update_document_condition(current, text)):
             workspace.select_name(workspace.documents, self.name)
             self.accept()
 
@@ -268,8 +269,10 @@ class PackageDocumentActions:
         for title, action in self.package_actions.items():
             if title in {'Add Package Document', 'Refresh'}:
                 enabled = available
-            elif title in {'Associate', 'Edit Package Condition'}:
-                enabled = available and bool(record and record.get('in_at')) and (not associated if title == 'Associate' else True)
+            elif title == 'Associate':
+                enabled = available and bool(record and record.get('in_at')) and not associated
+            elif title == 'Edit Package Condition':
+                enabled = available and bool(record)
             else:
                 enabled = available and associated
             action.setEnabled(enabled)
@@ -286,7 +289,7 @@ class PackageDocumentActions:
 
     def edit_package_condition(self):
         record = self.selected_record('documents')
-        if record and record.get('in_at') and not self.package_busy():
+        if record and not self.package_busy():
             self.package_condition_dialog = PackageConditionDialog(self, record)
             self.package_condition_dialog.show()
 

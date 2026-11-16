@@ -69,11 +69,13 @@ class ManagerControlActions:
         self.field_paste_action.setEnabled(available and bool(self.field_clipboard_sources()))
         document = self.selected_record('documents')
         document_editable = available and bool(document and document.get('in_at', True))
+        trigger_editable = document_editable or (available and bool(document and document.get('associated')
+            and str(document.get('association', {}).get('documentShortName') or '').strip()))
         self.document_view_action.setText('Flat View' if self.documents.hierarchy else 'Hierarchy View')
         self.document_view_action.setIconText('📋')
         self.document_view_action.setEnabled(available)
         self.document_model_action.setEnabled(document_editable)
-        self.trigger_clause_action.setEnabled(document_editable)
+        self.trigger_clause_action.setEnabled(trigger_editable)
         self.document_map_action.setText('Clear Map' if self.session and self.session.mapped else 'Map')
         self.document_map_action.setEnabled(available)
         for kind in ('documents', 'fields'):
@@ -127,7 +129,8 @@ class ManagerControlActions:
                 action.setEnabled(available and bool(self.clauses.clause_picker.currentText()))
             elif action.text() == 'Apply Composed':
                 layout_target = not self.clauses.target_label.text().startswith('Target: Document')
-                action.setEnabled(document_editable and (not layout_target or bool(node) and not node.get('readonly')))
+                action.setEnabled((document_editable and bool(node) and not node.get('readonly'))
+                                  if layout_target else trigger_editable)
 
     def can_paste_layout(self):
         """Check destination eligibility without modifying the editor or its history."""

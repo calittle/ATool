@@ -216,6 +216,22 @@ class PackageEditor:
         self.change('Paste fields', lambda: self.session.payload.setdefault('Fields', []).extend(pasted))
         return [source['Name'] for source in pasted]
 
+    def update_document_condition(self, record, condition):
+        if record.get('in_at', True):
+            return self.update_record(record, {'Condition': condition}, 'documents')
+        association = self.association_for(record)
+        name = str(association.get('documentShortName') or '').strip()
+        if not name:
+            raise ValueError('Resolve the package document short name before adding a trigger.')
+        if any(isinstance(source, dict) and str(source.get('$$Id', '')).strip().casefold() == name.casefold()
+               for source in self.session.payload.get('Documents', [])):
+            raise ValueError('The document trigger changed. Select the document again before applying.')
+        source = {'$$Id': name, 'Descr': record.get('descr', ''), 'Condition': condition, 'Layouts': []}
+        def apply():
+            self.touch(source)
+            self.session.payload.setdefault('Documents', []).append(source)
+        self.change('Add document trigger', apply)
+
     def update_record(self, record, values, kind):
         source = record["source"]
         name_key = "$$Id" if kind == "documents" else "Name"

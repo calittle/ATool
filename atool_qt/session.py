@@ -190,7 +190,7 @@ class PackageSession:
             always = association.get("documentAlwaysTriggerInd", False)
             always = always.strip().lower() in {"true", "1", "yes"} if isinstance(always, str) else bool(always)
             row.update(associated=True, order=order, always_trigger=always, association=association,
-                       status="In package + AT" if doc else "Missing from AT")
+                       status="In package + AT" if doc else "In package · No AT trigger entry")
             if name.casefold() in seen:
                 row["status"] += " · Duplicate association"
             if order is None:
@@ -212,7 +212,7 @@ class PackageSession:
         if doc.get("associated") is False:
             details.append("Assembly Template document is not listed in the package.")
         if not doc.get("in_at"):
-            details.append("Document is listed in the package but missing from the Assembly Template.")
+            details.append("Document is listed in the package but has no Assembly Template trigger entry. Apply a condition to add one.")
         if doc.get("always_trigger"):
             details.append("Package association is set to Always Trigger; AT condition does not gate this document.")
         elif condition is None:
