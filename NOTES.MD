@@ -9,6 +9,12 @@
   preserving the package association and document order.
 - Show these documents as "No AT trigger" instead of "Missing AT", with guidance
   to apply a condition to add their trigger entry.
+- Reject `concat` in iterator collection paths when editing, pasting, or saving,
+  with guidance to select the collection to iterate over. Continue to allow
+  `concat` in field mappings within an iterator.
+- Bundle OCCS CLI v1.4.2 (previously v1.4.1). Selecting a Bill ID in a statement
+  XML batch now extracts its single enclosing statement before conversion and
+  re-rooting, instead of returning the entire batch with extra JSON wrappers.
 
 ## v2.5.3
 
