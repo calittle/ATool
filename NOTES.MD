@@ -1,5 +1,20 @@
 # ATool Release Notes
 
+## v2.5.5
+
+- Configure a language JSONPath for each package short name in User Settings.
+  Preview uses the current package's path to detect the input language and
+  generate alternate languages, keeping the language labels and data values in
+  a separate table. Missing package mappings or invalid input fields disable
+  language selection with guidance while still allowing an unchanged preview.
+  Move the previous shared path into the CLP_bills mapping on settings load;
+  users who used that path for another package can edit its package name.
+- Choose smoke suites by their JSON name from a configured Suite JSON Folder
+  in Run Smoke Tests. Refresh the list after adding or changing suites, skip
+  unrelated or malformed JSON files, and resolve input paths from the selected
+  suite's folder. Migrate the previous single-file setting to its containing
+  folder.
+
 ## v2.5.4
 
 - Allow documents added through Comms package associations to remain selected
