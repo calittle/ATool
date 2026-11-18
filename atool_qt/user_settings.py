@@ -40,7 +40,7 @@ class ActivityLogHandler(logging.Handler):
 DEFAULTS = json.loads(Path(__file__).with_name('settings_defaults.json').read_text())
 
 SMOKE_HELP = {
-    'suite_path': 'Select an existing smoke-suite.json defining the packages, input files, and PDF/HTML outputs to test. '
+    'suite_dir': 'Choose the folder containing smoke suite JSON files. Run Smoke Tests lists suites by their name field. '
                   'Relative input paths are resolved from the folder containing this suite file.',
     'output_dir': 'Choose a writable folder for reports, previews, comparison images, and unsent email drafts. '
                   'Leave blank to save beside the suite. New runs create timestamped subfolders.',
@@ -99,7 +99,15 @@ class UserSettings(CommsSettings):
             self.path = Path(path or Path.home() / '.atool' / '.settings.json')
             self.payload = {}
             self.load_error = str(error)
+        language = self.payload.get('language')
+        if isinstance(language, dict) and 'mapping' in language:
+            legacy_mapping = language.pop('mapping')
+            language.setdefault('package_mapping', [{'package': 'CLP_bills', 'mapping': legacy_mapping}])
         self.payload = merge_settings(DEFAULTS, self.payload)
+        smoke = self.section('smoke_tests')
+        legacy_path = smoke.pop('suite_path', None)
+        if legacy_path and isinstance(legacy_path, str) and not smoke.get('suite_dir'):
+            smoke['suite_dir'] = str(Path(legacy_path).expanduser().parent)
         self.original_bytes = self.path.read_bytes() if self.path.exists() else None
 
     def section(self, name):
@@ -184,7 +192,24 @@ class SettingsDialog(QDialog):
         self.add_control(general, 'content_editor', 'font_family', 'HTML Font', 'font')
         self.add_control(general, 'diagnostics', 'debug_logging', 'Debug Logging', bool)
         language = self.add_tab('Language')
-        self.add_control(language, 'language', 'mapping', 'Language mapping', str)
+        self.package_language_table = QTableWidget(0, 2)
+        self.package_language_table.setHorizontalHeaderLabels(['Package Name', 'Language Mapping (JSONPath)'])
+        self.package_language_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.package_language_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.package_language_table.setMinimumHeight(140)
+        for row in self.store.section('language').get('package_mapping', []):
+            self.add_package_language_row(row)
+        language.addRow('Package language mapping', self.package_language_table)
+        package_buttons = QHBoxLayout()
+        self.add_package_language_button, self.remove_package_language_button = QToolButton(), QToolButton()
+        self.add_package_language_button.setText('Add')
+        self.remove_package_language_button.setText('Remove')
+        self.add_package_language_button.clicked.connect(lambda: self.add_package_language_row())
+        self.remove_package_language_button.clicked.connect(self.remove_package_language_rows)
+        package_buttons.addWidget(self.add_package_language_button)
+        package_buttons.addWidget(self.remove_package_language_button)
+        package_buttons.addStretch()
+        language.addRow(package_buttons)
         self.language_table = QTableWidget(0, 3)
         self.language_table.setHorizontalHeaderLabels(['Label', 'Data', 'Short Name'])
         self.language_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -203,7 +228,10 @@ class SettingsDialog(QDialog):
         language_buttons.addWidget(self.remove_language_button)
         language_buttons.addStretch()
         language.addRow(language_buttons)
-        language_hint = QLabel('Label appears in Preview; Data is written to the mapped input field; '
+        language_hint = QLabel('Package Name must match the package short name shown in Preview. '
+                               'Language Mapping is the absolute JSONPath of its language field '
+                               '(for example $.billPrint.billDetails.cmElements.billLanguagePreference). '
+                               'Label appears in Preview; Data is written to the package’s mapped field; '
                                'Short Name appears in output filenames. Use a unique Short Name with '
                                'letters, numbers, underscores, or hyphens.')
         language_hint.setWordWrap(True)
@@ -237,7 +265,7 @@ class SettingsDialog(QDialog):
             'Off by default while the restriction is being clarified.')
         smoke = self.add_tab('Smoke Tests')
         for key,title,kind in (
-                ('suite_path','Suite JSON File','file'), ('output_dir','Output Folder','directory'),
+                ('suite_dir','Suite JSON Folder','directory'), ('output_dir','Output Folder','directory'),
                 ('run_standard','Run Standard Test',bool), ('run_comparison','Run Comparison',bool),
                 ('standard_tenancy','Standard Tenancy',str), ('standard_session','Standard Session Alias (optional)',str),
                 ('comparison_source_tenancy','Comparison Source Tenancy',str),
@@ -250,7 +278,9 @@ class SettingsDialog(QDialog):
                 ('concurrency','Simultaneous Previews',int),
                 ('comparison_threshold_percent','Allowed Changed Pixels (%)',float)):
             self.add_control(smoke,'smoke_tests',key,title,kind)
-        smoke_help=('The suite defines packages, input files, and PDF/HTML outputs. '
+        smoke_help=('Choose a folder of JSON suites, then select a suite by its name in Run Smoke Tests. '
+                    'Each suite needs a name and a non-empty tests list. '
+                    'The suite defines packages, input files, and PDF/HTML outputs. '
                     'Input paths are relative to the suite.\n\n'
                     'A session alias overrides its tenancy. Leave Output Folder blank to save beside the suite.\n\n'
                     'Tool Folders adds Poppler/ImageMagick locations to PATH; separate multiple folders with '
@@ -285,6 +315,16 @@ class SettingsDialog(QDialog):
     def remove_language_rows(self):
         for row in sorted({index.row() for index in self.language_table.selectedIndexes()}, reverse=True):
             self.language_table.removeRow(row)
+
+    def add_package_language_row(self, values=None):
+        row = self.package_language_table.rowCount()
+        self.package_language_table.insertRow(row)
+        for column, key in enumerate(('package', 'mapping')):
+            self.package_language_table.setItem(row, column, QTableWidgetItem((values or {}).get(key, '')))
+
+    def remove_package_language_rows(self):
+        for row in sorted({index.row() for index in self.package_language_table.selectedIndexes()}, reverse=True):
+            self.package_language_table.removeRow(row)
 
     def add_tab(self, title):
         scroll = QScrollArea()
@@ -387,6 +427,10 @@ class SettingsDialog(QDialog):
             {key: self.language_table.item(row, column).text().strip()
              for column, key in enumerate(('label', 'data', 'short_name'))}
             for row in range(self.language_table.rowCount())]
+        payload['language']['package_mapping'] = [
+            {key: self.package_language_table.item(row, column).text().strip()
+             for column, key in enumerate(('package', 'mapping'))}
+            for row in range(self.package_language_table.rowCount())]
         try:
             self.store.save(payload)
             self.workspace.comms.settings = self.store

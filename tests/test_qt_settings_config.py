@@ -26,9 +26,12 @@ class SettingsStorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             settings = UserSettings(Path(temporary) / 'settings.json')
             language = settings.section('language')
-            self.assertEqual('$.billPrint.billDetails.cmElements.billLanguagePreference', language['mapping'])
+            mapping = '$.billPrint.billDetails.cmElements.billLanguagePreference'
+            self.assertNotIn('mapping', language)
+            self.assertEqual([{'package': 'CLP_bills', 'mapping': mapping}], language['package_mapping'])
             self.assertEqual([{'label': 'English', 'data': 'ENGLISH', 'short_name': 'EN'},
-                              {'label': 'Chinese', 'data': 'CHINESE', 'short_name': 'ZF'}], language['display_mapping'])
+                              {'label': 'Chinese', 'data': 'CHINESE', 'short_name': 'ZF'}],
+                             language['display_mapping'])
             for field, value in [('label', ''), ('data', ''), ('data', 'ENGLISH'),
                                  ('short_name', 'en'), ('short_name', '../ZF'), ('short_name', 'Z/F'),
                                  ('short_name', 'ZF.'), ('short_name', '')]:
@@ -39,11 +42,42 @@ class SettingsStorageTests(unittest.TestCase):
                         settings.save(payload)
             for mapping in ('', '$', '$..language', '$.bills[*].language', '@.language'):
                 payload = copy.deepcopy(settings.payload)
-                payload['language']['mapping'] = mapping
+                payload['language']['package_mapping'][0]['mapping'] = mapping
                 with self.subTest(mapping=mapping), self.assertRaisesRegex(ValueError, 'Language mapping'):
                     settings.save(payload)
             settings.save()
             self.assertEqual(language, UserSettings(settings.path).section('language'))
+
+    def test_legacy_language_mapping_migrates_without_overwriting_package_mappings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'settings.json'
+            for packages in (None, [{'package': 'Custom', 'mapping': '$.custom'}]):
+                language = {'mapping': '$.legacy', 'display_mapping': [
+                    {'label': 'French', 'data': 'FR', 'short_name': 'FR'}]}
+                if packages is not None:
+                    language['package_mapping'] = packages
+                path.write_text(json.dumps({'language': language}))
+                settings = UserSettings(path)
+                migrated = settings.section('language')
+                self.assertNotIn('mapping', migrated)
+                self.assertEqual(packages if packages is not None else [
+                    {'package': 'CLP_bills', 'mapping': '$.legacy'}], migrated['package_mapping'])
+                self.assertEqual(language['display_mapping'], migrated['display_mapping'])
+                settings.save()
+                self.assertEqual(migrated, UserSettings(path).section('language'))
+
+    def test_package_language_mapping_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = UserSettings(Path(temporary) / 'settings.json')
+            for packages in ({}, [{}], [{'package': '', 'mapping': '$.lang'}],
+                             [{'package': 'Bill', 'mapping': '$.lang'},
+                              {'package': 'Bill', 'mapping': '$.other'}]):
+                payload = copy.deepcopy(settings.payload)
+                payload['language']['package_mapping'] = packages
+                with self.subTest(packages=packages), self.assertRaises(ValueError):
+                    settings.save(payload)
+            settings.payload['language']['package_mapping'] = []
+            settings.save()
 
     def test_defaults_unknown_settings_validation_and_external_conflict(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -134,16 +168,33 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
         self.assertEqual(dialog.language_table.rowCount(), 3)
         dialog.save()
         self.assertIn('Each language requires', dialog.status.text())
+        self.assertEqual(dialog.language_table.columnCount(), 3)
         for column, value in enumerate(('French', 'FRENCH', 'FR')):
             dialog.language_table.item(2, column).setText(value)
         dialog.language_table.selectRow(1)
         dialog.remove_language_button.click()
         self.assertEqual(dialog.language_table.rowCount(), 2)
-        dialog.controls[('language', 'mapping')].setText('$.language')
+        dialog.package_language_table.item(0, 1).setText('$.language')
         dialog.save()
         saved = UserSettings(self.root / 'user.json').section('language')
-        self.assertEqual(saved['mapping'], '$.language')
-        self.assertEqual(saved['display_mapping'][1], {'label': 'French', 'data': 'FRENCH', 'short_name': 'FR'})
+        self.assertEqual(saved['package_mapping'], [{'package': 'CLP_bills', 'mapping': '$.language'}])
+        self.assertEqual(saved['display_mapping'][1],
+                         {'label': 'French', 'data': 'FRENCH', 'short_name': 'FR'})
+
+    def test_package_language_table_add_remove_and_persist(self):
+        dialog = SettingsDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertEqual(dialog.package_language_table.rowCount(), 1)
+        dialog.add_package_language_button.click()
+        dialog.save()
+        self.assertIn('Package Name', dialog.status.text())
+        for column, value in enumerate(('OtherPackage', '$.otherLanguage')):
+            dialog.package_language_table.item(1, column).setText(value)
+        dialog.package_language_table.selectRow(0)
+        dialog.remove_package_language_button.click()
+        dialog.save()
+        self.assertEqual(UserSettings(self.root / 'user.json').section('language')['package_mapping'],
+                         [{'package': 'OtherPackage', 'mapping': '$.otherLanguage'}])
 
     def test_settings_dialog_persists_hierarchy_and_quit_cancel(self):
         window = self.window
@@ -265,7 +316,7 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
     def test_settings_all_browse_buttons_update_only_their_draft_field(self):
         from PySide6.QtWidgets import QFileDialog
         dialog=SettingsDialog(self.window)
-        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir','log_directory','output_dir','tools_path'}
+        directory_keys={'work_dir','shared_workspace_dir','models_dir','comms_cache_dir','log_directory','output_dir','tools_path','suite_dir'}
         for key,button in dialog.browse_controls.items():
             widget=dialog.controls[key]
             old=widget.text()

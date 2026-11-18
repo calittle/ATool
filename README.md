@@ -80,6 +80,14 @@ commands need. SSO has its own optional browser setting: `OCCS_SSO_BROWSER`
 for direct CLI use, or **User Settings → Comms → SSO Browser Executable** in
 ATool. `OCCS_SMOKE_BROWSER` controls smoke-test screenshots only.
 
+For smoke tests in ATool, set **User Settings → Smoke Tests → Suite JSON Folder**
+to the directory containing your suite JSON files. **Package → Run Smoke Tests…**
+reads that folder and lets you choose a suite by its JSON `name` field. Each suite
+needs a non-empty `tests` list; unrelated or malformed JSON files are skipped.
+Use **Refresh** after adding or changing suites. Relative input paths are resolved
+from the selected suite’s folder. Existing single-file settings migrate to their
+containing folder.
+
 **macOS — Terminal**
 
 Set this up once if you want to run OCCS CLI commands directly, for example to
@@ -623,32 +631,45 @@ copy/paste, removal, and undo/redo.
 
 ### Generate previews in multiple languages
 
-In **Settings → User Settings → Language**, set **Language mapping** to the
-input JSON field that controls print language. It defaults to
-`$.billPrint.billDetails.cmElements.billLanguagePreference`. Use an absolute
-path with property names and array indices, such as `$.bills[0].language`;
-wildcards, filters, and recursive searches are not supported here.
+In **Settings → User Settings → Language**, the **Package language mapping**
+table associates each **Package Name** with a **Language Mapping (JSONPath)**.
+Use the package short name shown in Preview; names must match exactly. Add a row
+for each package whose language you want to change during preview.
 
-The **Language display mapping** table supports Add and Remove, with these defaults:
+The default package mapping is:
+
+| Package Name | Language Mapping (JSONPath) |
+| --- | --- |
+| CLP_bills | `$.billPrint.billDetails.cmElements.billLanguagePreference` |
+
+Use an absolute path with property names and array indices, such as
+`$.bills[0].language`; wildcards, filters, and recursive searches are not supported.
+Existing settings move the previous shared path into the `CLP_bills` row;
+edit the package name if that path was intended for another package.
+
+The separate **Language display mapping** table defines the available languages:
 
 | Label | Data | Short Name |
 | --- | --- | --- |
 | English | ENGLISH | EN |
 | Chinese | CHINESE | ZF |
 
-**Package → Preview…** shows a checkbox for each configured language. The
-language matching the selected input file is checked and marked with `*`.
-Select one or more languages to generate each selected render type in those
-languages. Alternate languages use temporary input copies with the mapped
-field changed to the configured **Data** value; the source file stays unchanged.
-Output filenames include only the language's **Short Name**, for example
+Both tables support Add and Remove. Package names must be unique. Language Data
+values and Short Names must also be unique; Short Names ignore case and allow
+letters, numbers, underscores, and hyphens, starting with a letter or number.
+
+**Package → Preview…** uses the current package's mapping to find the input
+language, which is checked and marked with `*`. Select one or more languages to
+generate each selected render type in those languages. Alternate languages use
+temporary input copies with the package's mapped field changed to the configured
+**Data** value; the source file stays unchanged. Output filenames include only
+the language's **Short Name**, for example
 `data-Bill-non-2026-10-24_10-30-00-ZF-a1b2c3d4.pdf`.
 
-Data values and Short Names must be unique; Short Names ignore case and allow
-letters, numbers, underscores, and hyphens, starting with a letter or number.
-If the input language is missing or unrecognized, Preview explains the issue
-and leaves all languages unchecked. Leaving them unchecked previews the input
-unchanged. Selecting a language requires the mapped field to exist and contain text.
+If no mapping exists for the package, or its mapped field is missing or does not
+contain text, Preview explains the issue and disables language selection. An
+unrecognized text value leaves languages unchecked but allows choosing a
+replacement language. Leaving all languages unchecked previews the input unchanged.
 
 The Layout Resolver displays a collapsible evidence tree with resolved values,
 condition results and iteration rows. Expand or collapse branches to inspect

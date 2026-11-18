@@ -10,14 +10,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
                               QPushButton, QVBoxLayout)
 
 from .shared_packages import segment
 
 
 def validate_smoke_settings(value):
-    for key in ('suite_path','output_dir','standard_tenancy','standard_session',
+    for key in ('suite_dir','output_dir','standard_tenancy','standard_session',
                 'comparison_source_tenancy','comparison_source_session','comparison_target_tenancy',
                 'comparison_target_session','browser_path','tools_path'):
         if not isinstance(value.get(key,''),str):
@@ -35,15 +35,47 @@ def validate_smoke_settings(value):
         raise ValueError('Smoke test Allowed Changed Pixels must be between 0 and 100 percent.')
 
 
-def smoke_plan(settings, standard, comparison, resume=False):
+def discover_smoke_suites(settings):
+    """Read names from suite JSONs, ignoring data files and malformed suites."""
+    directory=settings.get('suite_dir','').strip()
+    if not directory:
+        raise ValueError('Choose a Suite JSON Folder in Settings → User Settings → Smoke Tests.')
+    root=Path(directory).expanduser().resolve()
+    try:
+        files=sorted(root.iterdir(),key=lambda path:path.name.casefold())
+    except OSError as error:
+        raise ValueError(f'Could not read smoke suite folder: {error}') from error
+    suites=[]
+    skipped=0
+    for source in files:
+        if source.suffix.lower()!='.json' or not source.is_file():
+            continue
+        try:
+            suite=json.loads(source.read_text(encoding='utf-8-sig'))
+            if (not isinstance(suite,dict) or not isinstance(suite.get('name'),str)
+                    or not suite['name'].strip() or not isinstance(suite.get('tests'),list)
+                    or not suite['tests']):
+                skipped+=1
+                continue
+            suites.append((suite['name'].strip(),source))
+        except (OSError,ValueError):
+            skipped+=1
+    return sorted(suites,key=lambda suite:suite[0].casefold()),skipped
+
+
+def smoke_plan(settings, standard, comparison, resume=False, suite_path=None):
     """Validate inputs and build an explicit plan without invoking a remote operation."""
     validate_smoke_settings(settings)
     if not standard and not comparison:
         raise ValueError('Select a standard test, a comparison, or both.')
-    filename=settings.get('suite_path','').strip()
-    if not filename:
-        raise ValueError('Choose a Suite JSON File in Settings → User Settings → Smoke Tests.')
-    source=Path(filename).expanduser().resolve()
+    directory=settings.get('suite_dir','').strip()
+    if not directory:
+        raise ValueError('Choose a Suite JSON Folder in Settings → User Settings → Smoke Tests.')
+    if not suite_path:
+        raise ValueError('Select a smoke suite by name before running.')
+    source=Path(suite_path).expanduser().resolve()
+    if source.parent!=Path(directory).expanduser().resolve() or source.suffix.lower()!='.json':
+        raise ValueError('Select a JSON suite from the configured Suite JSON Folder.')
     try:
         suite=json.loads(source.read_text(encoding='utf-8-sig'))
     except (OSError,ValueError) as error:
@@ -105,10 +137,22 @@ class SmokeTestDialog(QDialog):
         self.resize(800,560)
         layout=QVBoxLayout(self)
         settings=workspace.comms.settings.section('smoke_tests')
-        suite=QLabel('Suite: '+(settings.get('suite_path') or 'Choose a suite in User Settings → Smoke Tests'))
+        suite=QLabel()
         self.suite_label=suite
         suite.setWordWrap(True)
         layout.addWidget(suite)
+        suite_row=QHBoxLayout()
+        suite_row.addWidget(QLabel('Suite:'))
+        self.suite_combo=QComboBox()
+        self.suite_combo.setToolTip('Select a smoke suite by the name stored in its JSON file.')
+        suite_row.addWidget(self.suite_combo,1)
+        self.refresh_button=QPushButton('Refresh')
+        self.refresh_button.clicked.connect(self.refresh_suites)
+        suite_row.addWidget(self.refresh_button)
+        layout.addLayout(suite_row)
+        self.suite_status=QLabel()
+        self.suite_status.setWordWrap(True)
+        layout.addWidget(self.suite_status)
         self.standard=QCheckBox('Standard test — '+str(settings.get('standard_session') or settings.get('standard_tenancy') or '(not configured)'))
         self.comparison=QCheckBox('Compare '+str(settings.get('comparison_source_session') or settings.get('comparison_source_tenancy'))+
                                  ' → '+str(settings.get('comparison_target_session') or settings.get('comparison_target_tenancy')))
@@ -122,7 +166,7 @@ class SmokeTestDialog(QDialog):
                                'Leave unchecked to generate all previews again in a new folder.')
         for control in (self.standard,self.comparison,self.resume):
             layout.addWidget(control)
-        hint=QLabel('Runs the packages and inputs in the saved suite. Unsaved changes in the open package are not included. Email drafts are saved without sending.')
+        hint=QLabel('Runs the packages and inputs in the selected suite. Unsaved changes in the open package are not included. Email drafts are saved without sending.')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.status=QLabel('Ready.')
@@ -152,12 +196,14 @@ class SmokeTestDialog(QDialog):
         row.addWidget(self.cancel_button)
         layout.addLayout(row)
         self.finished.connect(lambda _:self.stop() if self.running else None)
+        self.refresh_suites()
 
     def start(self):
         if self.running or self.workspace.package_busy():
             return
         try:
-            self.plan=smoke_plan(self.workspace.comms.settings.section('smoke_tests'),self.standard.isChecked(),self.comparison.isChecked(),self.resume.isChecked())
+            self.plan=smoke_plan(self.workspace.comms.settings.section('smoke_tests'),self.standard.isChecked(),self.comparison.isChecked(),self.resume.isChecked(),
+                                 suite_path=self.suite_combo.currentData())
             self.plan['output'].mkdir(parents=True,exist_ok=True)
             self.temporary=tempfile.TemporaryDirectory(prefix='atool-smoke-')
             self.suite_path=Path(self.temporary.name)/'smoke-suite.json'
@@ -174,7 +220,7 @@ class SmokeTestDialog(QDialog):
         self.running=True
         self.stopping=False
         self.queue=list(self.plan['runs'])
-        for control in (self.standard,self.comparison,self.resume,self.run_button,self.settings_button):
+        for control in (self.standard,self.comparison,self.resume,self.run_button,self.settings_button,self.suite_combo,self.refresh_button):
             control.setEnabled(False)
         self.report_button.setEnabled(False)
         self.folder_button.setEnabled(True)
@@ -182,11 +228,33 @@ class SmokeTestDialog(QDialog):
         self.workspace.update_actions()
         self.next_run()
 
+    def refresh_suites(self):
+        if self.running:
+            return
+        settings=self.workspace.comms.settings.section('smoke_tests')
+        self.suite_label.setText('Suite folder: '+(settings.get('suite_dir') or '(not configured)'))
+        selected=self.suite_combo.currentData()
+        self.suite_combo.clear()
+        try:
+            suites,skipped=discover_smoke_suites(settings)
+            for name,path in suites:
+                self.suite_combo.addItem(name,str(path))
+            index=self.suite_combo.findData(selected)
+            if index>=0:
+                self.suite_combo.setCurrentIndex(index)
+            message='' if suites else 'No named smoke suites found. Each suite needs a name and a non-empty tests list.'
+            if skipped:
+                message+=(' ' if message else '')+f'Skipped {skipped} JSON file(s) without a valid named suite.'
+        except ValueError as error:
+            message=str(error)
+        self.suite_status.setText(message)
+        self.run_button.setEnabled(self.suite_combo.count()>0)
+
     def refresh_configuration(self):
         if self.running:
             return
         settings=self.workspace.comms.settings.section('smoke_tests')
-        self.suite_label.setText('Suite: '+(settings.get('suite_path') or 'Choose a suite in User Settings → Smoke Tests'))
+        self.refresh_suites()
         self.standard.setText('Standard test — '+str(settings.get('standard_session') or settings.get('standard_tenancy') or '(not configured)'))
         self.comparison.setText('Compare '+str(settings.get('comparison_source_session') or settings.get('comparison_source_tenancy'))+
                                 ' → '+str(settings.get('comparison_target_session') or settings.get('comparison_target_tenancy')))
@@ -264,7 +332,7 @@ class SmokeTestDialog(QDialog):
             message+=' Some tests failed or need attention; review the output and reports.'
         self.status.setText(message)
         self.workspace.statusBar().showMessage(message,10000)
-        for control in (self.standard,self.comparison,self.resume,self.run_button,self.settings_button):
+        for control in (self.standard,self.comparison,self.resume,self.run_button,self.settings_button,self.suite_combo,self.refresh_button):
             control.setEnabled(True)
         self.cancel_button.setText('Close')
         self.workspace.update_actions()

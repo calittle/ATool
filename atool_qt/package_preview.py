@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QForm
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
     QScrollArea, QWidget)
 from .shared_packages import bundle_hashes, manifest, names, segment
-from .languages import language_field, validate_languages
+from .languages import language_field, package_language_mapping, validate_languages
 
 RENDER_TYPES = ('PDF', 'HTML', 'TEXT', 'CSV', 'JSON', 'METADATA')
 RENDER_EXTENSIONS = dict(zip(RENDER_TYPES, ('.pdf', '.html', '.txt', '.csv', '.json', '.json')))
@@ -148,25 +148,29 @@ class PreviewDialog(QDialog):
                 self.effective_edited = False
 
     def refresh_languages(self):
-        mapped = None
+        mapped, mapping, available = None, '', False
         try:
+            package = names(self.workspace.session.bundle['manifest'])[0]
+            mapping = package_language_mapping(self.language_settings, package)
             payload = json.loads(Path(self.input.text()).expanduser().read_text(encoding='utf-8-sig'))
-            parent, key = language_field(payload, self.language_settings.get('mapping', ''))
-            mapped = parent[key]
+            parent, key = language_field(payload, mapping)
+            mapped, available = parent[key], True
             if mapped in self.languages:
                 message = '* identifies the language in the input data. Select one or more languages.'
             else:
                 message = (f'Input language {mapped!r} has no display mapping. Select a language to replace it, '
                            'or leave all unchecked to preview the input unchanged.')
         except (OSError, ValueError) as error:
-            message = (f'{error} Select input data with a mapped language to generate alternate languages. '
-                       'Leave all unchecked to preview the input unchanged.')
+            message = f'{error} Leave all unchecked to preview the input unchanged.'
         for row in self.language_settings.get('display_mapping', []):
             check = self.languages[row['data']]
-            matches = row['data'] == mapped
+            matches = available and row['data'] == mapped
+            check.setEnabled(available)
+            check.setToolTip(f"Data: {row['data']}\nShort Name: {row['short_name']}\nMapping: {mapping}"
+                             + ('' if available else '\n' + message))
             check.setText(row['label'] + (' *' if matches else ''))
             check.setChecked(matches)
-        self.mapped_language = mapped if mapped in self.languages else None
+        self.mapped_language = mapped if available and mapped in self.languages else None
         self.language_status.setText(message)
 
     def browse(self):
@@ -265,6 +269,7 @@ class PackagePreviewActions:
             alias = str(self.comms.settings.get('pre_prod_session_alias') or '').strip()
             if pre and not alias:
                 raise ValueError('Set a Pre-Prod Session Alias in User Settings first.')
+            package = names(self.session.bundle['manifest'])[0]
             language_settings = self.comms.settings.section('language')
             language_rows = [None]
             payload = None
@@ -277,11 +282,11 @@ class PackagePreviewActions:
                 if len(language_rows) != len(requested):
                     raise ValueError('Selected languages have changed. Reopen Preview Package.')
                 payload = json.loads(source.read_text(encoding='utf-8-sig'))
-                language_field(payload, language_settings['mapping'])
+                mapping = package_language_mapping(language_settings, package)
+                language_field(payload, mapping)
             reasons = self.preview_unpublished_reasons()
             if reasons and QMessageBox.question(self, 'Preview Package', 'Local and/or Shared Changes have not been published to Comms; preview anyway?\n\n' + '\n'.join(reasons)) != QMessageBox.StandardButton.Yes:
                 return False
-            package = names(self.session.bundle['manifest'])[0]
             output = source.parent / f"{source.stem}-{segment(package)}-{'pre' if pre else 'non'}-{datetime.now():%Y-%m-%d_%H-%M-%S}"
             args = ['preview', '--package', package, '--input', str(source), '--output', str(output),
                     '--timeout', str(int(seconds) * 1000), '--effective-date', effective]
@@ -294,10 +299,10 @@ class PackagePreviewActions:
                 path = source
                 variant = payload
                 if row:
-                    parent, key = language_field(payload, language_settings['mapping'])
+                    parent, key = language_field(payload, mapping)
                     if parent[key] != row['data']:
                         variant = copy.deepcopy(payload)
-                        parent, key = language_field(variant, language_settings['mapping'])
+                        parent, key = language_field(variant, mapping)
                         parent[key] = row['data']
                 if exclude:
                     variant = exclude_charts(variant)

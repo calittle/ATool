@@ -37,7 +37,7 @@ class SmokeTests(unittest.TestCase):
         self.settings.payload['application']['confirm_on_quit']=False
         self.settings.payload['occs'].update(cli_path=str(self.root/'fake-cli'),session_alias='unrelated-default')
         self.config=self.settings.payload['smoke_tests']
-        self.config.update(suite_path=str(self.suite),output_dir=str(self.root/'output folder'),
+        self.config.update(suite_dir=str(self.suite.parent),output_dir=str(self.root/'output folder'),
                            request_timeout_seconds=73,run_timeout_minutes=5,
                            tools_path=str(self.root/'external tools'),browser_path=str(self.root/'Browser With Spaces'))
         self.settings.save()
@@ -136,11 +136,16 @@ sys.exit(1 if failed else 0)
         dialog=SettingsDialog(self.window)
         self.addCleanup(dialog.close)
         self.assertIn('Smoke Tests',[dialog.tabs.tabText(index) for index in range(dialog.tabs.count())])
+        self.assertNotIn(('smoke_tests','suite_path'),dialog.controls)
+        with patch('atool_qt.user_settings.QFileDialog.getExistingDirectory',return_value=str(self.suite.parent)) as browse:
+            dialog.browse_controls[('smoke_tests','suite_dir')].click()
+        browse.assert_called_once()
         dialog.controls[('smoke_tests','standard_session')].setText('pp')
         dialog.controls[('smoke_tests','comparison_threshold_percent')].setValue(2.5)
         dialog.controls[('smoke_tests','concurrency')].setValue(1)
         dialog.save()
         saved=UserSettings(self.settings.path).section('smoke_tests')
+        self.assertEqual(saved['suite_dir'],str(self.suite.parent))
         self.assertEqual(saved['standard_session'],'pp')
         self.assertEqual(saved['comparison_threshold_percent'],2.5)
         self.assertEqual(saved['concurrency'],1)
@@ -151,12 +156,72 @@ sys.exit(1 if failed else 0)
             with self.subTest(key=key,value=value),self.assertRaises(ValueError):
                 self.settings.validate(payload)
 
+    def test_legacy_file_setting_migrates_to_folder(self):
+        payload=copy.deepcopy(self.settings.payload)
+        payload['smoke_tests'].pop('suite_dir')
+        payload['smoke_tests']['suite_path']=str(self.suite)
+        path=self.root/'legacy-settings.json'
+        path.write_text(json.dumps(payload))
+        settings=UserSettings(path)
+        self.assertEqual(settings.section('smoke_tests')['suite_dir'],str(self.suite.parent))
+        self.assertNotIn('suite_path',settings.section('smoke_tests'))
+        settings.save()
+        self.assertEqual(UserSettings(path).section('smoke_tests')['suite_dir'],str(self.suite.parent))
+
+    def test_named_suite_selection_ignores_data_and_invalid_json(self):
+        other=self.suite.parent/'not-the-suite-name.JSON'
+        suite=json.loads(self.suite.read_text())
+        suite['name']='Another suite'
+        suite['tests'][0]['package']='Selected package'
+        other.write_text(json.dumps(suite),encoding='utf-8-sig')
+        (self.suite.parent/'broken.json').write_text('not json')
+        (self.suite.parent/'unnamed.json').write_text(json.dumps({'tests':suite['tests']}))
+        dialog=self.dialog()
+        self.assertEqual([dialog.suite_combo.itemText(i) for i in range(dialog.suite_combo.count())],
+                         ['Another suite','Smoke suite'])
+        self.assertIn('Skipped 3 JSON',dialog.suite_status.text())
+        dialog.suite_combo.setCurrentIndex(0)
+        dialog.refresh_button.click()
+        self.assertEqual(dialog.suite_combo.currentData(),str(other.resolve()))
+        dialog.start()
+        self.assertFalse(dialog.suite_combo.isEnabled())
+        self.assertFalse(dialog.refresh_button.isEnabled())
+        self.until(lambda:not dialog.running)
+        self.assertTrue(dialog.suite_combo.isEnabled())
+        for report in dialog.reports:
+            invocation=json.loads(report.with_name('invocation.json').read_text())
+            self.assertEqual(invocation['suite']['name'],'Another suite')
+            self.assertEqual(invocation['suite']['tests'][0]['package'],'Selected package')
+            self.assertEqual(invocation['suite']['tests'][0]['input'],str((self.suite.parent/'input.json').resolve()))
+
+    def test_empty_missing_and_changed_suite_folders(self):
+        empty=self.root/'empty'
+        empty.mkdir()
+        self.config['suite_dir']=str(empty)
+        dialog=self.dialog()
+        self.assertFalse(dialog.run_button.isEnabled())
+        self.assertIn('No named smoke suites',dialog.suite_status.text())
+        self.config['suite_dir']=str(self.root/'missing')
+        dialog.refresh_configuration()
+        self.assertIn('Could not read smoke suite folder',dialog.suite_status.text())
+        self.config['suite_dir']=str(self.suite.parent)
+        dialog.refresh_configuration()
+        self.assertTrue(dialog.run_button.isEnabled())
+        self.assertEqual(dialog.suite_combo.currentText(),'Smoke suite')
+        self.suite.unlink()
+        dialog.refresh_button.click()
+        self.assertFalse(dialog.run_button.isEnabled())
+        with patch.object(self.window.comms,'submit') as submit:
+            dialog.start()
+        submit.assert_not_called()
+        self.assertIn('Select a smoke suite',dialog.status.text())
+
     def test_session_overrides_and_separate_modes(self):
         self.config.update(standard_session='pp',comparison_source_session='np',comparison_target_session='pp')
-        plan=smoke_plan(self.config,True,False)
+        plan=smoke_plan(self.config,True,False,suite_path=self.suite)
         self.assertEqual(len(plan['runs']),1)
         self.assertEqual(plan['runs'][0]['args'][:2],['--session','pp'])
-        plan=smoke_plan(self.config,False,True)
+        plan=smoke_plan(self.config,False,True,suite_path=self.suite)
         self.assertEqual(len(plan['runs']),1)
         self.assertEqual(plan['runs'][0]['args'][:4],['--session','np','--compare-session','pp'])
 
@@ -168,9 +233,9 @@ sys.exit(1 if failed else 0)
                 dialog.start()
             self.assertFalse(dialog.running)
             submit.assert_not_called()
-        self.config['suite_path']=''
+        self.config['suite_dir']=''
         dialog.start()
-        self.assertIn('Suite JSON File',dialog.status.text())
+        self.assertIn('Suite JSON Folder',dialog.status.text())
 
     def test_preview_failures_keep_reports_and_continue_comparison(self):
         self.write_suite('FAIL')

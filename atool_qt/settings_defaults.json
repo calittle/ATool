@@ -16,14 +16,16 @@
     "log_backup_count": 5
   },
   "language": {
-    "mapping": "$.billPrint.billDetails.cmElements.billLanguagePreference",
+    "package_mapping": [
+      {"package": "CLP_bills", "mapping": "$.billPrint.billDetails.cmElements.billLanguagePreference"}
+    ],
     "display_mapping": [
       {"label": "English", "data": "ENGLISH", "short_name": "EN"},
       {"label": "Chinese", "data": "CHINESE", "short_name": "ZF"}
     ]
   },
   "smoke_tests": {
-    "suite_path": "",
+    "suite_dir": "",
     "output_dir": "",
     "run_standard": true,
     "run_comparison": true,

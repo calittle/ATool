@@ -40,6 +40,8 @@ class PreviewTests(unittest.TestCase):
         settings = UserSettings(self.root/'settings.json')
         settings.payload['application']['confirm_on_quit'] = False
         settings.payload['occs']['pre_prod_session_alias'] = 'pre'
+        settings.payload['language']['package_mapping'] = [
+            {'package': 'Bill', 'mapping': '$.billPrint.billDetails.cmElements.billLanguagePreference'}]
         self.window.comms.settings = settings
         bundle = self.root/'bundle'
         bundle.mkdir()
@@ -191,7 +193,7 @@ class PreviewTests(unittest.TestCase):
         self.assertFalse(any(check.isChecked() for check in dialog.languages.values()))
         self.assertIn('OTHER', dialog.language_status.text())
         self.assertTrue(self.start(languages=['CHINESE']))
-        self.window.comms.settings.payload['language']['mapping'] = '$.missing'
+        self.window.comms.settings.payload['language']['package_mapping'][0]['mapping'] = '$.missing'
         with patch.object(self.window, 'report_error') as error:
             self.assertFalse(self.start(languages=['CHINESE']))
             self.assertFalse(self.start(languages=['UNKNOWN']))
@@ -201,7 +203,7 @@ class PreviewTests(unittest.TestCase):
 
     def test_custom_mapping_value_and_short_name(self):
         self.window.comms.settings.payload['language'] = {
-            'mapping': '$.bills[0]["print language"]',
+            'package_mapping': [{'package': 'Bill', 'mapping': '$.bills[0]["print language"]'}],
             'display_mapping': [{'label': 'Chinese', 'data': 'ZF', 'short_name': 'zh_HK'}]}
         self.source.write_bytes(encode({'bills': [{'print language': 'ENGLISH', 'other': 42}]}))
         self.assertTrue(self.start(languages=['ZF']))
@@ -209,6 +211,53 @@ class PreviewTests(unittest.TestCase):
         self.assertIn('-zh_HK-', args[args.index('--output') + 1])
         self.assertEqual(json.loads(Path(args[args.index('--input') + 1]).read_text()),
                          {'bills': [{'print language': 'ZF', 'other': 42}]})
+
+    def test_each_package_detects_and_updates_its_own_mapping(self):
+        unpublished = patch.object(self.window, 'preview_unpublished_reasons', return_value=[])
+        unpublished.start()
+        self.addCleanup(unpublished.stop)
+        self.addCleanup(self.window.session.bundle['manifest']['package'].__setitem__, 'shortName', 'Bill')
+        self.window.comms.settings.payload['language']['package_mapping'] = [
+            {'package': 'Bill', 'mapping': '$.billLanguage'},
+            {'package': 'OtherPackage', 'mapping': '$.otherLanguage'}]
+        payload = {'billLanguage': 'ENGLISH', 'otherLanguage': 'CHINESE', 'keep': 42}
+        self.source.write_bytes(encode(payload))
+        original = self.source.read_bytes()
+        for package, field, selected in [('Bill', 'billLanguage', 'CHINESE'),
+                                         ('OtherPackage', 'otherLanguage', 'ENGLISH')]:
+            self.window.session.bundle['manifest']['package']['shortName'] = package
+            dialog = PreviewDialog(self.window)
+            self.addCleanup(dialog.close)
+            dialog.input.setText(str(self.source))
+            self.assertTrue(dialog.languages[payload[field]].isChecked())
+            self.assertFalse(dialog.languages[selected].isChecked())
+            self.assertTrue(self.start(languages=[selected]))
+            args = self.calls[-1]['args']
+            self.assertEqual(args[args.index('--package') + 1], package)
+            variant = json.loads(Path(args[args.index('--input') + 1]).read_text())
+            self.assertEqual(variant, dict(payload, **{field: selected}))
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_unconfigured_package_does_not_use_another_packages_mapping(self):
+        unpublished = patch.object(self.window, 'preview_unpublished_reasons', return_value=[])
+        unpublished.start()
+        self.addCleanup(unpublished.stop)
+        self.addCleanup(self.window.session.bundle['manifest']['package'].__setitem__, 'shortName', 'Bill')
+        self.language_data()
+        self.window.session.bundle['manifest']['package']['shortName'] = 'Unconfigured'
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        dialog.input.setText(str(self.source))
+        self.assertTrue(all(not check.isEnabled() and not check.isChecked()
+                            for check in dialog.languages.values()))
+        self.assertIn('Unconfigured', dialog.language_status.text())
+        with patch.object(self.window, 'report_error') as error:
+            self.assertFalse(self.start(languages=['CHINESE']))
+        self.assertIn('Unconfigured', error.call_args.args[1])
+        self.assertEqual(len(self.calls), 0)
+        self.assertTrue(self.start())
+        args = self.calls[0]['args']
+        self.assertEqual(Path(args[args.index('--input') + 1]), self.source)
 
     def test_partial_language_batch_start_failure_keeps_inputs_until_cancelled(self):
         self.language_data()

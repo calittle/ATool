@@ -17,7 +17,20 @@ def language_parts(path):
 
 
 def validate_languages(settings):
-    language_parts(settings.get('mapping', ''))
+    packages = settings.get('package_mapping', [])
+    if not isinstance(packages, list):
+        raise ValueError('Package language mappings must be a list.')
+    seen = set()
+    for row in packages:
+        if not isinstance(row, dict) or not isinstance(row.get('package'), str) or not row['package'].strip():
+            raise ValueError('Each package language mapping requires a Package Name.')
+        if row['package'] in seen:
+            raise ValueError('Package Names must be unique in language mappings.')
+        seen.add(row['package'])
+        try:
+            language_parts(row.get('mapping', ''))
+        except ValueError as error:
+            raise ValueError(f"{row['package']}: {error}") from None
     rows = settings.get('display_mapping')
     if not isinstance(rows, list) or not rows:
         raise ValueError('Add at least one language display mapping.')
@@ -36,6 +49,14 @@ def validate_languages(settings):
             raise ValueError('Language Short Names must be unique (ignoring case).')
         values.add(row['data'])
         short_names.add(short.casefold())
+
+
+def package_language_mapping(settings, package):
+    for row in settings.get('package_mapping', []):
+        if row['package'] == package:
+            return row['mapping']
+    raise ValueError(f'No language mapping is configured for package {package!r}. '
+                     'Add it in Settings → User Settings → Language.')
 
 
 def language_field(payload, mapping):
