@@ -1,5 +1,15 @@
 # ATool Release Notes
 
+## v2.5.6
+
+- Run Standard Test in the tenancy or session defined in the selected smoke
+  suite JSON instead of overriding it with a separate Standard Tenancy setting.
+  Show the selected target in the dialog and update it when switching suites.
+  Require a target in the JSON for standard runs; comparison runs continue to
+  use their configured source and target tenancies independently.
+- Remove the obsolete Standard Tenancy and Standard Session Alias settings and
+  update setup guidance to explain JSON-based standard test selection.
+
 ## v2.5.5
 
 - Configure a language JSONPath for each package short name in User Settings.
