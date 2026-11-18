@@ -17,7 +17,7 @@ from .shared_packages import segment
 
 
 def validate_smoke_settings(value):
-    for key in ('suite_dir','output_dir','standard_tenancy','standard_session',
+    for key in ('suite_dir','output_dir',
                 'comparison_source_tenancy','comparison_source_session','comparison_target_tenancy',
                 'comparison_target_session','browser_path','tools_path'):
         if not isinstance(value.get(key,''),str):
@@ -63,6 +63,19 @@ def discover_smoke_suites(settings):
     return sorted(suites,key=lambda suite:suite[0].casefold()),skipped
 
 
+def suite_standard_target(suite):
+    """Match the CLI's suite session precedence, without using global defaults."""
+    for key,option in (('session','--session'),('tenancy','--tenancy'),('environment','--tenancy')):
+        value=suite.get(key)
+        if value is None or value=='':
+            continue
+        if not isinstance(value,str):
+            raise ValueError(f'The smoke suite {key} must be text.')
+        if value.strip():
+            return value.strip(),[option,value.strip()]
+    raise ValueError('Define a tenancy or session in the suite JSON for the standard test.')
+
+
 def smoke_plan(settings, standard, comparison, resume=False, suite_path=None):
     """Validate inputs and build an explicit plan without invoking a remote operation."""
     validate_smoke_settings(settings)
@@ -90,9 +103,10 @@ def smoke_plan(settings, standard, comparison, resume=False, suite_path=None):
         if not path.is_file():
             raise ValueError(f'Smoke test {index} input file does not exist: {path}')
         test['input']=str(path)
-    # The CLI lets suite session aliases take precedence over --tenancy. Use a
-    # private snapshot so the configured environments govern every run, and a
-    # suite's comparison settings cannot turn the standard test into a comparison.
+    standard_target=suite_standard_target(suite) if standard else None
+    # Pass each run's chosen target explicitly. Suite session aliases otherwise
+    # override comparison settings, and suite compare fields can enable comparison
+    # during a standard run. Never modify the original JSON.
     for key in ('session','tenancy','environment','compareSession','compareTenancy'):
         suite.pop(key,None)
     suite.setdefault('name',source.stem)
@@ -106,7 +120,7 @@ def smoke_plan(settings, standard, comparison, resume=False, suite_path=None):
         return alias or tenancy,[option,alias or tenancy]
     runs=[]
     if standard:
-        label,args=target('standard')
+        label,args=standard_target
         runs.append(dict(label='Standard: '+label,args=args,output=output/('smoke-output-'+segment(label))))
     if comparison:
         left,args=target('comparison_source')
@@ -153,13 +167,14 @@ class SmokeTestDialog(QDialog):
         self.suite_status=QLabel()
         self.suite_status.setWordWrap(True)
         layout.addWidget(self.suite_status)
-        self.standard=QCheckBox('Standard test — '+str(settings.get('standard_session') or settings.get('standard_tenancy') or '(not configured)'))
+        self.standard=QCheckBox('Standard test — tenancy from suite JSON')
+        self.suite_combo.currentIndexChanged.connect(self.refresh_standard_target)
         self.comparison=QCheckBox('Compare '+str(settings.get('comparison_source_session') or settings.get('comparison_source_tenancy'))+
                                  ' → '+str(settings.get('comparison_target_session') or settings.get('comparison_target_tenancy')))
         self.standard.setChecked(settings.get('run_standard',True))
         self.comparison.setChecked(settings.get('run_comparison',True))
         self.resume=QCheckBox('Resume the most recent matching run (retry missing outputs)')
-        self.standard.setToolTip('Generate the suite previews in the configured standard environment. This does not compare environments.')
+        self.standard.setToolTip('Generate the suite previews in the tenancy or session defined in the selected suite JSON. This does not compare environments.')
         self.comparison.setToolTip('Generate the same suite previews in both configured comparison environments and compare their appearance.')
         self.resume.setToolTip('Reuse the most recent matching timestamped output folder for each selected run. '
                                'Keep existing successful outputs and retry missing or failed previews. '
@@ -249,13 +264,24 @@ class SmokeTestDialog(QDialog):
             message=str(error)
         self.suite_status.setText(message)
         self.run_button.setEnabled(self.suite_combo.count()>0)
+        self.refresh_standard_target()
+
+    def refresh_standard_target(self):
+        source=self.suite_combo.currentData()
+        label='(select a suite)'
+        if source:
+            try:
+                suite=json.loads(Path(source).read_text(encoding='utf-8-sig'))
+                label,_=suite_standard_target(suite)
+            except (OSError,ValueError,AttributeError) as error:
+                label=str(error)
+        self.standard.setText('Standard test — '+label)
 
     def refresh_configuration(self):
         if self.running:
             return
         settings=self.workspace.comms.settings.section('smoke_tests')
         self.refresh_suites()
-        self.standard.setText('Standard test — '+str(settings.get('standard_session') or settings.get('standard_tenancy') or '(not configured)'))
         self.comparison.setText('Compare '+str(settings.get('comparison_source_session') or settings.get('comparison_source_tenancy'))+
                                 ' → '+str(settings.get('comparison_target_session') or settings.get('comparison_target_tenancy')))
         self.standard.setChecked(settings.get('run_standard',True))

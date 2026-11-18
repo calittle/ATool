@@ -45,14 +45,10 @@ SMOKE_HELP = {
     'output_dir': 'Choose a writable folder for reports, previews, comparison images, and unsent email drafts. '
                   'Leave blank to save beside the suite. New runs create timestamped subfolders.',
     'run_standard': 'Select the standard test by default in the Run Smoke Tests window. '
-                    'It generates previews in one environment. You can change this choice before each run.',
+                    'It generates previews in the tenancy or session defined in the selected suite JSON. You can change this choice before each run.',
     'run_comparison': 'Select comparison testing by default in the Run Smoke Tests window. '
                       'It renders the same inputs in the source and target environments and compares their appearance. '
                       'You can change this choice before each run.',
-    'standard_tenancy': 'Tenancy for the standard test, for example pre-prod. Requires an existing authenticated CLI session. '
-                        'Used when Standard Session Alias is blank; overrides the environment in the suite.',
-    'standard_session': 'Optional saved CLI session alias, for example pp. Use an alias you have already logged in with. '
-                        'When supplied, it overrides Standard Tenancy. Leave blank to select by tenancy.',
     'comparison_source_tenancy': 'First environment for the visual comparison, normally non-prod. '
                                  'Used when Comparison Source Session Alias is blank. Requires an authenticated saved session.',
     'comparison_source_session': 'Optional saved session alias for the first comparison environment, for example np. '
@@ -267,7 +263,6 @@ class SettingsDialog(QDialog):
         for key,title,kind in (
                 ('suite_dir','Suite JSON Folder','directory'), ('output_dir','Output Folder','directory'),
                 ('run_standard','Run Standard Test',bool), ('run_comparison','Run Comparison',bool),
-                ('standard_tenancy','Standard Tenancy',str), ('standard_session','Standard Session Alias (optional)',str),
                 ('comparison_source_tenancy','Comparison Source Tenancy',str),
                 ('comparison_source_session','Comparison Source Session Alias (optional)',str),
                 ('comparison_target_tenancy','Comparison Target Tenancy',str),
@@ -280,9 +275,11 @@ class SettingsDialog(QDialog):
             self.add_control(smoke,'smoke_tests',key,title,kind)
         smoke_help=('Choose a folder of JSON suites, then select a suite by its name in Run Smoke Tests. '
                     'Each suite needs a name and a non-empty tests list. '
-                    'The suite defines packages, input files, and PDF/HTML outputs. '
+                    'The suite defines the standard test tenancy (tenancy or environment) or session alias (session), '
+                    'packages, input files, and PDF/HTML outputs. '
                     'Input paths are relative to the suite.\n\n'
-                    'A session alias overrides its tenancy. Leave Output Folder blank to save beside the suite.\n\n'
+                    'A session alias overrides its tenancy. Comparison runs use the source and target settings below. '
+                    'Leave Output Folder blank to save beside the suite.\n\n'
                     'Tool Folders adds Poppler/ImageMagick locations to PATH; separate multiple folders with '
                     + ('semicolons.' if os.name == 'nt' else 'colons.') + '\n\n'
                     'Run tests from Package → Run Smoke Tests…. Reports and email drafts are saved; email is not sent.\n\n'

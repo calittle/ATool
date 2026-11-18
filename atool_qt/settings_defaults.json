@@ -29,8 +29,6 @@
     "output_dir": "",
     "run_standard": true,
     "run_comparison": true,
-    "standard_tenancy": "pre-prod",
-    "standard_session": "",
     "comparison_source_tenancy": "non-prod",
     "comparison_source_session": "",
     "comparison_target_tenancy": "pre-prod",

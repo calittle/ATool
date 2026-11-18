@@ -123,7 +123,7 @@ sys.exit(1 if failed else 0)
             self.assertNotIn('compareSession',call['suite'])
             self.assertEqual(call['browser'],self.config['browser_path'])
             self.assertTrue(call['path'].startswith(self.config['tools_path']+os.pathsep))
-        self.assertIn('pre-prod',calls[0]['args'])
+        self.assertEqual(calls[0]['args'][3:5],['--session','suite-session'])
         self.assertNotIn('--compare-tenancy',calls[0]['args'])
         self.assertIn('non-prod',calls[1]['args'])
         self.assertIn('--compare-tenancy',calls[1]['args'])
@@ -140,13 +140,15 @@ sys.exit(1 if failed else 0)
         with patch('atool_qt.user_settings.QFileDialog.getExistingDirectory',return_value=str(self.suite.parent)) as browse:
             dialog.browse_controls[('smoke_tests','suite_dir')].click()
         browse.assert_called_once()
-        dialog.controls[('smoke_tests','standard_session')].setText('pp')
+        self.assertNotIn(('smoke_tests','standard_session'),dialog.controls)
+        self.assertNotIn(('smoke_tests','standard_tenancy'),dialog.controls)
+        dialog.controls[('smoke_tests','comparison_source_session')].setText('np')
         dialog.controls[('smoke_tests','comparison_threshold_percent')].setValue(2.5)
         dialog.controls[('smoke_tests','concurrency')].setValue(1)
         dialog.save()
         saved=UserSettings(self.settings.path).section('smoke_tests')
         self.assertEqual(saved['suite_dir'],str(self.suite.parent))
-        self.assertEqual(saved['standard_session'],'pp')
+        self.assertEqual(saved['comparison_source_session'],'np')
         self.assertEqual(saved['comparison_threshold_percent'],2.5)
         self.assertEqual(saved['concurrency'],1)
         for key,value in (('request_timeout_seconds',0),('concurrency',3),('run_timeout_minutes',False),
@@ -172,6 +174,7 @@ sys.exit(1 if failed else 0)
         other=self.suite.parent/'not-the-suite-name.JSON'
         suite=json.loads(self.suite.read_text())
         suite['name']='Another suite'
+        suite['session']='another-session'
         suite['tests'][0]['package']='Selected package'
         other.write_text(json.dumps(suite),encoding='utf-8-sig')
         (self.suite.parent/'broken.json').write_text('not json')
@@ -180,7 +183,10 @@ sys.exit(1 if failed else 0)
         self.assertEqual([dialog.suite_combo.itemText(i) for i in range(dialog.suite_combo.count())],
                          ['Another suite','Smoke suite'])
         self.assertIn('Skipped 3 JSON',dialog.suite_status.text())
+        dialog.suite_combo.setCurrentIndex(1)
+        self.assertEqual(dialog.standard.text(),'Standard test — suite-session')
         dialog.suite_combo.setCurrentIndex(0)
+        self.assertEqual(dialog.standard.text(),'Standard test — another-session')
         dialog.refresh_button.click()
         self.assertEqual(dialog.suite_combo.currentData(),str(other.resolve()))
         dialog.start()
@@ -220,10 +226,54 @@ sys.exit(1 if failed else 0)
         self.config.update(standard_session='pp',comparison_source_session='np',comparison_target_session='pp')
         plan=smoke_plan(self.config,True,False,suite_path=self.suite)
         self.assertEqual(len(plan['runs']),1)
-        self.assertEqual(plan['runs'][0]['args'][:2],['--session','pp'])
+        self.assertEqual(plan['runs'][0]['args'][:2],['--session','suite-session'])
         plan=smoke_plan(self.config,False,True,suite_path=self.suite)
         self.assertEqual(len(plan['runs']),1)
         self.assertEqual(plan['runs'][0]['args'][:4],['--session','np','--compare-session','pp'])
+
+    def test_standard_uses_json_target_and_ignores_legacy_settings(self):
+        self.config.update(standard_tenancy='legacy-tenancy',standard_session='legacy-session')
+        for fields,expected in (
+                ({'tenancy':'json-tenancy'},['--tenancy','json-tenancy']),
+                ({'environment':'json-environment'},['--tenancy','json-environment']),
+                ({'session':'json-session','tenancy':'json-tenancy'},['--session','json-session'])):
+            with self.subTest(fields=fields):
+                suite=json.loads(self.suite.read_text())
+                for key in ('session','tenancy','environment'):
+                    suite.pop(key,None)
+                suite.update(fields,compareTenancy='ignored-comparison')
+                self.suite.write_text(json.dumps(suite))
+                before=self.suite.read_bytes()
+                plan=smoke_plan(self.config,True,True,suite_path=self.suite)
+                self.assertEqual(plan['runs'][0]['args'][:2],expected)
+                self.assertIn(expected[1],plan['runs'][0]['label'])
+                self.assertNotIn('--compare-session',plan['runs'][0]['args'])
+                self.assertNotIn('--compare-tenancy',plan['runs'][0]['args'])
+                self.assertEqual(plan['runs'][1]['args'][:4],
+                                 ['--tenancy','non-prod','--compare-tenancy','pre-prod'])
+                self.assertEqual(self.suite.read_bytes(),before)
+                dialog=self.dialog()
+                dialog.refresh_configuration()
+                self.assertEqual(dialog.standard.text(),'Standard test — '+expected[1])
+
+    def test_standard_requires_json_target_but_comparison_does_not(self):
+        suite=json.loads(self.suite.read_text())
+        suite.pop('session')
+        suite.pop('tenancy')
+        for fields in ({},{'tenancy':42},{'session':False}):
+            with self.subTest(fields=fields):
+                self.suite.write_text(json.dumps(dict(suite,**fields)))
+                with self.assertRaises(ValueError):
+                    smoke_plan(self.config,True,False,suite_path=self.suite)
+                plan=smoke_plan(self.config,False,True,suite_path=self.suite)
+                self.assertEqual(len(plan['runs']),1)
+        self.suite.write_text(json.dumps(suite))
+        dialog=self.dialog()
+        dialog.comparison.setChecked(False)
+        with patch.object(self.window.comms,'submit') as submit:
+            dialog.start()
+        submit.assert_not_called()
+        self.assertIn('Define a tenancy or session',dialog.status.text())
 
     def test_invalid_suite_and_missing_inputs_never_start_a_process(self):
         dialog=self.dialog()
