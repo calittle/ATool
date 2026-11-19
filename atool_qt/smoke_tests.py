@@ -8,7 +8,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
                               QPushButton, QVBoxLayout)
@@ -138,9 +138,14 @@ def smoke_plan(settings, standard, comparison, resume=False, suite_path=None):
 
 
 class SmokeTestDialog(QDialog):
-    def __init__(self,workspace):
+    run_finished=Signal(object)
+
+    def __init__(self,workspace,*,settings=None,locked=False):
         super().__init__(workspace)
         self.workspace=workspace
+        self.settings_override=copy.deepcopy(settings)
+        self.locked=locked
+        self.run_results=[]
         self.running=False
         self.stopping=False
         self.job=None
@@ -150,7 +155,7 @@ class SmokeTestDialog(QDialog):
         self.setWindowTitle('Run Smoke Tests')
         self.resize(800,560)
         layout=QVBoxLayout(self)
-        settings=workspace.comms.settings.section('smoke_tests')
+        settings=self.smoke_settings()
         suite=QLabel()
         self.suite_label=suite
         suite.setWordWrap(True)
@@ -212,12 +217,21 @@ class SmokeTestDialog(QDialog):
         layout.addLayout(row)
         self.finished.connect(lambda _:self.stop() if self.running else None)
         self.refresh_suites()
+        self.lock_controls()
+
+    def smoke_settings(self):
+        return self.settings_override if self.settings_override is not None else self.workspace.comms.settings.section('smoke_tests')
+
+    def lock_controls(self):
+        if self.locked:
+            for control in (self.standard,self.comparison,self.resume,self.settings_button,self.suite_combo,self.refresh_button):
+                control.setEnabled(False)
 
     def start(self):
-        if self.running or self.workspace.package_busy():
+        if self.running or self.workspace.package_busy() or (self.locked and self.run_results):
             return
         try:
-            self.plan=smoke_plan(self.workspace.comms.settings.section('smoke_tests'),self.standard.isChecked(),self.comparison.isChecked(),self.resume.isChecked(),
+            self.plan=smoke_plan(self.smoke_settings(),self.standard.isChecked(),self.comparison.isChecked(),self.resume.isChecked(),
                                  suite_path=self.suite_combo.currentData())
             self.plan['output'].mkdir(parents=True,exist_ok=True)
             self.temporary=tempfile.TemporaryDirectory(prefix='atool-smoke-')
@@ -230,6 +244,7 @@ class SmokeTestDialog(QDialog):
             self.status.setText(str(error))
             return
         self.reports=[]
+        self.run_results=[]
         self.failures=0
         self.output.clear()
         self.running=True
@@ -246,7 +261,7 @@ class SmokeTestDialog(QDialog):
     def refresh_suites(self):
         if self.running:
             return
-        settings=self.workspace.comms.settings.section('smoke_tests')
+        settings=self.smoke_settings()
         self.suite_label.setText('Suite folder: '+(settings.get('suite_dir') or '(not configured)'))
         selected=self.suite_combo.currentData()
         self.suite_combo.clear()
@@ -280,7 +295,7 @@ class SmokeTestDialog(QDialog):
     def refresh_configuration(self):
         if self.running:
             return
-        settings=self.workspace.comms.settings.section('smoke_tests')
+        settings=self.smoke_settings()
         self.refresh_suites()
         self.comparison.setText('Compare '+str(settings.get('comparison_source_session') or settings.get('comparison_source_tenancy'))+
                                 ' → '+str(settings.get('comparison_target_session') or settings.get('comparison_target_tenancy')))
@@ -308,19 +323,36 @@ class SmokeTestDialog(QDialog):
                 if candidate.name=='smoke-report.html' and candidate.is_relative_to(self.plan['output']) and candidate.is_file():
                     report=candidate
                     self.reports.append(candidate)
+        receipt=dict(label=run['label'],report=str(report) if report else None,valid=False,
+                     successful=result.successful,cancelled=result.cancelled,timed_out=result.timed_out)
         attention=not result.successful or report is None
         if report:
             try:
                 data=json.loads(report.with_name('smoke-results.json').read_text(encoding='utf-8-sig'))
                 summary=data['summary']
+                if not all(type(summary[key]) is int and summary[key]>=0 for key in ('passed','failed')) or not isinstance(data.get('results'),list) or not data['results'] or summary['passed']+summary['failed']==0:
+                    raise ValueError('Smoke results are empty or have invalid preview counts.')
+                rows=data['results']
+                if (len(rows)!=len(self.plan['suite']['tests']) or
+                        any(not isinstance(row,dict) or row.get('status') not in ('Pass','Fail') for row in rows) or
+                        summary['passed']!=sum(row['status']=='Pass' for row in rows) or
+                        summary['failed']!=sum(row['status']=='Fail' for row in rows)):
+                    raise ValueError('Smoke results do not cover every suite test consistently.')
+                comparing=any(option in run['args'] for option in ('--compare-session','--compare-tenancy'))
+                if comparing and any(not isinstance(row.get('comparison'),dict) or row['comparison'].get('status') not in ('Pass','Fail') or
+                                     not isinstance(row.get('compare'),dict) or row['compare'].get('status') not in ('Pass','Review','N/A') for row in rows):
+                    raise ValueError('Smoke results do not include every target preview and comparison.')
+                target_failed=sum(row.get('comparison',{}).get('status')=='Fail' for row in rows)
                 reviews=sum(1 for row in data.get('results',[]) if
                             (isinstance(row.get('comparison'),dict) and row['comparison'].get('status')!='Pass') or
                             (isinstance(row.get('compare'),dict) and row['compare'].get('status')!='Pass'))
-                self.output.appendPlainText(f"{run['label']}: {summary['passed']} previews passed, {summary['failed']} failed; {reviews} comparisons need attention.")
-                attention=attention or bool(summary['failed'] or reviews)
+                receipt.update(valid=True,passed=summary['passed'],failed=summary['failed']+target_failed,reviews=reviews)
+                self.output.appendPlainText(f"{run['label']}: {summary['passed']} previews passed, {summary['failed']+target_failed} failed; {reviews} comparisons need attention.")
+                attention=attention or bool(summary['failed'] or target_failed or reviews)
             except (OSError,ValueError,KeyError,TypeError,AttributeError) as error:
                 attention=True
                 self.output.appendPlainText('Could not read smoke results: '+str(error))
+        self.run_results.append(receipt)
         self.failures+=int(attention)
         if not result.successful:
             self.output.appendPlainText(result.message)
@@ -361,7 +393,11 @@ class SmokeTestDialog(QDialog):
         for control in (self.standard,self.comparison,self.resume,self.run_button,self.settings_button,self.suite_combo,self.refresh_button):
             control.setEnabled(True)
         self.cancel_button.setText('Close')
+        self.lock_controls()
+        if self.locked:
+            self.run_button.setEnabled(False)
         self.workspace.update_actions()
+        self.run_finished.emit(dict(stopped=self.stopping,runs=copy.deepcopy(self.run_results)))
 
     def open_reports(self):
         for path in self.reports:

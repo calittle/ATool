@@ -30,12 +30,13 @@ from .package_publish import PackagePublishActions
 from .package_preview import PackagePreviewActions
 from .package_email import PackageEmailActions
 from .smoke_tests import SmokeTestActions
+from .guided_migration import GuidedMigrationActions
 from .manager_controls import ManagerControlActions
 
 
 from .status import WorkspaceStatus
 
-class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentActions, ClauseUsageActions, DataMenuActions, SettingsActions, ConfigurationActions, OperationActions, SharedFolderActions, ResourceModelActions, SharedPackageActions, PackageDownloadActions, PackagePublishActions, PackagePreviewActions, PackageEmailActions, SmokeTestActions, ManagerControlActions):
+class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentActions, ClauseUsageActions, DataMenuActions, SettingsActions, ConfigurationActions, OperationActions, SharedFolderActions, ResourceModelActions, SharedPackageActions, PackageDownloadActions, PackagePublishActions, PackagePreviewActions, PackageEmailActions, SmokeTestActions, GuidedMigrationActions, ManagerControlActions):
     def install_authoring(self):
         self.editor = None
         self.refreshing = False
@@ -148,6 +149,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         self.install_email_actions()
         self.install_jsonpath_audit()
         self.install_smoke_actions()
+        self.install_migration_actions()
         self.install_manager_controls()
         self.restore_original_shortcuts()
         self.restore_original_package_menu()
@@ -170,7 +172,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
             self.package_menu.removeAction(action)
         for title in ('Preview...', 'Send Email...', 'Cancel All Previews', None,
                       'Open Shared Package...', 'Close Package', None, 'Get Packages from Comms...', None,
-                      'Audit JSONPaths...', 'Update Shared Package', 'Copy To...', 'Publish Package to Comms...', 'Run Smoke Tests...', 'Check Shared Folder Sync...', None,
+                      'Audit JSONPaths...', 'Update Shared Package', 'Copy To...', 'Publish Package to Comms...', 'Run Smoke Tests...', 'Guided Migration...', 'Check Shared Folder Sync...', None,
                       'Release Shared Package Lock', 'Manual Shared Package Unlock...', None, 'Advanced'):
             if title is None:
                 self.package_menu.addSeparator()
@@ -221,6 +223,7 @@ class AuthoringActions(JSONPathAuditActions, WorkspaceStatus, PackageDocumentAct
         self.update_preview_actions()
         self.update_email_actions()
         self.update_smoke_actions()
+        self.update_migration_actions()
         self.update_manager_controls()
         for panel in (self.documents,self.fields,self.layouts,self.clauses,self.data):
             panel.setEnabled(not self.package_busy())

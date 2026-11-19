@@ -191,6 +191,24 @@ class PublishTests(unittest.TestCase):
         assert_triggers(result['published_dir'])
         self.assertEqual([],self.errors)
 
+    def test_guided_copy_preserves_session_and_config_scope_and_reports_verified_target(self):
+        target=self.copied_target()
+        copied,receipts=[],[]
+        options=dict(source_alias='guided-np',config_ids=['11'],on_success=receipts.append)
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.StandardButton.Yes),patch.object(self.window,'require_shared_sync',return_value=True):
+            self.assertTrue(self.window.copy_package_to(target,self.window.session,publish_options=options,on_copied=copied.append))
+        self.assertEqual(copied[0]['package_dir'],target['package_dir'])
+        self.assertEqual('guided-np',self.calls[0]['args'][2])
+        self.complete(0,{'configs':[{'id':'11','shortName':'Selected','status':'Open'},
+                                  {'id':'99','shortName':'Outside migration','status':'Open'}]})
+        self.assertEqual(self.window.publish_config_dialog.config.count(),1)
+        with self.assertRaisesRegex(ValueError,'selected for this guided migration'):
+            self.window.publish_args('99',False)
+        self.window.publish_config_dialog.submit()
+        self.complete(1,{'changes':{'assemblyTemplate':False}})
+        self.assertEqual(receipts,[dict(package='Target',version='3',config_id='11',source='guided-np',no_changes=True)])
+        self.assertIsNone(self.window.publish_context)
+
     def test_target_publish_cancel_no_changes_and_failure_release_lock(self):
         from atool_qt.shared_packages import bundle_hashes
         target=self.copied_target()

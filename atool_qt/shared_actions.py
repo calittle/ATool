@@ -16,9 +16,10 @@ from .shared_packages import SharedPackages, bundle_paths, manifest, names
 
 
 class SharedPicker(QDialog):
-    def __init__(self, workspace, unlock=False, copy_to=False):
+    def __init__(self, workspace, unlock=False, copy_to=False, *, publish_options=None, on_copied=None):
         super().__init__(workspace)
         self.workspace, self.unlock = workspace, unlock
+        self.publish_options,self.on_copied=publish_options,on_copied
         self.copy_to, self.source_session = copy_to, workspace.session
         self.setWindowTitle('Copy Package To' if copy_to else 'Manual Shared Package Unlock' if unlock else 'Open Shared Package')
         self.resize(960, 560)
@@ -180,8 +181,13 @@ class SharedPicker(QDialog):
         if not item or item.isHidden() or not item.flags() & Qt.ItemFlag.ItemIsEnabled:
             return
         entry=item.data(0,Qt.ItemDataRole.UserRole)
-        success=(self.workspace.copy_package_to(entry, self.source_session) if self.copy_to else
-                 self.workspace.unlock_shared_entry(entry) if self.unlock else self.workspace.open_shared_entry(entry,mode))
+        if self.copy_to:
+            options={}
+            if self.publish_options is not None or self.on_copied:
+                options=dict(publish_options=self.publish_options,on_copied=self.on_copied)
+            success=self.workspace.copy_package_to(entry,self.source_session,**options)
+        else:
+            success=self.workspace.unlock_shared_entry(entry) if self.unlock else self.workspace.open_shared_entry(entry,mode)
         if success:
             self.accept()
         else:
@@ -341,7 +347,7 @@ class SharedPackageActions:
         self.copy_picker=SharedPicker(self, copy_to=True)
         self.copy_picker.show()
 
-    def copy_package_to(self, entry, source_session):
+    def copy_package_to(self, entry, source_session, *, publish_options=None, on_copied=None):
         if self.package_busy() or self.session is not source_session:
             self.report_error('Copy Package', 'The source package changed. Reopen Copy To before continuing.')
             return False
@@ -364,11 +370,13 @@ class SharedPackageActions:
             store.copy_to(self.current_bundle_dir(), fresh['package_dir'],
                           check_length_paths=self.comms.settings.get('check_jsonpath_length', False) is True)
             self.statusBar().showMessage('Copied '+source+' to '+target+' in shared storage.', 10000)
+            if on_copied:
+                on_copied(fresh)
             if QMessageBox.question(self, 'Publish Copied Package',
                     f'{target} was copied successfully.\n\nPublish this target to Comms now? You will select a configuration and review the dry run before publishing.',
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
-                self.publish_package(target_entry=fresh)
+                self.publish_package(target_entry=fresh,**(publish_options or {}))
             return True
         except (OSError, ValueError) as error:
             self.report_error('Copy Package', str(error))

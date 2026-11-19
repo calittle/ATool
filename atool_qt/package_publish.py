@@ -73,7 +73,7 @@ class PackagePublishActions:
         if hasattr(self,'publish_action'):
             self.publish_action.setEnabled(self.shared_mode=='edit' and bool(self.current_bundle_dir()) and not self.package_busy())
 
-    def publish_package(self, *, target_entry=None):
+    def publish_package(self, *, target_entry=None, source_alias=None, config_ids=None, on_success=None):
         detached=target_entry is not None
         if self.package_busy() or (not detached and (not self.current_bundle_dir() or self.shared_mode!='edit' or not self.shared_package_dir)):
             self.report_error('Publish Package to Comms','Open a shared package for edit before publishing to Comms.')
@@ -114,7 +114,8 @@ class PackagePublishActions:
             self.publish_context=dict(temporary=temporary,stage=stage,root=root,shared_dir=shared_dir,
                 detached=detached,target_lock=target_lock,active_root=self.current_bundle_dir(),
                 source_paths=source_paths,original_manifest=original_manifest,source_hashes=hashes,stage_hashes=bundle_hashes(stage),session=self.session,started=False,retried_configs=set(),
-                source_alias=str(self.comms.settings.get('config_source_session_alias') or 'np'))
+                source_alias=str(source_alias or self.comms.settings.get('config_source_session_alias') or 'np'),
+                on_success=on_success,allowed_config_ids=None if config_ids is None else set(config_ids))
             self.update_actions()
             alias=self.publish_context['source_alias']
             def listed(result):
@@ -123,6 +124,8 @@ class PackagePublishActions:
                 except re.error as error:
                     self.publish_failed(str(error),'','configs')
                     return
+                if config_ids is not None:
+                    configs=[config for config in configs if config['id'] in config_ids]
                 if not configs:
                     self.publish_failed('No valid open configurations are available. Check the Configuration Filter.','','configs')
                     return
@@ -192,6 +195,8 @@ class PackagePublishActions:
 
     def publish_args(self,config,dry_run):
         context=self.verify_publish_snapshot()
+        if context.get('allowed_config_ids') is not None and str(config) not in context['allowed_config_ids']:
+            raise ValueError('Choose a Config selected for this guided migration before publishing.')
         args=['package','--session',context['source_alias'],'save',str(context['stage']),'--config-id',str(config)]
         if dry_run:
             args+=['--dry-run']
@@ -206,9 +211,12 @@ class PackagePublishActions:
         def reviewed(result):
             self.verify_publish_snapshot()
             changes=result.value.get('changes')
+            if self.publish_context.get('on_success') and (not isinstance(changes,dict) or not changes or any(type(value) is not bool for value in changes.values())):
+                raise ValueError('The publish dry run did not return verified change flags. Retry before continuing the migration.')
             changed=[str(key) for key,value in changes.items() if value] if isinstance(changes,dict) else []
             if not changed:
                 self.statusBar().showMessage('Comms dry run complete: no changes.',5000)
+                self.notify_publish_success(config,no_changes=True)
                 self.finish_publish()
                 return
             summary=self.publish_summary(result.value)
@@ -219,6 +227,8 @@ class PackagePublishActions:
         self.publish_operation('Comms Publish Dry Run',args,reviewed,on_failure=lambda message:self.publish_failed(message,config,'dry-run'))
 
     def publish_commit(self,config):
+        if self.publish_context:
+            self.publish_context['config_id']=str(config)
         try:
             args=self.publish_args(config,False)
         except (OSError,ValueError) as error:
@@ -297,6 +307,8 @@ class PackagePublishActions:
                 message+='\n\nShared storage warning:\n'+warning
             self.statusBar().showMessage('Package published to Comms.'+(' Shared storage needs attention.' if warning else ''),7000)
             self.log(message)
+            if not warning:
+                self.notify_publish_success(context.get('config_id',''))
             if warning:
                 self.publish_result_dialog=QMessageBox(QMessageBox.Icon.Warning,'Comms Publish Result',message,QMessageBox.StandardButton.Ok,self)
                 self.publish_result_dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -313,6 +325,13 @@ class PackagePublishActions:
         finally:
             self.finish_publish()
 
+    def notify_publish_success(self,config,*,no_changes=False):
+        context=self.publish_context
+        if context and context.get('on_success'):
+            package,version=names(manifest(context['root']))
+            context['on_success'](dict(package=package,version=version,config_id=str(config),
+                                       source=context['source_alias'],no_changes=no_changes))
+
     def preserve_publish_snapshot(self,context):
         recovery=context['root'].parent/(context['root'].name+'-published-recovery-'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
         shutil.copytree(context['stage'],recovery)
@@ -322,6 +341,10 @@ class PackagePublishActions:
         context=self.publish_context
         match=re.search(r'SFD0375\s*-\s*Item is locked for editing under ConfigId\s+([^\s\'".,;]+)',message)
         locked=match.group(1).strip() if match else ''
+        if context and locked and context.get('allowed_config_ids') is not None and locked not in context['allowed_config_ids']:
+            self.finish_publish()
+            self.report_error('Publish Package to Comms','The package is locked under Config '+locked+', which is outside this guided migration. Resolve the lock before continuing.')
+            return
         if context and locked and stage in ('dry-run','publish') and locked.casefold()!=str(config).casefold() and locked.casefold() not in context['retried_configs']:
             if QMessageBox.question(self,'Package Locked',f'Package is locked under Config {locked}. Resolve that Config and retry with a new dry run?',QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
                 context['retried_configs'].add(locked.casefold())

@@ -765,6 +765,41 @@ sudo dnf install python3-tkinter
    - macOS: `Cmd+M`
    - Windows/Linux: `Alt+M`
 
+### Guided Migration
+
+Open **Package → Guided Migration…** to follow the migration SOP in ATool.
+Choose a test suite, source/target session aliases (normally `np` → `pp`), and
+load and select the complete Config batch. Verify that the suite JSON's Standard
+Test target is non-prod. The optional package sync defaults to `CLP_bills` →
+`print_bulk`; select the latest appropriate target version when copying.
+
+The guide runs a standard smoke test first and requires all previews to pass.
+It then opens the existing copy/publish dialogs, restricting publish Configs to
+the selected batch, or lets you confirm that no package sync is needed. A verified
+publish (or a dry run confirming no changes) is recorded before continuing.
+Config closure and migration retain explicit confirmation and shared lockout
+checks. The migration dry run must show exactly the selected Config batch:
+the OCCS movement API moves **all eligible Configs**, and `--config-id` only
+verifies membership. Keep other migration activity paused during review and
+initiation, since eligibility can change between those requests.
+
+The CLI reports migration initiation rather than waiting for completion.
+Verify successful completion in Comms and enter a verification note before the
+guide runs the post-migration comparison. You can also record an externally
+completed migration, for example when the source uses SSO and cannot use CLI
+migration. Failed previews in either environment block handoff. Inspect the
+comparison report and explicitly accept visual differences, with an explanation
+when review is required. Open `smoke-email.eml`, review it, and send it manually
+to the SOP recipients shown in the guide. Email is never sent automatically.
+
+Progress, Config IDs, operation receipts, reports, and snapshots of the suite and
+its input files are stored under `migrations` in **Local Package Folder**.
+Use **New / Resume…** to reopen a saved migration. Both smoke runs use the saved
+suite and inputs; changes to the original suite or input files do not change an
+existing migration record. An interrupted migration with no completion receipt
+requires an explicit outcome check before retrying. Fix rejected differences in
+non-prod under a new Config and start a new migration record.
+
 ### Package Access And Publishing
 
 Use **Package → Copy To…** to copy the open package's AT JSON and document
