@@ -3,9 +3,13 @@
 - When the user says to check with them first or tell them a tag before pushing,
   present the proposed action or exact tag and wait for their explicit confirmation
   before proceeding. A progress announcement does not satisfy this requirement.
-- Work directly on `main` for all changes to this repository.
-- Do not create or switch to a feature branch or a separate worktree for this repository.
-- Keep any requested commits on `main`; do not use a pull request as the normal path for changes.
+- In the repository owner's checkout, work directly on `main`; do not create or
+  switch to a feature branch or a separate worktree. Keep requested commits on
+  `main`; do not use a pull request as the normal path for the owner's changes.
+- External contributors must work on a branch in their own fork and submit a
+  pull request targeting this repository's `main`. See CONTRIBUTING.md.
+- Changes from contributors require review and approval by `@calittle`.
+  Release tags and release builds are managed by the repository owner only.
 
 # Release notes and tagging
 
