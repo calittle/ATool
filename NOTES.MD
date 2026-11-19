@@ -1,5 +1,42 @@
 # ATool Release Notes
 
+## v2.6.0
+
+- Add Package → Guided Migration… to run the migration SOP as a saved,
+  resumable process: test non-prod, optionally copy and publish a package,
+  close the selected Configs, review the eligible batch, migrate, and compare
+  the source and target. Require successful previews before continuing and
+  explicit acceptance of visual differences before the email handoff.
+- Keep snapshots of the suite and input files so pre- and post-migration tests
+  use the same inputs. Select a Migration Records Folder in User Settings or
+  override it for a new migration; save records, reports, snapshots, and smoke
+  outputs together. Resume existing records from their original folder or
+  open a saved migration.json directly.
+- Refresh both migration sessions before checking eligibility. Block movement
+  when the eligible Config batch differs from the selection, retain shared
+  Config lockout checks, and never automatically replay a migration after an
+  authentication failure. Require verification in Comms before comparison
+  testing; if Configs are already migrated or an earlier outcome is uncertain,
+  record per-Config target verification and continue without migrating again.
+- Generate migration-report.md from the saved JSON, with Configs, test evidence,
+  publishing, verification notes, comparison acceptance, handoff, and action
+  history. Record the operator name and local login on new actions, preserve
+  attribution when another user resumes, and allow explicit operator annotation
+  on older records. Open the report from the guide or export it with
+  tools/migration_report.py.
+- Count failed comparison-target previews as failures, even when the CLI exits
+  successfully, so a failed pre-prod render cannot pass the migration checks.
+- Add Model → Generate Technical Design… with editable profiles for business
+  cases, baselines, variants, and document comparisons. Generate Markdown and
+  optional DOCX/PDF from sample inputs and the Comms resource cache, using
+  fresh or saved metadata. The standalone application includes DOCX generation;
+  PDF output requires LibreOffice.
+- Add Unlock Package… to the shared-package browser's context menu for locked
+  entries, using the existing unlock checks and refreshing the list afterward.
+- Resolve conflicting Data Manager and package shortcuts. Cmd/Ctrl+S, Save As,
+  Undo, and Redo now use the focused data tree's enabled action rather than
+  producing an ambiguous-shortcut warning and losing the keystroke.
+
 ## v2.5.6
 
 - Run Standard Test in the tenancy or session defined in the selected smoke
