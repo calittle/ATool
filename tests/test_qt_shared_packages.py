@@ -399,6 +399,45 @@ class SharedPackageInterfaceTests(unittest.TestCase):
         self.addCleanup(window.close)
         return window
 
+    def test_open_picker_context_unlock_confirms_and_refreshes_foreign_lock(self):
+        from PySide6.QtWidgets import QMessageBox
+        from atool_qt.shared_actions import SharedPicker
+        store=self.window.shared_store()
+        other=SharedPackages(store.shared_dir,self.root/'other',dict(user='other',host='other-host'))
+        other.acquire(self.entry)
+        picker=SharedPicker(self.window)
+        self.addCleanup(picker.close)
+        picker.show()
+        self.app.processEvents()
+        for answer in (QMessageBox.StandardButton.No,QMessageBox.StandardButton.Yes):
+            item=picker.tree.topLevelItem(0)
+            menu=self.window.context_menus.tree_menu(picker.tree,item)
+            self.addCleanup(menu.deleteLater)
+            unlock=next(action for action in menu.actions() if action.text()=='Unlock Package…')
+            self.assertTrue(unlock.isEnabled())
+            self.assertTrue(any(action.text()=='Open for Edit' for action in menu.actions()))
+            with patch.object(QMessageBox,'question',return_value=answer) as confirm, \
+                 patch.object(self.window,'require_shared_sync',return_value=True):
+                unlock.trigger()
+            confirm.assert_called_once()
+            self.assertTrue(picker.isVisible())
+            self.assertEqual(bool(store.entry(self.entry['package_dir'])['lock']),answer==QMessageBox.StandardButton.No)
+        self.assertEqual(picker.tree.topLevelItem(0).text(4),'Available')
+
+    def test_open_picker_context_unlock_is_disabled_for_available_package(self):
+        from atool_qt.shared_actions import SharedPicker
+        picker=SharedPicker(self.window)
+        self.addCleanup(picker.close)
+        picker.show()
+        self.app.processEvents()
+        menu=self.window.context_menus.tree_menu(picker.tree,picker.tree.topLevelItem(0))
+        self.addCleanup(menu.deleteLater)
+        action=next(action for action in menu.actions() if action.text()=='Unlock Package…')
+        self.assertFalse(action.isEnabled())
+        with patch.object(self.window,'unlock_shared_entry') as unlock:
+            action.trigger()
+        unlock.assert_not_called()
+
     def test_copy_picker_and_copy_keep_source_open_and_block_locked_targets(self):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QMessageBox

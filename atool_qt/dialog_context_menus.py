@@ -84,6 +84,9 @@ def populate_dialog_tree(menu, tree, item):
             else:
                 for title in ('Open…', 'Open for Edit', 'Open Testing Copy'):
                     button_command(menu, dialog, title)
+                if not dialog.copy_to:
+                    command(menu, 'Unlock Package…', lambda: dialog.unlock_entry(value),
+                            isinstance(value, dict) and bool(value.get('lock')))
             identifiers(menu, value, [('package_name', 'Package Name'), ('version_name', 'Version'), ('package_dir', 'Folder Path')])
             if isinstance(value, dict):
                 copy_action(menu, 'Copy Lock Details', value.get('lock') or {})

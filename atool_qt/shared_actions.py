@@ -82,6 +82,10 @@ class SharedPicker(QDialog):
         self.workspace.list_comms_packages()
         self.accept()
 
+    def unlock_entry(self, entry):
+        self.workspace.unlock_shared_entry(entry)
+        self.refresh()
+
     def refresh(self):
         previous=self.tree.currentItem()
         previous_dir=previous.data(0,Qt.ItemDataRole.UserRole)['package_dir'] if previous else None
