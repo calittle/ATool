@@ -6,6 +6,130 @@ This guide is written for the person maintaining the TD—not for someone mainta
 
 ## Before you begin
 
+### Using the ATool application
+
+Open **Model → Generate Technical Design…**. You can create and maintain the
+documentation plan without editing JSON:
+
+1. Click **New**, or **Open…** to load an existing profile.
+2. On **Documentation plan**, enter the family name and description, package,
+   effective date and optional exact AT version. New plans start with the open
+   package and its version when available; check these before generating.
+3. Add one baseline row per **business case** (for example CO1 Domestic or CO3
+   Staff). In **Comms documents**, enter the actual rendered template names,
+   separated by commas, such as `RT_BILL, Backpage`. Multiple cases can map to
+   the same documents. Add variants beneath their own baseline. Double-click
+   cells to edit; **Move up/down** sets the case order and first-use document order.
+4. In the document table, select **Compare cases and variants** or **Document
+   only**. For comparisons, choose the **reference business case**: other case
+   baselines are compared with it, and variants with their own case baseline.
+   Document-only items need no reference case. Their structure, selection rules
+   and metadata coverage remain in the TD, and expected baseline rendering is
+   still verified. This is useful for shared inserts such as Backpage.
+5. On **Files and generation**, select the sample root folder. Back on the plan,
+   select a row and click **Choose input…** to fill in the scenario and filename.
+6. Use the Comms cache configured in ATool User Settings, or select an override.
+   Choose the output Markdown file, formats and generation options.
+7. **Save** the profile for reuse, then click **Generate**. Progress and errors
+   appear below; use **Open output folder** to find the results.
+
+The saved JSON contains the family, package/date/version, ordered baselines and
+variants, their Comms-document mappings and document reference cases. Sample and cache folders, output location, formats and run options are
+remembered on this computer for each profile. Comms connection/session settings
+come from ATool. **Save As…** creates another plan with the current local choices.
+When sharing a profile, also provide its samples; the recipient selects local
+sample/cache/output locations on first use.
+
+Older profiles containing `scenarios`, `comms.resource_cache` and `occs` still
+open. Their paths populate the controls (the app's configured cache takes
+precedence). Saving migrates those machine-specific options to local preferences;
+ATool creates a backup of the previous JSON. Unknown documentation fields are
+preserved. Unsaved plan changes prompt you to save before closing or switching.
+
+Older baseline entries using `document` migrate to a business case of the same
+name mapped to that Comms document. No mapping to redesigned templates is guessed.
+Change **Comms documents** explicitly after checking the rendered metadata.
+Each declared document must render for that case's baseline; additional returned
+documents are excluded unless explicitly mapped. Include `Backpage` in the mapping
+when it belongs in the TD.
+
+For example, shared-template profiles use this structure (input names are examples):
+
+```json
+{
+  "family": "Residential Tariff",
+  "comms": {"package": "CLP_bills", "effective_date": "2026-11-19"},
+  "document_references": {"RT_BILL": "CO1"},
+  "document_comparisons": {"RT_BILL": "compare", "Backpage": "document_only"},
+  "baselines": [
+    {"case": "CO1", "documents": ["RT_BILL", "Backpage"], "label": "Domestic",
+     "scenario": "Regular", "input": "domestic.xml",
+     "variants": [{"scenario": "Prorate", "input": "domestic-prorate.xml"}]},
+    {"case": "CO3", "documents": ["RT_BILL", "Backpage"], "label": "Staff",
+     "scenario": "Regular", "input": "staff.xml", "variants": []}
+  ]
+}
+```
+
+The TD describes each Comms document once. Scope lists all business cases and
+inputs. Comparisons inspect document metadata recursively, alongside condition
+results, including nested layouts, contents and fields. They separate:
+
+- **Structural / conditional** changes: added/removed/reordered elements, style
+  or markup changes, selected conditional includes, and changed trigger clauses.
+- **Data-only** changes: changed values inside the same `comms-data` definition
+  and matching surrounding markup/text, summarized as a count. Explicit field
+  value differences are summarized too; customer values are not copied.
+- **Unclassified rendered content**: text outside mapped fields or ambiguous
+  markup changes that cannot safely be called data-only. These remain visible
+  for review.
+
+Up to 20 changed paths per detailed category are shown, plus the remaining count.
+The full saved metadata remains available. Metadata does not establish
+pixel-for-pixel visual equality. Document-only coverage lists configured content
+options and conditions with the cases in which Comms metadata exposed them;
+unseen options are marked **Not observed in supplied metadata**, not assumed tested.
+Omitting `document_comparisons` preserves the previous comparison behavior.
+
+The standalone application includes Python, the DOCX renderer, Node and OCCS CLI.
+Use ATool's existing Comms login/settings for fresh metadata. PDF still requires
+LibreOffice. Keep profiles, samples, downloaded resources and output in ordinary
+user folders outside the application bundle. Relative scenario paths resolve
+beside the profile, or one level above it for existing `profiles/` + `samples/`
+distributions. Relative cache paths in the dialog resolve beside the profile.
+
+Choose **Reuse metadata beside the output file** to work with existing evidence.
+XML conversion defaults to reusing JSON; **Use existing JSON only** prevents
+conversion. Refresh conversions explicitly after changing XML. Content indexes
+are rebuilt by default so refreshed resources are reflected in the report.
+Leave the dialog open until generation completes.
+
+To maintain an existing TD, open its profile, update the baseline/variant table
+or package date/version, refresh the Comms cache as needed, and generate again.
+Paths and run choices are restored when you reopen that profile.
+The dialog automatically reopens the last profile you opened or saved, including
+its local paths and run choices. **New** still starts a blank plan. If the last
+profile has moved, been deleted or cannot be read, the dialog opens a blank plan
+and explains the problem; use **Open…** to locate its replacement.
+
+### Running the command-line tool
+
+Profiles saved by the app omit local paths. Supply them on the command line:
+
+```bash
+python3 td_generator.py generate \
+  --profile /path/to/profile.json \
+  --samples-root /path/to/samples \
+  --resource-cache /path/to/comms-cache \
+  --source cached \
+  --out /path/to/generated/design.md
+```
+
+The path options also override legacy profile paths. Existing command-line
+profiles with `scenarios` and `comms.resource_cache` continue to work. Relative
+scenario paths are checked beside the profile, then one level above for the
+older `profiles/` + `samples/` structure; relative cache paths are profile-relative.
+
 You need:
 
 - A local copy of the ATool repository, including this `tools/td_generator` folder.
@@ -52,7 +176,9 @@ samples/example/
     └── example-final.xml
 ```
 
-Choose one input as the **baseline**. It should be a normal, representative bill that renders the documents you want the TD to describe. The documents returned for this one bill set the scope and order of the TD. Other samples are used to describe differences from that baseline.
+Choose one **baseline** input for each business case. It should render that case's
+expected Comms documents. Map each case to those documents explicitly and choose
+one reference case per document. Other inputs become variants of their own case.
 
 ### 3. Create or update the profile
 
@@ -85,7 +211,12 @@ Copy `profiles/example-profile.json` to a new local profile, then update the pac
 }
 ```
 
-Add one `baselines` entry for every family-member document you want in the TD, in the order it should appear. Each entry names the document Comms must render, plus the exact scenario and input that act as its baseline. Add only business-relevant `variants`; each is compared with that document's own baseline.
+The example above shows the legacy one-case/one-document format, which remains
+supported. For shared templates, use `case`, `documents` and `document_references`
+as shown in the application section. Add one baseline entry per business case,
+with the exact scenario/input and relevant variants. Each variant is compared
+with its own case baseline. Comms documents are ordered by their first appearance
+in the case mappings and described once, even when multiple cases use them.
 
 The generator verifies that every declared baseline input actually renders its declared document. It does not infer missing family members from document names or include other documents rendered by the same bill.
 
@@ -106,7 +237,7 @@ For a first run, the generator will:
 1. Find every scenario and input below `scenarios`.
 2. Convert XML inputs to reusable JSON where needed.
 3. Render the declared baseline and variant inputs as Comms metadata.
-4. Verify each declared baseline renders its expected document, then use the profile's baseline order as the TD scope.
+4. Verify each case baseline renders its mapped Comms documents, then group cases under the explicitly mapped documents.
 5. Read the cached Comms resources to explain document, layout, content, field, and style relationships.
 6. Write the Markdown TD and its supporting evidence files.
 
@@ -137,7 +268,7 @@ Omit the `--pdf` line when you only need a DOCX. PDF creation requires LibreOffi
 ## What to review in the TD
 
 - **Scope** confirms every family member document plus its baseline and variant test cases.
-- **Documents** contains only the profile's declared baseline documents, in profile order.
+- **Documents** contains each mapped Comms document once, in first-use order, with per-case comparisons and variants.
 - Each document shows trigger conditions, the resolved document → layout → content structure, fields in their content context, and scenario differences.
 - **Glossary** provides one definition per field and style, with links back to each use.
 

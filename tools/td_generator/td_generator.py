@@ -24,6 +24,8 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from atool_core.condition_evaluator import ConditionEvaluator  # noqa: E402
 from atool_core.td_evidence import ScenarioEvidence, TechnicalDesignEvidence  # noqa: E402
+from atool_core.td_profile import normalize_plan, group_document_plans
+from atool_core.td_comparison import classified_metadata_changes
 
 
 class AToolConditionEvaluator:
@@ -48,7 +50,9 @@ def discover_inputs(folder: Path) -> list[Path]:
 def discover_scenarios(scenario_root: str, profile_path: Path) -> list[dict[str, Any]]:
     root = Path(scenario_root).expanduser()
     if not root.is_absolute():
-        root = (Path(__file__).resolve().parent / root).resolve()
+        candidates = [profile_path.parent / root, profile_path.parent.parent / root,
+                      Path(__file__).resolve().parent / root]
+        root = next((path for path in candidates if path.is_dir()), candidates[0]).resolve()
     if not root.exists():
         raise ValueError(f"Scenario root does not exist: {root}")
     if not root.is_dir():
@@ -66,6 +70,9 @@ def declared_baselines(profile: dict[str, Any], scenarios: list[dict[str, Any]])
         return []
     if not isinstance(entries, list) or not entries:
         raise ValueError("Profile baselines must be a non-empty list.")
+    cases, references = normalize_plan(profile)
+    entries = [{**case, 'document': document, 'reference_case': references[document]}
+               for case in cases for document in case['documents']]
     available = {
         str(scenario["name"]): {item.name: item for item in scenario.get("inputs", [])}
         for scenario in scenarios
@@ -92,9 +99,7 @@ def declared_baselines(profile: dict[str, Any], scenarios: list[dict[str, Any]])
             if variant_input not in available.get(variant_scenario, {}):
                 raise ValueError(f"Baseline {document} variant references input {variant_scenario} / {variant_input}, which was not discovered under scenarios.")
             variants.append({"scenario": variant_scenario, "input": variant_input, "label": str(variant.get("label", "")).strip()})
-        result.append({"document": document, "scenario": scenario, "input": input_name, "label": str(raw.get("label", "")).strip(), "variants": variants})
-    if len({item["document"] for item in result}) != len(result):
-        raise ValueError("Each profile baseline must declare a different document.")
+        result.append({"case": raw['case'], "documents": raw['documents'], "reference_case": raw['reference_case'], "document": document, "scenario": scenario, "input": input_name, "label": str(raw.get("label", "")).strip(), "variants": variants})
     return result
 
 
@@ -104,7 +109,15 @@ def load_sample(sample: Path) -> object:
 
 
 def default_occs_cli() -> Path:
-    return REPOSITORY_ROOT.parent / "ccs-tools" / "OCCS-CLI" / "bin" / "occs.js"
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS) / 'runtime' / 'occs-cli' / 'bin' / 'occs.js'
+    return REPOSITORY_ROOT.parent / 'ccs-tools' / 'OCCS-CLI' / 'bin' / 'occs.js'
+
+
+def node_executable() -> str:
+    import os
+    runtime = Path(sys._MEIPASS) / 'runtime' if getattr(sys, 'frozen', False) else None
+    return str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'
 
 
 def normalise_fields(template: dict[str, Any]) -> list[dict[str, Any]]:
@@ -203,6 +216,14 @@ def rendered_documents(metadata_file: Path) -> list[str]:
     return [str(document.get("Name")) for document in documents if isinstance(document, dict) and document.get("Name")]
 
 
+def missing_metadata_message(kind, document, scenario, input_name, observations):
+    errors = list(dict.fromkeys(str(item['error']) for item in observations
+                  if item.get('error') and item.get('scenario') == scenario
+                  and Path(item.get('file', '')).name == input_name))
+    detail = '\n' + '\n'.join(errors) if errors else '\nNo matching metadata output was found. Check the evidence folder and selected metadata mode.'
+    return f'{kind} Comms METADATA was not available for {document}: {scenario} / {input_name}.{detail}'
+
+
 def preview_metadata(sample: Path, profile: dict[str, Any], destination: Path) -> list[dict[str, Any]]:
     """Run Comms METADATA for one source input and preserve only compact facts."""
     comms, occs = profile.get("comms", {}), profile.get("occs", {})
@@ -213,7 +234,7 @@ def preview_metadata(sample: Path, profile: dict[str, Any], destination: Path) -
     timeout_ms = int(occs.get("timeout_ms", 360000))
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / f"{sample.stem}.metadata.json"
-    command = ["node", str(cli), "preview", "--package", package, "--input", str(sample), "--render-type", "METADATA", "--output", str(output), "--timeout", str(timeout_ms), "--verbose"]
+    command = [node_executable(), str(cli), "preview", "--package", package, "--input", str(sample), "--render-type", "METADATA", "--output", str(output), "--timeout", str(timeout_ms), "--verbose"]
     effective_date = str(comms.get("effective_date", "")).strip()
     if effective_date:
         command.extend(["--effective-date", effective_date])
@@ -228,6 +249,8 @@ def preview_metadata(sample: Path, profile: dict[str, Any], destination: Path) -
     for item in metadata_files:
         generated_input = Path(str(item).replace(".metadata.json", ".generated-input.json"))
         results.append({"metadata": str(item), "documents": rendered_documents(item), "generated_input": str(generated_input) if generated_input.exists() else None})
+    if not results:
+        raise ValueError(f'Comms preview returned no metadata files for {sample.name} in {destination}.')
     return results
 
 
@@ -268,7 +291,7 @@ def fetch_live_bundle(comms: dict[str, Any], occs: dict[str, Any], snapshot_dir:
         raise ValueError("comms.package is required for a live configuration snapshot")
     cli = Path(str(occs.get("cli") or default_occs_cli())).expanduser()
     timeout_ms = int(occs.get("timeout_ms", 360000))
-    command = ["node", str(cli), "package"]
+    command = [node_executable(), str(cli), "package"]
     if occs.get("session"):
         command.extend(["--session", str(occs["session"])])
     command.extend(["get", package, version, "--output", str(snapshot_dir), "--force", "--timeout", str(timeout_ms), "--json"])
@@ -441,7 +464,7 @@ def convert_xml_sample(sample: Path, occs: dict[str, Any]) -> list[object]:
     timeout_ms = int(occs.get("timeout_ms", 360000))
     with tempfile.TemporaryDirectory(prefix="atool-td-convert-") as temporary_directory:
         output = Path(temporary_directory) / "converted.json"
-        command = ["node", str(cli), "convertxml", "--input", str(sample), "--output", str(output), "--timeout", str(timeout_ms)]
+        command = [node_executable(), str(cli), "convertxml", "--input", str(sample), "--output", str(output), "--timeout", str(timeout_ms)]
         if occs.get("session"):
             command.extend(["--session", str(occs["session"])])
         result = subprocess.run(command, capture_output=True, text=True, timeout=(timeout_ms / 1000) + 30)
@@ -472,7 +495,7 @@ def convert_xml_to_files(sample: Path, occs: dict[str, Any], destination: Path, 
         return [max(existing, key=lambda item: item.stat().st_mtime)]
     if mode == "never":
         raise ValueError(f"No cached JSON conversion exists for {sample.name}; run with --xml-conversion auto or always.")
-    command = ["node", str(cli), "convertxml", "--input", str(sample), "--output", str(output), "--timeout", str(timeout_ms)]
+    command = [node_executable(), str(cli), "convertxml", "--input", str(sample), "--output", str(output), "--timeout", str(timeout_ms)]
     if occs.get("session"):
         command.extend(["--session", str(occs["session"])])
     result = subprocess.run(command, capture_output=True, text=True, timeout=(timeout_ms / 1000) + 30)
@@ -976,6 +999,48 @@ def describe_condition(condition: str, clauses: list[dict[str, Any]]) -> str:
     return f"`{condition}`"
 
 
+def metadata_changes(before, after, path='document'):
+    """Compare every returned metadata property; report paths, not customer values."""
+    if type(before) is not type(after):
+        return [f'{path}: changed']
+    if isinstance(before, dict):
+        changes = []
+        for key in sorted(before.keys() | after.keys()):
+            child = f'{path} / {key}'
+            if key not in before:
+                changes.append(f'{child}: added')
+            elif key not in after:
+                changes.append(f'{child}: removed')
+            else:
+                changes.extend(metadata_changes(before[key], after[key], child))
+        return changes
+    if isinstance(before, list):
+        if all(isinstance(item, dict) and item.get('Name') for item in before + after):
+            def named(items):
+                counts, result = {}, {}
+                for item in items:
+                    name = str(item['Name'])
+                    counts[name] = counts.get(name, 0) + 1
+                    result[f'{name} [{counts[name]}]'] = item
+                return result
+            left, right = named(before), named(after)
+            changes = metadata_changes(left, right, path)
+            if list(left) != list(right) and set(left) == set(right):
+                changes.append(f'{path}: order changed')
+            return changes
+        changes = []
+        for index in range(max(len(before), len(after))):
+            child = f'{path} [{index + 1}]'
+            if index >= len(before):
+                changes.append(f'{child}: added')
+            elif index >= len(after):
+                changes.append(f'{child}: removed')
+            else:
+                changes.extend(metadata_changes(before[index], after[index], child))
+        return changes
+    return [] if before == after else [f'{path}: changed']
+
+
 def scenario_delta_lines(
     document_id: str,
     conditions: list[str],
@@ -992,8 +1057,6 @@ def scenario_delta_lines(
     baseline_atoms = {atom: evaluator._evaluator._evaluate_condition_expression(atom, baseline_payload) for atom in conditions}
     lines: list[str] = []
     for candidate in candidates:
-        if candidate["payload"] == baseline["payload"]:
-            continue
         candidate_present = document_id in candidate["rendered_documents"]
         changed_clauses = []
         for atom, baseline_value in baseline_atoms.items():
@@ -1006,18 +1069,78 @@ def scenario_delta_lines(
             continue
         label = f" — {candidate['label']}" if candidate.get("label") else ""
         heading = f"- **{candidate['scenario']}**{label}"
+        before = baseline.get('metadata_documents', {}).get(document_id)
+        after = candidate.get('metadata_documents', {}).get(document_id)
+        metadata_available = before is not None and after is not None
+        categories = classified_metadata_changes(before, after) if metadata_available else {'structural': [], 'data': [], 'unclassified': []}
+        changes = [change for group in categories.values() for change in group]
         if baseline_present and candidate_present:
-            if changed_clauses:
-                lines.append(f"{heading}: renders this document.")
+            if changes:
+                lines.append(f"{heading}: renders this document with {len(changes)} metadata differences.")
+            elif metadata_available:
+                lines.append(f"{heading}: renders the same document; no metadata differences.")
+            elif changed_clauses:
+                lines.append(f"{heading}: renders this document; condition results differ. Detailed metadata comparison unavailable.")
             else:
-                lines.append(f"{heading}: renders the same document; no detected differences.")
+                lines.append(f"{heading}: renders this document; detailed metadata comparison unavailable.")
         elif candidate_present:
             lines.append(f"{heading}: renders this document, which is not present in the baseline.")
         else:
             lines.append(f"{heading}: does not render this document.")
         if changed_clauses:
-            lines.append("  - Trigger clauses: " + "; ".join(changed_clauses[:8]) + ("; …" if len(changed_clauses) > 8 else ""))
+            lines.append("  - Structural / conditional — trigger clauses: " + "; ".join(changed_clauses[:8]) + ("; …" if len(changed_clauses) > 8 else ""))
+        if metadata_available:
+            if not categories['structural'] and not changed_clauses:
+                lines.append('  - Structural / conditional: no confirmed changes.')
+            for group, title in [('structural', 'Structural / conditional'), ('unclassified', 'Unclassified rendered content (review required)')]:
+                for change in categories[group][:20]:
+                    lines.append(f'  - {title}: {escape(change)}')
+                if len(categories[group]) > 20:
+                    lines.append(f'  - {len(categories[group]) - 20} additional {title.lower()} differences; see saved metadata.')
+            if categories['data']:
+                lines.append(f"  - Data-only: {len(categories['data'])} field-value/render differences; details omitted.")
     return lines or ["- No variants configured for this document."]
+
+
+def document_only_lines(document_id, plan, structure, content_names, blob_conditions):
+    samples = {}
+    for case in plan.get('cases', [plan]):
+        for candidate in [case['baseline'], *case['variants']]:
+            samples.setdefault(candidate['payload'], candidate)
+    observed = defaultdict(set)
+    def visit(value, label):
+        if isinstance(value, dict):
+            for content in value.get('Contents', []) if isinstance(value.get('Contents', []), list) else []:
+                if isinstance(content, dict) and content.get('Name'):
+                    observed[str(content['Name'])].add(label)
+            for child in value.values():
+                visit(child, label)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, label)
+    for case in plan.get('cases', [plan]):
+        for candidate in [case['baseline'], *case['variants']]:
+            visit(candidate.get('metadata_documents', {}).get(document_id, []),
+                  f"{case['spec'].get('case', document_id)} / {candidate['scenario']}")
+    conditions = defaultdict(list)
+    for layout in structure:
+        for content in layout.get('contents', []):
+            atoms = [text for text in (layout.get('condition'), content.get('condition')) if text]
+            if atoms:
+                conditions[content['name']].append(' AND '.join(atoms))
+    for name in content_names:
+        conditions[name].extend(blob_conditions.get(name, []))
+    present = sum(document_id in item['rendered_documents'] for item in samples.values())
+    lines = ['Document only — case and variant comparisons are disabled.', '',
+             f'Rendered in {present} of {len(samples)} selected inputs. Expected baseline presence was verified.', '',
+             '#### Selection rules and coverage', '',
+             '| Content option | Selection condition | Observed in metadata |', '|---|---|---|']
+    for name in sorted(set(content_names) | set(conditions) | set(observed), key=str.casefold):
+        rules = '; '.join(dict.fromkeys(conditions[name]))
+        coverage = '; '.join(sorted(observed[name])) or 'Not observed in supplied metadata'
+        lines.append(f'| `{escape(name)}` | ' + (f'`{escape(rules)}`' if rules else 'No selection condition found in AT/content definitions') + f' | {escape(coverage)} |')
+    lines.extend(['', 'Coverage records content names exposed by Comms metadata; absence is not proof of a visual rendering failure.'])
+    return lines
 
 
 def file_updated_at(path_text: str | None) -> str:
@@ -1058,12 +1181,26 @@ def comms_cache_pulled_at(source: dict[str, Any]) -> str:
     return "unknown"
 
 
-def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", render_evidence_mode: str = "metadata", workers: int = 3, formats: set[str] | None = None, xml_conversion: str = "auto", rebuild_resource_index: bool = False) -> None:
+def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", render_evidence_mode: str = "metadata", workers: int = 3, formats: set[str] | None = None, xml_conversion: str = "auto", rebuild_resource_index: bool = False, profile_override=None, progress=None) -> None:
+    progress = progress or (lambda message: None)
+    progress('Reading profile and Comms resources…')
     formats = formats or {"md"}
     unsupported = formats - {"md", "docx", "pdf"}
     if unsupported:
         raise ValueError(f"Unsupported output formats: {', '.join(sorted(unsupported))}")
-    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    if formats & {'docx', 'pdf'}:
+        try:
+            from tools.td_generator.render_td import export_formats
+        except ModuleNotFoundError as error:
+            if getattr(sys, 'frozen', False):
+                remedy = 'This application build is missing an export dependency; install a corrected ATool build.'
+            else:
+                remedy = f'Install the export dependencies in this Python environment:\n"{sys.executable}" -m pip install "python-docx>=1.1,<2"'
+            raise RuntimeError(f'DOCX/PDF export is unavailable (missing {error.name}). {remedy}\nYou can select Markdown only in the meantime.') from error
+    profile = profile_override if profile_override is not None else json.loads(profile_path.read_text(encoding="utf-8"))
+    cache_value = profile.get('comms', {}).get('resource_cache')
+    if cache_value and not Path(cache_value).expanduser().is_absolute():
+        profile['comms']['resource_cache'] = str((profile_path.parent / Path(cache_value).expanduser()).resolve())
     occs = profile.get("occs", {})
     if source_mode == "comms":
         template, package_associations, source = fetch_live_bundle(profile.get("comms", {}), occs, output_path.parent / "configuration-snapshot")
@@ -1103,7 +1240,8 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
             shutil.rmtree(index_dir)
     if source_mode == "cached" and not content_usage_path.exists():
         script = Path(__file__).with_name("build_content_catalog.mjs")
-        result = subprocess.run(["node", str(script), str(resource_content_root), str(content_usage_path.parent), str(profile.get("comms", {}).get("effective_date", "9999-12-31"))], capture_output=True, text=True, timeout=300)
+        progress('Indexing cached contents…')
+        result = subprocess.run([node_executable(), str(script), str(resource_content_root), str(content_usage_path.parent), str(profile.get("comms", {}).get("effective_date", "9999-12-31")), str(occs.get('cli') or default_occs_cli())], capture_output=True, text=True, timeout=300)
         if result.returncode:
             detail = (result.stderr or result.stdout).strip().replace("\n", " ")
             raise ValueError(f"Resource-cache content catalog build failed: {detail or f'exit code {result.returncode}'}")
@@ -1135,6 +1273,7 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
     # Phase 1: XML conversion is deliberately serialized. The OCCS converter
     # refreshes the saved session token, so concurrent conversions contend.
     jobs: list[tuple[str, Path, Path]] = []
+    progress('Preparing selected inputs (XML conversion runs serially)…')
     conversion_errors: list[dict[str, Any]] = []
     for scenario in scenarios:
         for input_file in scenario["inputs"]:
@@ -1146,22 +1285,31 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
                 # second conversion: it is the reviewed preview input and
                 # avoids two jobs writing the same metadata evidence name.
                 sibling_json = input_file.with_suffix(".json")
-                payloads = ([sibling_json] if input_file.suffix.lower() == ".xml" and sibling_json.is_file() else
+                payloads = ([sibling_json] if xml_conversion != 'always' and input_file.suffix.lower() == ".xml" and sibling_json.is_file() else
                             convert_xml_to_files(input_file, occs, output_path.parent / "converted-inputs" / scenario["name"], xml_conversion)
                             if input_file.suffix.lower() == ".xml" else [input_file])
                 jobs.extend((scenario["name"], input_file, payload) for payload in payloads)
             except (OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
                 conversion_errors.append({"scenario": scenario["name"], "file": input_file, "error": str(error)})
     observations.extend(conversion_errors)
+    for item in conversion_errors:
+        progress(f"Input failed: {item['scenario']} / {item['file'].name}: {item['error']}")
 
     # Phase 2: all previews use JSON, so the refreshed session can be used by
     # bounded concurrent Comms metadata requests without XML converter churn.
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        progress(f'Processing metadata for {len(jobs)} inputs…')
         futures = [executor.submit(process_input, name, source_input, payload, template, profile, output_path, render_evidence_mode) for name, source_input, payload in jobs]
-        for future in as_completed(futures):
+        for completed_count, future in enumerate(as_completed(futures), start=1):
             input_observations, input_renders = future.result()
             observations.extend(input_observations)
             render_evidence.extend(input_renders)
+            for item in input_observations:
+                if item.get('error'):
+                    progress(f"Input failed: {item['scenario']} / {item['file'].name}: {item['error']}")
+            successes = sum(bool(item.get('metadata')) and not item.get('error') for item in render_evidence)
+            failures = sum(bool(item.get('error')) for item in render_evidence)
+            progress(f'Processed {completed_count}/{len(jobs)} inputs: {successes} metadata results, {failures} failures.')
 
     observed: dict[str, dict[str, Any]] = {}
     sources: defaultdict[str, set[str]] = defaultdict(set)
@@ -1178,9 +1326,15 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
     rendered_by_payload: defaultdict[str, set[str]] = defaultdict(set)
     rendered_order_by_payload: dict[str, list[str]] = {}
     metadata_payloads: set[str] = set()
+    metadata_by_payload: dict[str, dict[str, list]] = {}
     for render in render_evidence:
         payload_key = str(render.get("payload", ""))
         if render.get("metadata") and "error" not in render:
+            metadata = json.loads(Path(render['metadata']).read_text(encoding='utf-8'))
+            by_document = metadata_by_payload.setdefault(payload_key, {})
+            for document in metadata.get('Package', {}).get('Documents', []):
+                if isinstance(document, dict) and document.get('Name'):
+                    by_document.setdefault(str(document['Name']), []).append(document)
             metadata_payloads.add(payload_key)
             rendered_order_by_payload.setdefault(payload_key, [str(item) for item in render.get("documents", [])])
         if render.get("documents"):
@@ -1203,6 +1357,7 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
             "payload": payload_key, "payload_data": payload_data,
             "rendered_documents": rendered_by_payload.get(payload_key) or local_by_payload.get(payload_key, set()),
             "rendered_document_order": rendered_order_by_payload.get(payload_key, []),
+            'metadata_documents': metadata_by_payload.get(payload_key, {}),
         })
     def candidate_for(scenario_name: str, input_name: str) -> dict[str, Any] | None:
         options = [
@@ -1219,7 +1374,7 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
         for spec in baseline_specs:
             baseline = candidate_for(spec["scenario"], spec["input"])
             if baseline is None:
-                raise ValueError(f"Baseline Comms METADATA was not available for {spec['document']}: {spec['scenario']} / {spec['input']}.")
+                raise ValueError(missing_metadata_message('Baseline', spec['document'], spec['scenario'], spec['input'], observations))
             if spec["document"] not in baseline["rendered_documents"]:
                 rendered = ", ".join(baseline["rendered_document_order"]) or "no documents"
                 raise ValueError(f"Baseline {spec['document']} did not render for {spec['scenario']} / {spec['input']}. Comms returned: {rendered}.")
@@ -1227,15 +1382,18 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
             for variant in spec["variants"]:
                 candidate = candidate_for(variant["scenario"], variant["input"])
                 if candidate is None:
-                    raise ValueError(f"Variant Comms METADATA was not available for {spec['document']}: {variant['scenario']} / {variant['input']}.")
+                    raise ValueError(missing_metadata_message('Variant', spec['document'], variant['scenario'], variant['input'], observations))
                 variants.append({**candidate, "label": variant.get("label", "")})
             document_plans.append({"spec": spec, "baseline": baseline, "variants": variants})
-        baseline_documents = [item["spec"]["document"] for item in document_plans]
         source["baselineMetadata"] = [
-            {"document": item["spec"]["document"], "scenario": item["baseline"]["scenario"], "input": item["baseline"]["file"].name,
+            {"case": item['spec']['case'], "document": item["spec"]["document"], "scenario": item["baseline"]["scenario"], "input": item["baseline"]["file"].name,
              "renderedDocuments": item["baseline"]["rendered_document_order"]}
             for item in document_plans
         ]
+        references = {spec['document']: spec['reference_case'] for spec in baseline_specs}
+        source['documentReferences'] = references
+        document_plans = group_document_plans(document_plans, references)
+        baseline_documents = [item['spec']['document'] for item in document_plans]
     else:
         # Legacy single-baseline behaviour remains available for existing
         # profiles, but new profiles should use the explicit baselines list.
@@ -1338,13 +1496,16 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
     lines.extend(["- [Glossary](#glossary)", "  - [Field List](#field-list)", "  - [Style List](#style-list)", "", "## Scope", "", profile.get("description", ""), "", "### Family member documents", ""])
     for item in scoped:
         spec = item["_plan"]["spec"]
-        label = f" — {spec['label']}" if spec.get("label") else ""
-        lines.append(f"- `{spec['document']}`{label}")
+        reference = spec.get('case')
+        suffix = ' — document only' if item['_plan'].get('comparison') == 'document_only' else (f" — reference case **{reference}**" if reference else '')
+        lines.append(f"- `{spec['document']}`" + suffix)
     lines.extend(["", "### Baseline and variant test cases", ""])
-    for item in scoped:
-        spec = item["_plan"]["spec"]
+    scope_specs = list({spec.get('case', spec['document']): spec for spec in baseline_specs}.values()) if baseline_specs else [item['_plan']['spec'] for item in scoped]
+    for spec in scope_specs:
         label = f" — {spec['label']}" if spec.get("label") else ""
-        lines.append(f"- **{spec['document']}{label}**")
+        lines.append(f"- **{spec.get('case', spec['document'])}{label}**")
+        if spec.get('documents'):
+            lines.append('  - Comms documents: ' + ', '.join(f'`{name}`' for name in spec['documents']))
         lines.append(f"  - **Baseline — {spec['scenario']}**: `{spec['input']}`")
         for variant in spec.get("variants", []):
             variant_label = f" — {variant['label']}" if variant.get("label") else ""
@@ -1400,11 +1561,35 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
         for node in graph_for_document.get("nodes", {}).values():
             if isinstance(node, dict):
                 used_styles.update(referenced_style_names(node.get("styles", [])))
+        if document_plan.get('comparison') == 'document_only':
+            lines.extend(['', '#### Input coverage', ''])
+            lines.extend(document_only_lines(document_id, document_plan, structure,
+                         content_closure(actual_content_names, content_references), blob_conditions))
+            lines.append('')
+            continue
         lines.extend(["", "#### Scenarios", ""])
-        baseline_label = f"`{document_baseline['file'].name}`"
-        lines.append(f"Compared with **{document_baseline['scenario']}** baseline input {baseline_label}.")
         conditions = document_conditions(document, structure, content_references, blob_conditions)
-        lines.extend(scenario_delta_lines(document_id, conditions, clauses, document_baseline, document_variants, AToolConditionEvaluator()))
+        if document_plan.get('cases'):
+            reference_case = document_plan['spec']['case']
+            lines.append(f'Reference business case: **{reference_case}**.')
+            for case_plan in document_plan['cases']:
+                spec = case_plan['spec']
+                case_baseline = case_plan['baseline']
+                lines.extend(['', f"##### {spec['case']}" + (f" — {spec['label']}" if spec.get('label') else ''), ''])
+                if spec['case'] == reference_case:
+                    lines.append('Reference baseline for this Comms document.')
+                else:
+                    lines.append(f'Baseline compared with **{reference_case}**:')
+                    lines.extend(scenario_delta_lines(document_id, conditions, clauses, document_baseline,
+                                 [{**case_baseline, 'label': spec['case']}], AToolConditionEvaluator()))
+                if case_plan['variants']:
+                    lines.append(f"Variants compared with **{spec['case']}** baseline:")
+                    lines.extend(scenario_delta_lines(document_id, conditions, clauses, case_baseline, case_plan['variants'], AToolConditionEvaluator()))
+                else:
+                    lines.append('No variants configured for this business case.')
+        else:
+            lines.append(f"Compared with **{document_baseline['scenario']}** baseline.")
+            lines.extend(scenario_delta_lines(document_id, conditions, clauses, document_baseline, document_variants, AToolConditionEvaluator()))
         lines.append("")
     lines.extend(["## Glossary", "", "### Field list", "", "| Field | Mapping / resolved path | Details | Used by |", "|---|---|---|---|"])
     consolidated_fields: dict[tuple[str, str, str, str], dict[str, Any]] = {}
@@ -1445,6 +1630,7 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
         lines.append("| _No styles referenced_ | — |")
 
     for item in (observation for observation in observations if "error" in observation):
+        progress(f"Execution exception: {item['scenario']} / {item['file'].name}: {item['error']}")
         print(f"Execution exception: {item['scenario']} / {item['file'].name}: {item['error']}", file=sys.stderr)
     comms_snapshot = str(source.get("resourceCache") or source.get("snapshot", ""))
     comms_cached_at = comms_cache_pulled_at(source)
@@ -1459,11 +1645,10 @@ def generate(profile_path: Path, output_path: Path, source_mode: str = "comms", 
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     output_path.with_suffix(".evidence.json").write_text(json.dumps(evidence.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if formats & {"docx", "pdf"}:
-        renderer = Path(__file__).with_name("render_td.py")
-        command = [sys.executable, str(renderer), "--markdown", str(output_path), "--docx", str(output_path.with_suffix(".docx"))]
-        if "pdf" in formats:
-            command.extend(["--pdf", str(output_path.with_suffix(".pdf"))])
-        subprocess.run(command, check=True)
+        from tools.td_generator.render_td import export_formats
+        progress('Rendering delivery formats…')
+        export_formats(output_path, output_path.with_suffix('.docx'), output_path.with_suffix('.pdf') if 'pdf' in formats else None)
+    progress(f'Created {output_path}')
 
 
 def main() -> int:
@@ -1478,9 +1663,18 @@ def main() -> int:
     generate_command.add_argument("--xml-conversion", choices=("auto", "always", "never"), default="auto", help="XML input handling: reuse cached conversion, refresh it, or require it (default: auto).")
     generate_command.add_argument("--rebuild-resource-index", action="store_true", help="Rebuild the derived content-field/reference index from the configured Comms resource cache.")
     generate_command.add_argument("--formats", default="md", help="Comma-separated outputs: md, docx, pdf (default: md).")
+    generate_command.add_argument('--samples-root', type=Path, help='Scenario folder root; overrides the legacy profile scenarios setting.')
+    generate_command.add_argument('--resource-cache', type=Path, help='OCCS resource cache; overrides the legacy profile cache setting.')
     args = parser.parse_args()
     formats = {item.strip().lower() for item in args.formats.split(",") if item.strip()}
-    generate(args.profile, args.out, args.source, args.render_evidence, args.workers, formats, args.xml_conversion, args.rebuild_resource_index)
+    profile = None
+    if args.samples_root or args.resource_cache:
+        profile = json.loads(args.profile.read_text(encoding='utf-8'))
+        if args.samples_root:
+            profile['scenarios'] = str(args.samples_root.expanduser().resolve())
+        if args.resource_cache:
+            profile.setdefault('comms', {})['resource_cache'] = str(args.resource_cache.expanduser().resolve())
+    generate(args.profile, args.out, args.source, args.render_evidence, args.workers, formats, args.xml_conversion, args.rebuild_resource_index, profile_override=profile)
     return 0
 
 

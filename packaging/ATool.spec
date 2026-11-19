@@ -8,6 +8,7 @@ root = Path(SPECPATH).parent
 stage = Path(os.environ['ATOOL_NATIVE_STAGE'])
 node = Path(os.environ['ATOOL_NATIVE_NODE'])
 datas = collect_data_files('atool_qt') + [
+    (str(root / 'tools' / 'td_generator' / 'build_content_catalog.mjs'), 'tools/td_generator'),
     (str(stage / 'occs-cli'), 'runtime/occs-cli'),
     (str(stage / 'BUILD_INFO.txt'), '.'),
     (str(stage / 'RUNTIME_INFO.json'), '.'),

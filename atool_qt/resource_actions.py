@@ -100,7 +100,14 @@ class ResourceModelActions:
             self.model_actions[title] = self.action(title, callback)
             menu.addAction(self.model_actions[title])
         self.documents.selected.connect(self.update_model_actions)
+        menu.addSeparator()
+        menu.addAction(self.action('Generate Technical Design…', self.generate_technical_design))
         self.update_model_actions()
+
+    def generate_technical_design(self):
+        from .technical_design import TechnicalDesignDialog
+        dialog = TechnicalDesignDialog(self)
+        dialog.exec()
 
     def update_model_actions(self, *_):
         session = self.session

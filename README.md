@@ -1,5 +1,10 @@
 # ATool User Guide
 
+Generate a document-family Technical Design from **Model → Generate Technical Design…**.
+Choose a profile, Comms resource cache and output file, then select Markdown,
+DOCX and/or PDF. The standalone app includes the generator dependencies; PDF
+requires LibreOffice. See [the TD guide](tools/td_generator/README.md) for setup.
+
 > ## UNSUPPORTED — NOT AN ORACLE PRODUCT
 >
 > This is an independent open-source utility. It is not an Oracle product and

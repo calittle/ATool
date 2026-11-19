@@ -1,5 +1,11 @@
 # Native release builds
 
+The application includes **Model → Generate Technical Design…**, its shared
+ATool evaluator, DOCX renderer and content-index script. The extracted-bundle
+check also opens the TD dialog, creates a DOCX and runs the cache parser with
+bundled Node/OCCS CLI. Profiles, samples, caches and generated reports remain
+external user data. PDF export requires an installed LibreOffice.
+
 Version tag pushes (`v*`) trigger the release workflow, which calls
 `.github/workflows/native-build.yml`. Commits to `main` do not trigger builds.
 An existing version tag can also be rebuilt through the release workflow's

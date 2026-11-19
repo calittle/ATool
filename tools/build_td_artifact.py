@@ -22,6 +22,8 @@ TD_DEPENDENCIES = {
     "atool_core/__init__.py",
     "atool_core/condition_evaluator.py",
     "atool_core/td_evidence.py",
+    "atool_core/td_profile.py",
+    "atool_core/td_comparison.py",
 }
 TRIGGER_PATHS = {"tools/build_td_artifact.py", ".githooks/post-commit", *TD_DEPENDENCIES}
 

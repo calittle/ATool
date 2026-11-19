@@ -232,22 +232,30 @@ def render(markdown_path: Path, docx_path: Path) -> None:
     document.save(docx_path)
 
 
+def export_formats(markdown, docx, pdf=None):
+    render(markdown, docx)
+    if pdf:
+        soffice = shutil.which('soffice')
+        if not soffice and Path('/Applications/LibreOffice.app/Contents/MacOS/soffice').is_file():
+            soffice = '/Applications/LibreOffice.app/Contents/MacOS/soffice'
+        if not soffice:
+            raise RuntimeError('Install LibreOffice to create PDF output; Markdown and DOCX are available without it.')
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([soffice, '--headless', '--convert-to', 'pdf', '--outdir', str(pdf.parent), str(docx)], check=True, capture_output=True, timeout=180)
+        produced = pdf.parent / f'{docx.stem}.pdf'
+        if not produced.is_file():
+            raise RuntimeError('LibreOffice did not produce the PDF.')
+        if produced != pdf:
+            produced.replace(pdf)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render TD Markdown as DOCX and PDF.")
     parser.add_argument("--markdown", required=True, type=Path)
     parser.add_argument("--docx", required=True, type=Path)
     parser.add_argument("--pdf", type=Path)
     args = parser.parse_args()
-    render(args.markdown, args.docx)
-    if args.pdf:
-        soffice = shutil.which("soffice")
-        if not soffice:
-            raise RuntimeError("soffice is required to create a PDF")
-        args.pdf.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(args.pdf.parent), str(args.docx)], check=True)
-        produced = args.pdf.parent / f"{args.docx.stem}.pdf"
-        if produced != args.pdf:
-            produced.replace(args.pdf)
+    export_formats(args.markdown, args.docx, args.pdf)
     return 0
 
 

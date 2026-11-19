@@ -2,7 +2,10 @@
 // Build field and conditional-content indexes from an already downloaded OCCS cache.
 import fs from 'fs';
 import path from 'path';
-import { parseContentBlobs } from '/Users/clittle/Documents/dev/ccs-tools/OCCS-CLI/lib/blobUtils.js';
+import { pathToFileURL } from 'node:url';
+const cliPath = process.argv[5];
+if (!cliPath) throw new Error('An OCCS CLI entry-point path is required');
+const { parseContentBlobs } = await import(pathToFileURL(path.resolve(path.dirname(cliPath), '../lib/blobUtils.js')).href);
 
 const [contentRoot, outputDir, effectiveDate] = process.argv.slice(2);
 if (!contentRoot || !outputDir || !effectiveDate) throw new Error('Usage: build_content_catalog.mjs <contents-cache> <output-dir> <effective-date>');
