@@ -384,6 +384,23 @@ if 'auth-always' in args:
         self.assertIn('401', results[1].message)
         self.assertFalse(self.service.logins)
 
+    def test_migration_authentication_does_not_guess_default_alias_or_replay(self):
+        self.cli.write_text(self.cli.read_text().replace("if 'slow' in args:",
+            "if args[0]=='migrate':\n    print('status code 401 unauthorized',file=sys.stderr)\n    sys.exit(1)\nif 'slow' in args:"))
+        sign_ins=[]
+        self.service.sign_in_required.connect(sign_ins.append)
+        for options in (['--dry-run'],[]):
+            with self.subTest(options=options):
+                results=[]
+                job=self.service.submit(['migrate','--source-session','np','--target-session','pp',*options],results.append)
+                self.until(lambda:bool(results))
+                self.assertFalse(results[0].successful)
+                self.assertFalse(job.login_attempted)
+                self.assertIsNone(job.login_alias)
+                self.assertIn('401',results[0].message)
+        self.assertEqual(sign_ins,[])
+        self.assertFalse(self.service.logins)
+
     def test_parallel_read_retries_transient_network_error_once(self):
         activity = self.activity_log()
         script = self.cli.read_text()

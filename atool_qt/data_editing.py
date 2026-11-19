@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QIODevice, QSaveFile, QTimer, Qt
+from PySide6.QtCore import QEvent, QIODevice, QSaveFile, QTimer, Qt
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QFileDialog,
                               QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
@@ -230,8 +230,23 @@ class DataEditing:
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
                                   QAbstractItemView.EditTrigger.EditKeyPressed)
         self.tree.itemDoubleClicked.connect(self.edit_cell)
+        self.tree.installEventFilter(self)
         QApplication.clipboard().dataChanged.connect(self.update_edit_actions)
         self.update_edit_actions()
+
+    def eventFilter(self,watched,event):
+        if watched is self.tree and event.type() in (QEvent.Type.ShortcutOverride,QEvent.Type.KeyPress):
+            sequence=QKeySequence(event.keyCombination())
+            for action in self.edit_actions.values():
+                if action.isEnabled() and sequence in action.shortcuts():
+                    # Widget shortcuts do not automatically outrank the package's
+                    # window shortcuts. Claim the key before QAction resolution,
+                    # then dispatch it once to the focused data tree's action.
+                    event.accept()
+                    if event.type()==QEvent.Type.KeyPress:
+                        action.trigger()
+                    return True
+        return super().eventFilter(watched,event)
 
     def edit_cell(self, item, column):
         path = item.data(0, Qt.ItemDataRole.UserRole + 1)

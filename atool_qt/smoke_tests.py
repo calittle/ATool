@@ -17,7 +17,7 @@ from .shared_packages import segment
 
 
 def validate_smoke_settings(value):
-    for key in ('suite_dir','output_dir',
+    for key in ('suite_dir','output_dir','migration_records_dir',
                 'comparison_source_tenancy','comparison_source_session','comparison_target_tenancy',
                 'comparison_target_session','browser_path','tools_path'):
         if not isinstance(value.get(key,''),str):

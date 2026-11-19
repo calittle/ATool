@@ -778,27 +778,74 @@ It then opens the existing copy/publish dialogs, restricting publish Configs to
 the selected batch, or lets you confirm that no package sync is needed. A verified
 publish (or a dry run confirming no changes) is recorded before continuing.
 Config closure and migration retain explicit confirmation and shared lockout
-checks. The migration dry run must show exactly the selected Config batch:
+checks. Before checking a migration batch, the guide refreshes both the target
+and source sessions. **Refresh Migration Sessions** also lets you renew them
+without initiating movement. Migration commands are never automatically replayed
+after authentication errors; a failed batch check can be retried, while a failed
+initiation requires checking Comms for the outcome first. The migration dry run must show exactly the selected Config batch:
 the OCCS movement API moves **all eligible Configs**, and `--config-id` only
 verifies membership. Keep other migration activity paused during review and
 initiation, since eligibility can change between those requests.
 
 The CLI reports migration initiation rather than waiting for completion.
-Verify successful completion in Comms and enter a verification note before the
-guide runs the post-migration comparison. You can also record an externally
-completed migration, for example when the source uses SSO and cannot use CLI
-migration. Failed previews in either environment block handoff. Inspect the
+Verify successful completion in Comms before the guide runs the post-migration
+comparison. If a Config is already in the target, a previous attempt had an
+uncertain outcome, or migration was performed outside ATool, use **I Verified
+Migration in Target…** at the migration step. Confirm each selected Config and
+enter a verification note. The guide records the Configs, source/target aliases,
+time, and previous attempt state, then continues to comparison testing without
+submitting another migration. This option also supports an SSO source that
+cannot use CLI migration. An empty eligible list does not prove completion;
+verify the Config identity and successful migration in the target first. Failed previews in either environment block handoff. Inspect the
 comparison report and explicitly accept visual differences, with an explanation
 when review is required. Open `smoke-email.eml`, review it, and send it manually
 to the SOP recipients shown in the guide. Email is never sent automatically.
 
 Progress, Config IDs, operation receipts, reports, and snapshots of the suite and
-its input files are stored under `migrations` in **Local Package Folder**.
-Use **New / Resume…** to reopen a saved migration. Both smoke runs use the saved
+its input files are saved together in a unique subfolder of **Migration records
+folder**, selectable during guide setup. Set a default in **User Settings →
+Smoke Tests → Migration Records Folder**; blank uses `migrations` in **Local
+Package Folder**. The setup Browse button overrides that default for a new
+migration, including all smoke outputs. Existing records stay in their original
+locations when the default changes.
+
+Use **New / Resume…** to reopen a saved migration. The list checks the selected,
+configured, original default, and most recently used records folders. Use
+**Open Saved Migration Record…** to select `migration.json` in another location. Both smoke runs use the saved
 suite and inputs; changes to the original suite or input files do not change an
 existing migration record. An interrupted migration with no completion receipt
 requires an explicit outcome check before retrying. Fix rejected differences in
 non-prod under a new Config and start a new migration record.
+
+### Migration Reports And Operator Attribution
+
+The guide writes **migration-report.md** beside **migration.json**, refreshing
+it whenever progress is saved. **Open Migration Report** in the guide opens the
+current Markdown report. It includes the operator, Configs, source/target,
+package publish, pre/post test results and report links, manual completion
+verification, comparison acceptance, handoff, action history, and snapshot
+hashes. Incomplete and uncertain outcomes remain visible in the report.
+
+**Current operator** is prefilled from **User Settings → Comms → User Name**,
+falling back to the local login. Confirm or edit it when starting or resuming.
+New actions record this name and the local login; verification, comparison
+acceptance, and email handoff retain their user attribution. Resuming as another
+operator preserves the original creator and earlier users. For older records,
+use **Record Migration Operator…** to explicitly name the person who performed
+the migration. Missing historical action users remain **Not recorded**.
+
+The JSON-to-Markdown routine can also export an existing record without opening
+ATool or changing the saved JSON:
+
+```sh
+python3 tools/migration_report.py /path/to/migration.json
+python3 tools/migration_report.py /path/to/migration.json --output /path/to/report.md
+```
+
+The first command writes `migration-report.md` beside the JSON. The second writes
+the specified file and adjusts evidence links relative to its location. Keep
+the report with the JSON, suite/input snapshots, and smoke outputs when sharing
+the complete evidence bundle.
 
 ### Package Access And Publishing
 

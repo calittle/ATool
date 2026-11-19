@@ -7,12 +7,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget)
 
 from .comms_login import login_args, saved_login_targets
 from .configuration import config_label, normalize_configs
-from .migration_record import MigrationRecord, eligible_batch, timestamp
+from .migration_record import MigrationRecord, eligible_batch, operator_identity, timestamp
+from .migration_report import identity
+from .occs import unauthorized_error
 from .shared_actions import SharedPicker
 from .shared_packages import names
 from .smoke_tests import SmokeTestDialog, discover_smoke_suites, suite_standard_target
@@ -30,6 +32,46 @@ def smoke_passed(outcome):
     return (not outcome.get('stopped',True) and len(runs)==1 and runs[0].get('valid') is True and
             runs[0].get('successful') is True and not runs[0].get('cancelled') and
             not runs[0].get('timed_out') and runs[0].get('failed')==0 and runs[0].get('passed',0)>0)
+
+
+class TargetVerificationDialog(QDialog):
+    """Record human verification without sending a movement request."""
+    def __init__(self,parent,prompt,configs):
+        super().__init__(parent)
+        self.setWindowTitle('Verify Migration in Target')
+        self.resize(700,430)
+        layout=QVBoxLayout(self)
+        label=QLabel(prompt)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(label)
+        self.configs=QListWidget()
+        for config in configs:
+            item=QListWidgetItem(f"{config_label(config) or config['id']} [source ID: {config['id']}]")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.configs.addItem(item)
+        layout.addWidget(self.configs,1)
+        self.note=QTextEdit()
+        self.note.setPlaceholderText('Record how you verified completion, including the target Config identity or reference.')
+        layout.addWidget(self.note)
+        self.status=QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Continue to Comparison')
+        buttons.accepted.connect(self.submit)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def submit(self):
+        if not self.configs.count() or any(self.configs.item(index).checkState()!=Qt.CheckState.Checked for index in range(self.configs.count())):
+            self.status.setText('Verify and tick every selected Config in the target environment before continuing.')
+            return
+        if not self.note.toPlainText().strip():
+            self.status.setText('Record how you verified successful migration before continuing.')
+            return
+        self.accept()
 
 
 class GuidedMigrationDialog(QDialog):
@@ -63,6 +105,9 @@ class GuidedMigrationDialog(QDialog):
         self.folder_button=QPushButton('Open Migration Folder')
         self.folder_button.clicked.connect(lambda:self.open_path(self.record.folder) if self.record else None)
         footer.addWidget(self.folder_button)
+        self.report_button=QPushButton('Open Migration Report')
+        self.report_button.clicked.connect(self.guard(self.open_report))
+        footer.addWidget(self.report_button)
         self.new_button=QPushButton('New / Resume…')
         self.new_button.clicked.connect(self.reset)
         footer.addWidget(self.new_button)
@@ -74,8 +119,17 @@ class GuidedMigrationDialog(QDialog):
         self.render_setup()
 
     @property
+    def default_root(self):
+        configured=self.workspace.comms.settings.section('smoke_tests').get('migration_records_dir','').strip()
+        return Path(configured).expanduser().resolve() if configured else (self.workspace.comms.settings.work_dir/'migrations').resolve()
+
+    @property
     def root(self):
-        return self.workspace.comms.settings.work_dir/'migrations'
+        if self.record is not None:
+            return self.record.folder.parent.resolve()
+        field=getattr(self,'records_folder',None)
+        selected=field.text().strip() if field is not None else ''
+        return Path(selected).expanduser().resolve() if selected else self.default_root
 
     def guard(self,callback):
         def invoke(*_):
@@ -134,21 +188,33 @@ class GuidedMigrationDialog(QDialog):
 
     def render_setup(self):
         self.targets_ack=None
+        self.records_folder=None
         self.clear()
         self.heading.setText('Guided Migration — Setup')
-        self.summary.setText('Select a test suite and the complete Config batch. Progress and reports are saved locally so you can resume.')
+        self.summary.setText('Select a test suite and the complete Config batch. Choose where to save migration records, reports, snapshots, and smoke outputs.')
         self.folder_button.setEnabled(False)
+        self.report_button.setEnabled(False)
         form=QFormLayout()
+        self.operator_name=QLineEdit(operator_identity(self.workspace.comms.settings.get('user_name'))['displayName'])
+        self.operator_name.setToolTip('Name of the current operator. Prefilled from User Settings → User Name, or the local login. New actions also record the local login.')
+        form.addRow('Current operator',self.operator_name)
+        folder_row=QWidget()
+        folder_layout=QHBoxLayout(folder_row)
+        folder_layout.setContentsMargins(0,0,0,0)
+        self.records_folder=QLineEdit(str(self.default_root))
+        self.records_folder.setToolTip('Parent folder for this new migration. A unique subfolder contains all evidence. Existing records stay in their original locations.')
+        folder_layout.addWidget(self.records_folder,1)
+        self.browse_records_button=QPushButton('Browse…')
+        self.browse_records_button.clicked.connect(self.guard(self.choose_records_folder))
+        folder_layout.addWidget(self.browse_records_button)
+        form.addRow('Migration records folder',folder_row)
         self.resume_combo=QComboBox()
-        for path in sorted(self.root.glob('*/migration.json'),reverse=True):
-            try:
-                record=MigrationRecord.load(path)
-                self.resume_combo.addItem(f"{record.data['created_at']} — {record.data['suite_name']} — {STEPS[record.data['stage']]}",str(path))
-            except (OSError,ValueError,KeyError,TypeError):
-                continue
+        self.refresh_saved_migrations()
+        self.records_folder.editingFinished.connect(self.refresh_saved_migrations)
         form.addRow('Saved migrations',self.resume_combo)
         self.body_layout.addLayout(form)
         self.button('Resume Selected Migration',self.resume)
+        self.button('Open Saved Migration Record…',self.open_saved_record)
         self.suite_combo=QComboBox()
         try:
             suites,_=discover_smoke_suites(self.workspace.comms.settings.section('smoke_tests'))
@@ -181,6 +247,41 @@ class GuidedMigrationDialog(QDialog):
         self.body_layout.addWidget(self.targets_ack)
         self.button('Start Guided Migration',self.create_record)
 
+    def choose_records_folder(self):
+        folder=QFileDialog.getExistingDirectory(self,'Migration Records Folder',str(self.root))
+        if folder:
+            self.records_folder.setText(folder)
+            self.refresh_saved_migrations()
+
+    def refresh_saved_migrations(self):
+        selected=self.resume_combo.currentData()
+        self.resume_combo.clear()
+        recent=str(self.workspace.settings.value('migration/lastRecordsDir','') or '').strip()
+        roots={self.root,self.default_root,(self.workspace.comms.settings.work_dir/'migrations').resolve()}
+        if recent:
+            roots.add(Path(recent).expanduser().resolve())
+        paths=set()
+        for root in roots:
+            try:
+                paths.update(path.resolve() for path in root.glob('*/migration.json'))
+            except OSError:
+                continue
+        for path in sorted(paths,reverse=True):
+            try:
+                record=MigrationRecord.load(path)
+                self.resume_combo.addItem(f"{record.data['created_at']} — {record.data['suite_name']} — {STEPS[record.data['stage']]}",str(path))
+                self.resume_combo.setItemData(self.resume_combo.count()-1,str(path),Qt.ItemDataRole.ToolTipRole)
+            except (OSError,ValueError,KeyError,TypeError):
+                continue
+        index=self.resume_combo.findData(selected)
+        if index>=0:
+            self.resume_combo.setCurrentIndex(index)
+
+    def open_saved_record(self):
+        path,_=QFileDialog.getOpenFileName(self,'Open Saved Migration Record',str(self.root),'Migration records (migration.json);;JSON files (*.json)')
+        if path:
+            self.resume_path(path)
+
     def show_suite_target(self):
         try:
             path=self.suite_combo.currentData()
@@ -191,7 +292,7 @@ class GuidedMigrationDialog(QDialog):
         if getattr(self,'targets_ack',None) is not None:
             self.targets_ack.setChecked(False)
 
-    def operation(self,title,args,callback):
+    def operation(self,title,args,callback,*,require_json=True,remote_write=False):
         token=object()
         self.operation_token=token
         self.set_busy(True,lifecycle=True)
@@ -202,9 +303,24 @@ class GuidedMigrationDialog(QDialog):
                 return True
             return False
         def show_error(message):
+            authentication_failed=unauthorized_error(message)
+            not_eligible='eligible movement list' in message or 'No eligible ConfigIds' in message
+            if self.record:
+                try:
+                    self.record.event('operation_failed',operation=title,remote_write=remote_write,
+                                      category='authentication' if authentication_failed else 'not_eligible' if not_eligible else 'command_failure',
+                                      pending=self.record.data.get('pending'))
+                except (OSError,ValueError) as error:
+                    message+=' Could not save the failure record: '+str(error)
             if self.record and self.record.data.get('pending'):
                 self.render()
-            self.status.setText(message+' Any interrupted remote write must be checked before retrying.')
+            if authentication_failed:
+                message='Authentication was rejected (401/Unauthorized). Refresh the source and target sessions before retrying.'
+            if self.record and title=='Review Migration Batch' and not_eligible:
+                message+=' The Configs may already be migrated. Verify them in target '+self.record.data['target']+' and use I Verified Migration in Target to continue.'
+            suffix=(' Check Comms before retrying this remote write.' if remote_write else
+                    ' No migration request was submitted by this step; this does not establish the outcome of earlier attempts.')
+            self.status.setText(title+': '+message+suffix)
         def failed(message):
             if release():
                 show_error(message)
@@ -214,7 +330,7 @@ class GuidedMigrationDialog(QDialog):
                     callback(result.value)
                 except (OSError,ValueError,KeyError,TypeError) as error:
                     show_error(str(error))
-        job=self.workspace.run_comms_operation(title,args,success,require_json=True,on_failure=failed)
+        job=self.workspace.run_comms_operation(title,args,success,require_json=require_json,on_failure=failed)
         job.completed.connect(lambda result:failed('Operation canceled or did not return valid evidence.') if self.operation_token is token else None)
         return job
 
@@ -236,6 +352,8 @@ class GuidedMigrationDialog(QDialog):
         self.operation('Load Guided Migration Configs',['list-configs','--session',alias,'--timeout',str(self.workspace.comms.settings.timeout_ms)],loaded)
 
     def create_record(self):
+        if not self.operator_name.text().strip():
+            raise ValueError('Enter the migration operator name.')
         if not self.targets_ack.isChecked():
             raise ValueError('Verify the Standard Test, source, and target environments before starting.')
         source,target=self.source.text().strip(),self.target.text().strip()
@@ -260,14 +378,23 @@ class GuidedMigrationDialog(QDialog):
         if source_info and target_info and all(source_info[k]==target_info[k] for k in ('customer','region','tenancy')):
             raise ValueError('The source and target aliases refer to the same environment.')
         self.record=MigrationRecord.create(self.root,self.workspace.comms.settings.section('smoke_tests'),suite_path,
-                                           configs,source,target,source_package,target_package)
+                                           configs,source,target,source_package,target_package,
+                                           actor=operator_identity(self.operator_name.text()))
+        self.workspace.settings.setValue('migration/lastRecordsDir',str(self.record.folder.parent))
         self.render()
 
     def resume(self):
         path=self.resume_combo.currentData()
         if not path:
             raise ValueError('No saved migration is selected.')
-        self.record=MigrationRecord.load(path)
+        self.resume_path(path)
+
+    def resume_path(self,path):
+        if not self.operator_name.text().strip():
+            raise ValueError('Enter the current operator name before resuming.')
+        self.record=MigrationRecord.load(path,actor=operator_identity(self.operator_name.text()))
+        self.record.event('resumed')
+        self.workspace.settings.setValue('migration/lastRecordsDir',str(self.record.folder.parent))
         self.render()
 
     def render(self):
@@ -276,13 +403,42 @@ class GuidedMigrationDialog(QDialog):
         stage=data['stage']
         self.heading.setText(STEPS[stage])
         self.folder_button.setEnabled(True)
+        self.report_button.setEnabled(True)
         configs=', '.join(f"{config_label(c) or c['id']} [{c['id']}]" for c in data['configs'])
-        self.summary.setText(f"{data['suite_name']} | {data['source']} → {data['target']}\nConfigs: {configs}")
+        self.summary.setText(f"{data['suite_name']} | {data['source']} → {data['target']}\nConfigs: {configs}\n"
+                             f"Migration operator: {identity(data.get('performed_by'))} | Current operator: {identity(self.record.actor)}")
+        if not data.get('performed_by'):
+            self.note('This older record has no migration operator. Record the person who performed the migration for the report.')
+            self.button('Record Migration Operator…',self.record_operator)
         if data.get('pending'):
             self.note('An operation was started without a saved completion receipt: '+str(data['pending'])+
                       '. Check Comms before retrying a remote write. Closing an already closed Config is safe to retry.')
         getattr(self,'render_'+stage)()
         self.body_layout.addStretch()
+        if self.record.report_error:
+            self.status.setText('Progress saved, but the Markdown report could not be refreshed: '+self.record.report_error+'. Use Open Migration Report to retry.')
+
+    def record_operator(self):
+        from PySide6.QtWidgets import QInputDialog
+        name,accepted=QInputDialog.getText(self,'Migration Operator','Who performed this migration? Historical actions retain their original attribution.',
+                                         text=self.record.actor['displayName'])
+        if not accepted:
+            return
+        if not name.strip():
+            raise ValueError('Enter the name of the person who performed the migration.')
+        # Historical attribution is an explicit annotation, not inferred from
+        # the login of whoever happens to reopen an older record.
+        operator=dict(displayName=name.strip())
+        self.record.data['performed_by']=operator
+        self.record.event('migration_operator_recorded',operator=operator)
+        self.render()
+
+    def open_report(self):
+        if not self.record:
+            raise ValueError('Start or resume a migration before opening its report.')
+        path=self.record.write_report()
+        self.record.report_error=''
+        self.open_path(path)
 
     def render_preflight(self):
         self.note('Run Standard Test against the suite JSON target in non-prod. All previews must pass before package sync or migration.')
@@ -400,7 +556,7 @@ class GuidedMigrationDialog(QDialog):
             self.record.event('config_closed',config_id=config['id'])
             self.close_next()
         self.operation('Close Migration Config',['close-config','--session',data['source'],'--config-id',config['id'],
-                                                 '--timeout',str(self.workspace.comms.settings.timeout_ms)],closed)
+                                                 '--timeout',str(self.workspace.comms.settings.timeout_ms)],closed,remote_write=True)
 
     def render_migrate(self):
         self.note('Review the eligible Config batch before movement. The CLI moves every eligible Config; the guide blocks a batch that differs from your selection. '
@@ -408,11 +564,14 @@ class GuidedMigrationDialog(QDialog):
         if self.record.data.get('pending')=='migration':
             self.note('A previous migration attempt has an uncertain outcome. Do not initiate it again without checking Comms.')
             self.button('I Verified Movement Did Not Start…',self.clear_uncertain_migration)
-            self.button('Record Externally Verified Completion…',self.external_completion)
+            self.button('I Verified Migration in Target…',self.external_completion)
         else:
+            self.button('Refresh Migration Sessions',self.refresh_migration_sessions)
             self.button('Check Batch and Migrate…',self.migrate)
-            self.button('Record Externally Completed Migration…',self.external_completion)
-        self.note('A password-authenticated source session is required for CLI migration. If you migrate externally, record completion here to continue testing.')
+            self.button('I Verified Migration in Target…',self.external_completion)
+        self.note('If the Configs are already migrated, verify successful completion in the target environment and choose I Verified Migration in Target. '
+                  'This records your confirmation and continues to comparison testing without submitting another migration. '
+                  'A password-authenticated source session is required for CLI migration.')
 
     def clear_uncertain_migration(self):
         self.require_stage('migrate')
@@ -422,6 +581,25 @@ class GuidedMigrationDialog(QDialog):
         self.record.data['pending']=None
         self.record.event('movement_not_started_verified',note=note)
         self.render()
+
+    def refresh_migration_sessions(self,callback=None):
+        self.require_stage('migrate')
+        data=self.record.data
+        if '--sso' in login_args(data['source']):
+            raise ValueError('The migration source uses SSO. Use a password-authenticated source, or migrate externally and record completion here.')
+        aliases=list(dict.fromkeys((data['target'],data['source'])))
+        def refresh(remaining):
+            if remaining:
+                alias=remaining[0]
+                self.operation('Refresh Migration Session '+alias,login_args(alias),
+                               lambda _:refresh(remaining[1:]),require_json=False)
+                return
+            self.record.event('migration_sessions_refreshed',aliases=aliases)
+            if callback:
+                callback()
+            else:
+                self.status.setText('Source and target sessions refreshed. You can check the migration batch now.')
+        refresh(aliases)
 
     def migrate(self):
         self.require_stage('migrate')
@@ -450,15 +628,18 @@ class GuidedMigrationDialog(QDialog):
                 if receipt.get('ok') is not True or receipt.get('initiated') is not True:
                     raise ValueError('Movement was not confirmed as initiated. Check Comms before retrying.')
                 actual=receipt.get('eligible',[])
-                self.record.advance('awaiting_completion',movement=dict(eligible=actual,initiated=True))
+                self.record.advance('awaiting_completion',movement=dict(eligible=actual,initiated=True),performed_by=copy.deepcopy(self.record.actor))
                 self.render()
                 try:
                     eligible_batch(data['configs'],receipt)
                 except ValueError:
                     self.record.event('movement_batch_changed',eligible=actual)
                     self.status.setText('The movement batch changed after review. Check every moved Config in Comms before confirming completion.')
-            self.operation('Initiate Guided Migration',args,initiated)
-        self.operation('Review Migration Batch',args+['--dry-run'],reviewed)
+            self.operation('Initiate Guided Migration',args,initiated,remote_write=True)
+        def check_batch():
+            self.record.event('migration_batch_check_started',dry_run=True,source=data['source'],target=data['target'])
+            self.operation('Review Migration Batch',args+['--dry-run'],reviewed)
+        self.refresh_migration_sessions(check_batch)
 
     def render_awaiting_completion(self):
         self.note('Movement was initiated. The CLI does not wait for completion. Verify that the selected Configs finished migrating successfully in Comms before continuing.')
@@ -466,7 +647,12 @@ class GuidedMigrationDialog(QDialog):
             self.note('Movement batch: '+json.dumps(self.record.data['movement']['eligible'],ensure_ascii=False))
         self.button('Confirm Migration Completed…',self.external_completion)
 
-    def confirmation_note(self,prompt):
+    def confirmation_note(self,prompt,*,configs=None):
+        if configs is not None:
+            dialog=TargetVerificationDialog(self,prompt,configs)
+            if dialog.exec()!=QDialog.DialogCode.Accepted:
+                return None
+            return dialog.note.toPlainText().strip()
         from PySide6.QtWidgets import QInputDialog
         note,accepted=QInputDialog.getMultiLineText(self,'Migration Verification',prompt+'\n\nRecord the verification or reference:')
         if not accepted:
@@ -477,10 +663,21 @@ class GuidedMigrationDialog(QDialog):
 
     def external_completion(self):
         self.require_stage('migrate','awaiting_completion')
-        note=self.confirmation_note(f"Confirm that every selected Config completed migration successfully from {self.record.data['source']} to {self.record.data['target']}.")
+        data=self.record.data
+        note=self.confirmation_note(f"Verify that every selected Config is present in target {data['target']} and its migration from {data['source']} completed successfully. "
+                                    'Check the Config identity and migration outcome, then tick each Config below. '
+                                    'Continuing records your verification; it does not submit a migration request.',configs=data['configs'])
         if note is None:
             return
-        self.record.advance('postflight',completion_note=note)
+        if not note.strip():
+            raise ValueError('Record how you verified successful migration before continuing.')
+        verification=dict(method='manual_target_verification',source=data['source'],target=data['target'],
+                          configs=copy.deepcopy(data['configs']),note=note.strip(),verified_at=timestamp(),
+                          verified_by=copy.deepcopy(self.record.actor),
+                          previous_stage=data['stage'],previous_pending=data.get('pending'),
+                          initiation_receipt=bool(data.get('movement',{}).get('initiated')))
+        self.record.event('target_migration_verified',verification=verification)
+        self.record.advance('postflight',completion_note=note.strip(),completion_verification=verification)
         self.render()
 
     def render_postflight(self):
@@ -554,11 +751,13 @@ class GuidedMigrationDialog(QDialog):
         note=self.review_note.toPlainText().strip()
         if outcome['runs'][0]['reviews'] and not note:
             raise ValueError('Record why the comparison differences are acceptable.')
-        self.record.advance('complete',review_note=note,reviewed_at=timestamp())
+        self.record.advance('complete',review_note=note,reviewed_at=timestamp(),reviewed_by=copy.deepcopy(self.record.actor))
         self.render()
 
     def render_complete(self):
         self.note('All checks were completed and comparison results accepted. Open the smoke email draft, review its contents, and send it to the recipients below. ATool does not send it automatically.')
+        if self.record.data.get('performed_by'):
+            self.button('Correct Migration Operator…',self.record_operator)
         self.note('Recipients: '+', '.join(RECIPIENTS))
         self.button('Open Smoke Email Draft',self.open_email)
         self.handoff_sent=QCheckBox('I sent the reviewed handoff email to the listed recipients.')

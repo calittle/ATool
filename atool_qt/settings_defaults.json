@@ -27,6 +27,7 @@
   "smoke_tests": {
     "suite_dir": "",
     "output_dir": "",
+    "migration_records_dir": "",
     "run_standard": true,
     "run_comparison": true,
     "comparison_source_tenancy": "non-prod",

@@ -44,6 +44,9 @@ SMOKE_HELP = {
                   'Relative input paths are resolved from the folder containing this suite file.',
     'output_dir': 'Choose a writable folder for reports, previews, comparison images, and unsent email drafts. '
                   'Leave blank to save beside the suite. New runs create timestamped subfolders.',
+    'migration_records_dir': 'Default folder for guided migration JSON records, Markdown reports, suite/input snapshots, and smoke outputs. '
+                             'Leave blank to use Local Package Folder/migrations. You can override it when starting a migration. '
+                             'Each migration gets its own subfolder. Existing records remain in their original locations.',
     'run_standard': 'Select the standard test by default in the Run Smoke Tests window. '
                     'It generates previews in the tenancy or session defined in the selected suite JSON. You can change this choice before each run.',
     'run_comparison': 'Select comparison testing by default in the Run Smoke Tests window. '
@@ -262,6 +265,7 @@ class SettingsDialog(QDialog):
         smoke = self.add_tab('Smoke Tests')
         for key,title,kind in (
                 ('suite_dir','Suite JSON Folder','directory'), ('output_dir','Output Folder','directory'),
+                ('migration_records_dir','Migration Records Folder','directory'),
                 ('run_standard','Run Standard Test',bool), ('run_comparison','Run Comparison',bool),
                 ('comparison_source_tenancy','Comparison Source Tenancy',str),
                 ('comparison_source_session','Comparison Source Session Alias (optional)',str),
@@ -280,6 +284,8 @@ class SettingsDialog(QDialog):
                     'Input paths are relative to the suite.\n\n'
                     'A session alias overrides its tenancy. Comparison runs use the source and target settings below. '
                     'Leave Output Folder blank to save beside the suite.\n\n'
+                    'Migration Records Folder controls guided migration evidence storage; leave blank to use Local Package Folder/migrations. '
+                    'The guide also accepts a folder override for each new migration.\n\n'
                     'Tool Folders adds Poppler/ImageMagick locations to PATH; separate multiple folders with '
                     + ('semicolons.' if os.name == 'nt' else 'colons.') + '\n\n'
                     'Run tests from Package → Run Smoke Tests…. Reports and email drafts are saved; email is not sent.\n\n'

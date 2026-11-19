@@ -140,6 +140,8 @@ sys.exit(1 if failed else 0)
         with patch('atool_qt.user_settings.QFileDialog.getExistingDirectory',return_value=str(self.suite.parent)) as browse:
             dialog.browse_controls[('smoke_tests','suite_dir')].click()
         browse.assert_called_once()
+        with patch('atool_qt.user_settings.QFileDialog.getExistingDirectory',return_value=str(self.root/'migration records')):
+            dialog.browse_controls[('smoke_tests','migration_records_dir')].click()
         self.assertNotIn(('smoke_tests','standard_session'),dialog.controls)
         self.assertNotIn(('smoke_tests','standard_tenancy'),dialog.controls)
         dialog.controls[('smoke_tests','comparison_source_session')].setText('np')
@@ -148,11 +150,12 @@ sys.exit(1 if failed else 0)
         dialog.save()
         saved=UserSettings(self.settings.path).section('smoke_tests')
         self.assertEqual(saved['suite_dir'],str(self.suite.parent))
+        self.assertEqual(saved['migration_records_dir'],str(self.root/'migration records'))
         self.assertEqual(saved['comparison_source_session'],'np')
         self.assertEqual(saved['comparison_threshold_percent'],2.5)
         self.assertEqual(saved['concurrency'],1)
         for key,value in (('request_timeout_seconds',0),('concurrency',3),('run_timeout_minutes',False),
-                          ('comparison_threshold_percent',101),('comparison_threshold_percent',float('nan'))):
+                          ('migration_records_dir',123),('comparison_threshold_percent',101),('comparison_threshold_percent',float('nan'))):
             payload=copy.deepcopy(self.settings.payload)
             payload['smoke_tests'][key]=value
             with self.subTest(key=key,value=value),self.assertRaises(ValueError):

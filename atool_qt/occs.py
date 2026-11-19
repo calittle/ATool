@@ -302,7 +302,9 @@ class CommandJob(QObject):
                 return
             if not result.cancelled and not result.timed_out:
                 result = CommandResult(-1, '', self.original_failure.message + '\n\nAutomatic login failed: ' + result.message, None)
-        elif not result.successful and not self.cancelled and not self.timed_out:
+        # Migration uses two sessions and may already have initiated movement.
+        # Its caller refreshes both explicitly; never guess an alias or replay it.
+        elif not result.successful and not self.cancelled and not self.timed_out and self.args[:1] != ['migrate']:
             from .comms_login import login_args, sso_expired_error
             try:
                 alias = str(self.args[self.args.index('--session') + 1])

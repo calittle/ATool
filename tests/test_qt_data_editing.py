@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, qInstallMessageHandler
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QLineEdit
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from atool_qt.data_editing import display_path, path_parts
 from atool_qt.session import PackageSession
 from atool_qt.window import DataPanel, WorkspaceWindow
@@ -324,6 +325,61 @@ class DataEditingTests(unittest.TestCase):
             self.assertEqual([False], session.fields[0]['mapped_values'])
             window.data.redo_data()
             self.assertTrue(session.documents[0]['triggered'])
+
+    def test_data_save_shortcut_overrides_package_save_without_ambiguity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            window=WorkspaceWindow(QSettings(str(root/'settings.ini'),QSettings.Format.IniFormat))
+            window.comms.settings.payload.setdefault('application',{})['confirm_on_quit']=False
+            self.addCleanup(window.close)
+            path=root/'input.json'
+            path.write_text('{"enabled":false}')
+            session=PackageSession.from_payload({'Documents':[{'$$Id':'Notice','Condition':'','Layouts':[]}],'Fields':[]})
+            session.map_data({'enabled':True},str(path))
+            window.set_session(session)
+            window.data.save_target=lambda:path
+            window.show()
+            window.default_layout_pending=False
+            window.show_panel('data')
+            window.activateWindow()
+            window.data.tree.setFocus()
+            self.app.processEvents()
+            self.assertTrue(window.data.tree.hasFocus())
+            package_saved=QSignalSpy(window.save_action.triggered)
+            data_saved=QSignalSpy(window.data.edit_actions['Save'].triggered)
+            package_save_as=QSignalSpy(window.save_as_action.triggered)
+            package_undo=QSignalSpy(window.undo_action.triggered)
+            package_redo=QSignalSpy(window.redo_action.triggered)
+            saved_as=root/'saved-as.json'
+            messages=[]
+            previous=qInstallMessageHandler(lambda kind,context,message:messages.append(message))
+            try:
+                QTest.keySequence(window.data.tree,QKeySequence(QKeySequence.StandardKey.Save))
+                self.app.processEvents()
+                with patch('atool_qt.data_editing.QFileDialog.getSaveFileName',return_value=(str(saved_as),'')):
+                    QTest.keySequence(window.data.tree,QKeySequence(QKeySequence.StandardKey.SaveAs))
+                window.editor.update_document_condition(session.documents[0],'true')
+                window.editor.update_document_condition(session.documents[0],'false')
+                window.editor.undo()
+                window.editor.saved=window.editor.snapshot()
+                window.data.replace_value({'enabled':False},parts=[])
+                window.update_actions()
+                self.assertTrue(window.undo_action.isEnabled())
+                self.assertTrue(window.redo_action.isEnabled())
+                QTest.keySequence(window.data.tree,QKeySequence(QKeySequence.StandardKey.Undo))
+                self.assertTrue(window.data.payload['enabled'])
+                QTest.keySequence(window.data.tree,QKeySequence(QKeySequence.StandardKey.Redo))
+                self.assertFalse(window.data.payload['enabled'])
+            finally:
+                qInstallMessageHandler(previous)
+            self.assertFalse(any('Ambiguous shortcut' in message for message in messages),messages)
+            self.assertEqual(data_saved.count(),1)
+            self.assertEqual(package_saved.count(),0)
+            self.assertEqual(package_save_as.count(),0)
+            self.assertEqual(package_undo.count(),0)
+            self.assertEqual(package_redo.count(),0)
+            self.assertEqual(json.loads(path.read_text()),{'enabled':True})
+            self.assertEqual(json.loads(saved_as.read_text()),{'enabled':True})
 
 
 if __name__ == '__main__':

@@ -40,6 +40,7 @@ PACKAGE_FILES = (
     "tools/check_native_bundle.py",
     "tools/archive_native.py",
     "tools/resolve_layout.py",
+    "tools/migration_report.py",
 )
 PACKAGE_DIRECTORIES = (
     "atool_core",

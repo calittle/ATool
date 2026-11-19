@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import getpass
 import hashlib
 import json
 import os
@@ -12,10 +13,19 @@ from pathlib import Path
 
 from .smoke_tests import smoke_plan
 from .storage import stage_bytes
+from .migration_report import write_migration_report
 
 
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def operator_identity(name=''):
+    try:
+        user=getpass.getuser()
+    except (OSError,KeyError):
+        user='unknown'
+    return dict(user=user,displayName=str(name or user).strip() or user)
 
 
 def digest(path):
@@ -38,13 +48,15 @@ def eligible_batch(configs, value):
 
 
 class MigrationRecord:
-    def __init__(self,path,data):
+    def __init__(self,path,data,*,actor=None):
         self.path=Path(path)
         self.data=data
         self.original=self.path.read_bytes() if self.path.exists() else None
+        self.actor=copy.deepcopy(actor) if actor is not None else operator_identity()
+        self.report_error=''
 
     @classmethod
-    def load(cls,path):
+    def load(cls,path,*,actor=None):
         path=Path(path)
         encoded=path.read_bytes()
         data=json.loads(encoded.decode('utf-8'))
@@ -55,12 +67,12 @@ class MigrationRecord:
                 not isinstance(data.get('settings'),dict) or not isinstance(data.get('hashes'),dict) or
                 not isinstance(data.get('events'),list)):
             raise ValueError('This is not a supported guided migration record.')
-        record=cls(path,data)
+        record=cls(path,data,actor=actor)
         record.original=encoded
         return record
 
     @classmethod
-    def create(cls,root,settings,suite_path,configs,source,target,source_package='CLP_bills',target_package='print_bulk'):
+    def create(cls,root,settings,suite_path,configs,source,target,source_package='CLP_bills',target_package='print_bulk',*,actor=None):
         if not source or not target or source.casefold()==target.casefold():
             raise ValueError('Choose different source and target session aliases.')
         if not configs or len({c['id'] for c in configs})!=len(configs):
@@ -87,10 +99,12 @@ class MigrationRecord:
             frozen=copy.deepcopy(settings)
             frozen.update(suite_dir=str(folder),output_dir=str(folder/'reports'),
                           comparison_source_session=source,comparison_target_session=target)
+            actor=copy.deepcopy(actor) if actor is not None else operator_identity()
             record=cls(folder/'migration.json',dict(version=1,created_at=timestamp(),stage='preflight',
+                created_by=copy.deepcopy(actor),performed_by=copy.deepcopy(actor),
                 original_suite=str(plan['source']),suite_name=suite.get('name',plan['source'].stem),
                 configs=copy.deepcopy(configs),source=source,target=target,settings=frozen,hashes=hashes,
-                source_package=source_package,target_package=target_package,events=[],closed=[],pending=None))
+                source_package=source_package,target_package=target_package,events=[],closed=[],pending=None),actor=actor)
             record.event('created')
             return record
         except BaseException:
@@ -118,9 +132,19 @@ class MigrationRecord:
         finally:
             temporary.unlink(missing_ok=True)
         self.original=encoded
+        # Markdown is derived evidence. A failed report write must not turn a
+        # successfully saved remote-operation receipt into an apparent failure.
+        try:
+            self.write_report()
+            self.report_error=''
+        except (OSError,ValueError,TypeError,KeyError,AttributeError) as error:
+            self.report_error=str(error)
+
+    def write_report(self):
+        return write_migration_report(self.path)
 
     def event(self,kind,**details):
-        self.data['events'].append(dict(at=timestamp(),kind=kind,**details))
+        self.data['events'].append(dict(at=timestamp(),kind=kind,actor=copy.deepcopy(self.actor),**details))
         self.save()
 
     def advance(self,stage,**details):
