@@ -35,10 +35,13 @@ jobs:
       revision: ${{ steps.cli.outputs.revision }}
       tag: ${{ steps.cli.outputs.tag }}
     steps:
-      - name: Check out ATool
+      # Release selection executes repository JavaScript with an API token.
+      # Use the workflow's own commit, never the requested application source.
+      - name: Check out trusted release tooling
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
 
       - name: Set up Node.js for release selection tests
         uses: actions/setup-node@v4

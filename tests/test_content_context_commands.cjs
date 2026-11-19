@@ -6,7 +6,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const root = path.join(__dirname, '..', 'atool_qt');
 const html = fs.readFileSync(path.join(root, 'content_editor.html'), 'utf8');
-const code = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]).join('\n')
+// Extract the exact shipped inline block, not arbitrary HTML script tags.
+const scriptStart = '<script nonce="atool-editor">';
+const blocks = html.split(scriptStart);
+assert.equal(blocks.length, 2, 'Expected one editor script');
+const scriptEnd = blocks[1].indexOf('</script>');
+assert.ok(scriptEnd >= 0, 'Expected the editor script closing tag');
+const code = blocks[1].slice(0, scriptEnd)
     .replace('/* CHIP_EDITORS */', () => fs.readFileSync(path.join(root, 'content_chip_editors.js'), 'utf8'));
 const events = [];
 const selection = {rangeCount: 0, removeAllRanges() {}, addRange(range) {this.range = range;}};
