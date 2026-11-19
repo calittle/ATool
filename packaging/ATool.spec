@@ -7,7 +7,7 @@ from PyInstaller.utils.hooks import collect_data_files
 root = Path(SPECPATH).parent
 stage = Path(os.environ['ATOOL_NATIVE_STAGE'])
 node = Path(os.environ['ATOOL_NATIVE_NODE'])
-datas = collect_data_files('atool_qt') + [
+datas = collect_data_files('atool_qt') + collect_data_files('docx') + [
     (str(root / 'tools' / 'td_generator' / 'build_content_catalog.mjs'), 'tools/td_generator'),
     (str(stage / 'occs-cli'), 'runtime/occs-cli'),
     (str(stage / 'BUILD_INFO.txt'), '.'),
@@ -17,7 +17,10 @@ datas = collect_data_files('atool_qt') + [
 a = Analysis([str(root / 'ATool_Qt.py')], pathex=[str(root)],
              binaries=[(str(node), 'runtime/node')], datas=datas,
              hiddenimports=[], hookspath=[], runtime_hooks=[],
-             excludes=['tkinter', 'webview'], noarchive=False)
+             excludes=['tkinter', 'webview'], noarchive=False,
+             # python-docx opens templates via parts/../templates. Preserve the
+             # physical package directories needed to traverse those paths.
+             module_collection_mode={'docx': 'pyz+py'})
 pyz = PYZ(a.pure)
 signing = {}
 if sys.platform == 'darwin' and os.environ.get('ATOOL_CODESIGN_IDENTITY'):

@@ -6,6 +6,12 @@ check also opens the TD dialog, creates a DOCX and runs the cache parser with
 bundled Node/OCCS CLI. Profiles, samples, caches and generated reports remain
 external user data. PDF export requires an installed LibreOffice.
 
+The PyInstaller spec collects the `docx` package data and also keeps its Python
+modules on disk. python-docx opens header/footer templates through
+`docx/parts/../templates`, so the physical `parts` directory must exist even
+when the modules are available in PyInstaller's archive. The extracted-app
+DOCX export check exercises this path before artifacts are uploaded.
+
 Version tag pushes (`v*`) trigger the release workflow, which calls
 `.github/workflows/native-build.yml`. Commits to `main` do not trigger builds.
 An existing version tag can also be rebuilt through the release workflow's
