@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtCore import QObject, QSettings, Signal
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from PySide6.QtTest import QTest
 from atool_qt.occs import CommandResult
 from atool_qt.package_preview import PreviewDialog, exclude_charts, preview_outputs
@@ -83,6 +83,57 @@ class PreviewTests(unittest.TestCase):
     def language_data(self, value='ENGLISH'):
         self.payload['billPrint'] = {'billDetails': {'cmElements': {'billLanguagePreference': value}}}
         self.source.write_bytes(encode(self.payload))
+
+    def test_two_windows_keep_their_own_mapped_file_with_shared_settings(self):
+        from atool_qt.window import MappingJob, WorkspaceWindow
+        other = WorkspaceWindow(QSettings(str(self.root/'qt.ini'), QSettings.Format.IniFormat))
+        other.comms.settings = self.window.comms.settings
+        self.addCleanup(other.close)
+        bundle = self.root/'other-bundle'
+        bundle.mkdir()
+        for path in (self.root/'bundle').iterdir():
+            value = json.loads(path.read_text())
+            if path.name == 'occs-package.json':
+                value['package']['shortName'] = 'OtherPackage'
+            (bundle/path.name).write_bytes(encode(value))
+        self.assertTrue(other.open_package(bundle/'occs-package.json'))
+        other_source = self.root/'other'/'data.json'
+        other_source.parent.mkdir()
+        other_source.write_bytes(encode({'other': True}))
+        for window, source in [(self.window, self.source), (other, other_source)]:
+            job = MappingJob(window.session, source, window)
+            job.run()
+            self.assertFalse(job.error)
+            window.set_session(job.result)
+            window.settings.setValue('lastDataFile', str(source))
+        for window, source in [(self.window, self.source), (other, other_source)]:
+            self.assertEqual(window.mapped_data_path(), source.resolve())
+            window.editor.rebuild()
+            self.assertEqual(window.mapped_data_path(), source.resolve())
+            window.preview_package()
+            dialog = window.preview_dialog
+            self.addCleanup(dialog.close)
+            self.assertEqual(dialog.parentWidget(), window)
+            self.assertEqual(Path(dialog.input.text()), source.resolve())
+            window.preview_package()
+            self.assertIs(window.preview_dialog, dialog)
+        self.assertIsNot(self.window.preview_dialog, other.preview_dialog)
+
+    def test_preview_buttons_stay_visible_with_long_status_in_small_dialog(self):
+        dialog = PreviewDialog(self.window)
+        self.addCleanup(dialog.close)
+        self.assertIn('Select a JSON file', dialog.language_status.text())
+        self.assertNotIn('Is a directory', dialog.language_status.text())
+        dialog.language_status.setText('Long language mapping diagnostic. ' * 60)
+        dialog.resize(560, 400)
+        dialog.show()
+        self.app.processEvents()
+        scroll = dialog.layout().itemAt(0).widget()
+        self.assertGreater(scroll.verticalScrollBar().maximum(), 0)
+        for button in dialog.findChildren(QPushButton):
+            if button.text() in ('Cancel', 'Preview'):
+                self.assertTrue(dialog.rect().contains(button.mapTo(dialog, button.rect().topLeft())))
+                self.assertTrue(dialog.rect().contains(button.mapTo(dialog, button.rect().bottomRight())))
 
     def test_preview_date_rolls_over_after_idle_and_preserves_same_day_choice(self):
         with patch('atool_qt.package_preview.date') as clock:

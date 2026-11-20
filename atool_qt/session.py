@@ -57,6 +57,7 @@ class PackageSession:
     mapping_revision: int = 0
     payload: dict = field(default_factory=dict)
     bundle: dict = field(default_factory=dict)
+    data_path: Path | None = None
 
     @classmethod
     def open(cls, path: Path) -> "PackageSession":

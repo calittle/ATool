@@ -1072,6 +1072,7 @@ class MappingJob(QThread):
     def run(self):
         try:
             self.session.map_data(read_json(self.path), self.path.name)
+            self.session.data_path = self.path.expanduser().resolve()
             self.result = self.session
         except Exception as error:
             self.error = str(error)
@@ -1307,6 +1308,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
 
     def data_saved(self, path):
         self.session.data_name = path.name
+        self.session.data_path = path.expanduser().resolve()
         self.settings.setValue('lastDataFile', str(path))
         self.settings.setValue('lastMappingDirectory', str(path.parent))
         self.update_package_status()

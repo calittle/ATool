@@ -121,6 +121,7 @@ class PackageEditor:
         rebuilt = PackageSession.from_payload(current.payload, current.source)
         rebuilt.clauses = current.clauses
         rebuilt.bundle = current.bundle
+        rebuilt.data_path = current.data_path
         if self.associations is not None:
             rebuilt.incorporate_package_documents({"associations": self.associations})
         revision = current.mapping_revision

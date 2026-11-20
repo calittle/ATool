@@ -10,7 +10,7 @@ from atool_core.activity_output import activity_text, HTTP_TRACE_PREFIX, sanitiz
 
 from PySide6.QtCore import QDate, QTimer
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
     QScrollArea, QWidget)
 from .shared_packages import bundle_hashes, manifest, names, segment
 from .languages import language_field, package_language_mapping, validate_languages
@@ -52,10 +52,14 @@ class PreviewDialog(QDialog):
     def __init__(self, workspace):
         super().__init__(workspace)
         self.workspace = workspace
+        self.package_source = workspace.session.source
         self.setWindowTitle('Preview Package')
         self.resize(650, 380)
         layout = QVBoxLayout(self)
-        form = QFormLayout()
+        body = QWidget()
+        form = QFormLayout(body)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.addRow('Package', QLabel(names(workspace.session.bundle['manifest'])[0]))
         mapped_path = workspace.mapped_data_path()
         self.input = QLineEdit(str(mapped_path or ''))
@@ -91,12 +95,12 @@ class PreviewDialog(QDialog):
         form.addRow(self.pre)
         selected = workspace.comms.settings.get('last_preview_render_types') or ['PDF']
         self.renders = {}
-        render_row = QHBoxLayout()
-        for name in RENDER_TYPES:
+        render_row = QGridLayout()
+        for index, name in enumerate(RENDER_TYPES):
             check = QCheckBox(name)
             check.setChecked(name in selected)
             self.renders[name] = check
-            render_row.addWidget(check)
+            render_row.addWidget(check, index // 3, index % 3)
         form.addRow('Render Types', render_row)
         self.timeout = QSpinBox()
         self.timeout.setRange(1, 2147483)
@@ -124,7 +128,10 @@ class PreviewDialog(QDialog):
         self.open_after.setChecked(True)
         form.addRow(self.exclude)
         form.addRow(self.open_after)
-        layout.addLayout(form)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
         row = QHBoxLayout()
         row.addStretch()
         cancel, submit = QPushButton('Cancel'), QPushButton('Preview')
@@ -134,6 +141,8 @@ class PreviewDialog(QDialog):
         row.addWidget(cancel)
         row.addWidget(submit)
         layout.addLayout(row)
+        available = self.screen().availableGeometry()
+        self.resize(min(650, available.width() - 24), min(620, available.height() - 64))
 
     def mark_effective_edited(self):
         self.effective_edited = True
@@ -152,6 +161,8 @@ class PreviewDialog(QDialog):
         try:
             package = names(self.workspace.session.bundle['manifest'])[0]
             mapping = package_language_mapping(self.language_settings, package)
+            if not self.input.text().strip():
+                raise ValueError('Select a JSON file to detect its language.')
             payload = json.loads(Path(self.input.text()).expanduser().read_text(encoding='utf-8-sig'))
             parent, key = language_field(payload, mapping)
             mapped, available = parent[key], True
@@ -179,6 +190,10 @@ class PreviewDialog(QDialog):
             self.input.setText(path)
 
     def submit(self):
+        if self.workspace.session is None or self.workspace.session.source != self.package_source:
+            self.workspace.report_error('Preview Package', 'The package has changed. Reopen Preview Package.')
+            self.reject()
+            return
         self.refresh_effective_date()
         languages = [value for value, check in self.languages.items() if check.isChecked()]
         if not languages and self.mapped_language is not None:
@@ -210,6 +225,9 @@ class PackagePreviewActions:
 
     def mapped_data_path(self):
         if self.session and self.session.mapped:
+            if self.session.data_path is not None:
+                path = Path(self.session.data_path)
+                return path if path.is_file() else None
             path = Path(self.session.data_name).expanduser()
             loaded = str(self.settings.value('lastDataFile', '') or '')
             if loaded:
@@ -229,6 +247,13 @@ class PackagePreviewActions:
     def preview_package(self):
         if not self.current_bundle_dir() or self.package_busy():
             return
+        dialog = getattr(self, 'preview_dialog', None)
+        if dialog is not None and dialog.isVisible() and dialog.package_source == self.session.source:
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        if dialog is not None:
+            dialog.close()
         self.preview_dialog = PreviewDialog(self)
         self.preview_dialog.show()
 

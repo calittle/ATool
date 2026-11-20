@@ -280,6 +280,7 @@ class PackagePublishActions:
                 previous=self.session
                 if previous.mapped:
                     refreshed.map_data(previous.data,previous.data_name)
+                    refreshed.data_path=previous.data_path
                     refreshed.mapping_revision=previous.mapping_revision
                 previous_editor=self.editor
                 from .editor import PackageEditor

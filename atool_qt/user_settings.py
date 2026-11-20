@@ -9,7 +9,7 @@ import re
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QLockFile
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFontComboBox,
                               QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
                               QToolButton, QVBoxLayout, QWidget, QMessageBox, QTableWidget,
@@ -89,6 +89,31 @@ def merge_settings(defaults, payload):
     return result
 
 
+def reconcile_settings(original, local, remote):
+    """Merge independent edits; lists and individual values remain atomic."""
+    if local == original:
+        return copy.deepcopy(remote)
+    if remote == original or local == remote:
+        return copy.deepcopy(local)
+    if all(isinstance(value, dict) for value in (original, local, remote)):
+        missing = object()
+        result = {}
+        for key in original.keys() | local.keys() | remote.keys():
+            before, ours, theirs = (value.get(key, missing) for value in (original, local, remote))
+            if ours == before:
+                merged = theirs
+            elif theirs == before or ours == theirs:
+                merged = ours
+            elif missing is not before and missing is not ours and missing is not theirs:
+                merged = reconcile_settings(before, ours, theirs)
+            else:
+                raise ValueError('User settings changed outside ATool. Reopen User Settings before saving.')
+            if merged is not missing:
+                result[key] = copy.deepcopy(merged)
+        return result
+    raise ValueError('User settings changed outside ATool. Reopen User Settings before saving.')
+
+
 class UserSettings(CommsSettings):
     def __init__(self, path=None):
         self.load_error = ''
@@ -108,6 +133,7 @@ class UserSettings(CommsSettings):
         if legacy_path and isinstance(legacy_path, str) and not smoke.get('suite_dir'):
             smoke['suite_dir'] = str(Path(legacy_path).expanduser().parent)
         self.original_bytes = self.path.read_bytes() if self.path.exists() else None
+        self.original_payload = copy.deepcopy(self.payload)
 
     def section(self, name):
         value = self.payload.get(name, {})
@@ -163,15 +189,30 @@ class UserSettings(CommsSettings):
             if not path or not Path(path).expanduser().is_file():
                 raise ValueError('Select an existing XSD before enabling local XML conversion.')
 
-    def save(self, payload=None):
+    def save(self, payload=None, *, require_unchanged=False):
         value = copy.deepcopy(self.payload if payload is None else payload)
         self.validate(value)
-        actual = self.path.read_bytes() if self.path.exists() else None
-        if actual != self.original_bytes:
-            raise ValueError('User settings changed outside ATool. Reopen User Settings before saving.')
-        encoded = (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
-        write_files({self.path: encoded})
-        self.original_bytes, self.payload = encoded, value
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = QLockFile(str(self.path) + '.lock')
+        if not lock.tryLock(1000):
+            raise ValueError('Another ATool window is saving user settings. Try again.')
+        try:
+            actual = self.path.read_bytes() if self.path.exists() else None
+            if actual != self.original_bytes:
+                if require_unchanged or actual is None:
+                    raise ValueError('User settings changed outside ATool. Reopen User Settings before saving.')
+                remote = UserSettings(self.path)
+                if remote.load_error:
+                    raise ValueError('User settings changed outside ATool. Reopen User Settings before saving.')
+                value = reconcile_settings(self.original_payload, value, remote.payload)
+                self.validate(value)
+            encoded = (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+            if encoded != actual:
+                write_files({self.path: encoded})
+            self.original_bytes, self.payload = encoded, value
+            self.original_payload = copy.deepcopy(value)
+        finally:
+            lock.unlock()
 
 
 class SettingsDialog(QDialog):
@@ -435,7 +476,7 @@ class SettingsDialog(QDialog):
              for column, key in enumerate(('package', 'mapping'))}
             for row in range(self.package_language_table.rowCount())]
         try:
-            self.store.save(payload)
+            self.store.save(payload, require_unchanged=True)
             self.workspace.comms.settings = self.store
             self.workspace.settings.setValue('documentHierarchy', bool(self.store.section('document_display').get('collapse',False)))
             self.workspace.apply_user_settings()

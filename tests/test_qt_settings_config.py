@@ -97,10 +97,62 @@ class SettingsStorageTests(unittest.TestCase):
             self.assertEqual({'keep': True}, saved['extra'])
             self.assertEqual([1], saved['occs']['custom'])
             self.assertEqual(120000, settings.timeout_ms)
+            settings.payload['occs']['request_timeout_seconds'] = 90
             path.write_text('{}')
             with self.assertRaisesRegex(ValueError, 'changed outside'):
                 settings.save()
             self.assertEqual('{}', path.read_text())
+
+    def test_two_windows_merge_routine_saves_and_preserve_unknown_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'settings.json'
+            first, second = UserSettings(path), UserSettings(path)
+            first.payload['occs']['last_preview_render_types'] = ['HTML']
+            first.payload['external_extra'] = {'keep': [1, 2]}
+            first.save()
+            second.payload['occs']['last_preview_timeout_seconds'] = 220
+            second.save()
+            saved = UserSettings(path)
+            self.assertEqual(saved.get('last_preview_render_types'), ['HTML'])
+            self.assertEqual(saved.get('last_preview_timeout_seconds'), 220)
+            self.assertEqual(saved.payload['external_extra'], {'keep': [1, 2]})
+            self.assertEqual(second.payload, saved.payload)
+            first.payload['diagnostics']['debug_logging'] = True
+            first.save()
+            self.assertEqual(UserSettings(path).get('last_preview_timeout_seconds'), 220)
+
+    def test_two_windows_same_setting_conflict_preserves_disk_and_pending_edit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'settings.json'
+            first, second = UserSettings(path), UserSettings(path)
+            first.payload['occs']['last_preview_render_types'] = ['HTML']
+            second.payload['occs']['last_preview_render_types'] = ['TEXT']
+            first.save()
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'changed outside'):
+                second.save()
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(second.get('last_preview_render_types'), ['TEXT'])
+            self.assertFalse(Path(str(path) + '.lock').exists())
+
+    def test_repeated_save_does_not_rewrite_unchanged_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = UserSettings(Path(temporary) / 'settings.json')
+            settings.save()
+            with patch('atool_qt.user_settings.write_files') as write:
+                settings.save()
+            write.assert_not_called()
+
+    def test_invalid_external_settings_are_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'settings.json'
+            settings = UserSettings(path)
+            settings.save()
+            path.write_text('{invalid')
+            settings.payload['diagnostics']['debug_logging'] = True
+            with self.assertRaisesRegex(ValueError, 'changed outside'):
+                settings.save()
+            self.assertEqual(path.read_text(), '{invalid')
 
     def test_locks_windows_boundaries_and_concurrent_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
