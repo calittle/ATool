@@ -211,8 +211,23 @@ class UserSettings(CommsSettings):
                 write_files({self.path: encoded})
             self.original_bytes, self.payload = encoded, value
             self.original_payload = copy.deepcopy(value)
+            self._prune_backups()
         finally:
             lock.unlock()
+
+    def _prune_backups(self):
+        """Keep the most recent settings recovery copy, including on unchanged saves."""
+        pattern = re.compile(
+            re.escape(self.path.stem) + r'_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}'
+            + re.escape(self.path.suffix))
+        try:
+            backups = sorted((path for path in self.path.parent.iterdir()
+                              if pattern.fullmatch(path.name) and path.is_file()),
+                             key=lambda path: path.name, reverse=True)
+            for backup in backups[1:]:
+                backup.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning('Could not remove old settings backups.', exc_info=True)
 
 
 class SettingsDialog(QDialog):

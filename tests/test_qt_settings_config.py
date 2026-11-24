@@ -143,6 +143,54 @@ class SettingsStorageTests(unittest.TestCase):
                 settings.save()
             write.assert_not_called()
 
+    def test_settings_keeps_only_previous_saved_contents_as_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / '.settings.json'
+            settings = UserSettings(path)
+            settings.save()
+            self.assertEqual([], list(path.parent.glob('.settings_backup_*.json')))
+            for timeout in (100, 200, 300):
+                before = path.read_bytes()
+                settings.payload['occs']['request_timeout_seconds'] = timeout
+                settings.save()
+                backups = list(path.parent.glob('.settings_backup_*.json'))
+                self.assertEqual(1, len(backups))
+                self.assertEqual(before, backups[0].read_bytes())
+
+    def test_unchanged_save_prunes_existing_settings_backups_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / '.settings.json'
+            settings = UserSettings(path)
+            settings.save()
+            older = path.parent / '.settings_backup_2026-01-01_00-00-00_000000.json'
+            newest = path.parent / '.settings_backup_2026-01-02_00-00-00_000000.json'
+            unrelated = [path.parent / name for name in (
+                '.settings_backup_manual.json', 'AT_backup_2026-01-01_00-00-00_000000.json',
+                '.settings-other_backup_2026-01-01_00-00-00_000000.json')]
+            for backup in [older, newest, *unrelated]:
+                backup.write_bytes(b'original')
+            settings.save()
+            self.assertFalse(older.exists())
+            for backup in [newest, *unrelated]:
+                self.assertEqual(b'original', backup.read_bytes())
+
+    def test_failed_settings_save_keeps_existing_backups(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = UserSettings(Path(temporary) / '.settings.json')
+            settings.save()
+            backups = [settings.path.parent / f'.settings_backup_2026-01-0{day}_00-00-00_000000.json'
+                       for day in (1, 2)]
+            for backup in backups:
+                backup.write_bytes(b'recovery')
+            before = settings.path.read_bytes()
+            settings.payload['occs']['request_timeout_seconds'] = 123
+            with patch('atool_qt.user_settings.write_files', side_effect=OSError('save failed')):
+                with self.assertRaisesRegex(OSError, 'save failed'):
+                    settings.save()
+            self.assertEqual(before, settings.path.read_bytes())
+            for backup in backups:
+                self.assertEqual(b'recovery', backup.read_bytes())
+
     def test_invalid_external_settings_are_not_overwritten(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'settings.json'
