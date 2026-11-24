@@ -2,6 +2,28 @@
 
 ## v2.7.0
 
+### Updated build
+
+- Store independent SSO and Password pathways for the same environment. Enter
+  and remember password credentials directly in Settings → Sign In to Comms…;
+  adding either pathway preserves the other. Use Password for all operations
+  when it is the only pathway, or prefer SSO for normal operations when both
+  are available. Migration source tokens and Oracle-hosted XML conversion
+  require Password; the migration target can still use SSO.
+- Share the Password login, Test Login, Remember password login, and Forget
+  Saved Login controls across Guided Migration, Config → Migrate, Convert XML,
+  and Convert and Map. Reuse existing remembered migration credentials and
+  import older encrypted CLI passwords when converting XML. Keep conversion
+  sessions separate from normal SSO sessions and remove their temporary files
+  after success, failure or cancellation. Local XSD conversion needs no login.
+- Fix XML conversion selecting other CLI environment credentials instead of
+  the saved Password login. Config listing could succeed using its saved token
+  while conversion failed with 401 when obtaining a fresh token. Supply the
+  chosen credentials explicitly and distinguish failed password authentication
+  from a converter request rejected after authentication succeeded.
+
+### Initial v2.7.0
+
 - Use a separate non-prod username/password login for migration while keeping
   normal ATool work on SSO. Guided Migration and Config → Migrate share login
   controls, Test Login, Remember migration login, and Forget Saved Login; no
