@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPus
 
 
 class OperationDialog(QDialog):
-    def __init__(self, workspace, title, args, callback=None, *, require_json=False, on_failure=None, channel='regular', accept_result=None, timeout_ms=None, close_on_success=True):
+    def __init__(self, workspace, title, args, callback=None, *, require_json=False, on_failure=None, channel='regular', accept_result=None, timeout_ms=None, close_on_success=True, private_input=None):
         super().__init__(workspace)
         self.setWindowTitle(title)
         self.resize(480, 120) if close_on_success else self.resize(720, 430)
@@ -28,7 +28,8 @@ class OperationDialog(QDialog):
         command_args = list(args)
         if require_json and '--json' not in command_args:
             command_args.append('--json')
-        self.job = workspace.comms.submit(command_args, self.finished_command, channel=channel, timeout_ms=timeout_ms)
+        private_options = {'private_input': private_input} if private_input is not None else {}
+        self.job = workspace.comms.submit(command_args, self.finished_command, channel=channel, timeout_ms=timeout_ms, **private_options)
         self.job.output.connect(self.output.insertPlainText)
         self.cancel_button.clicked.connect(self.job.cancel)
         self.finished.connect(lambda: self.job.cancel() if not self.job.done else None)
@@ -69,8 +70,8 @@ class OperationDialog(QDialog):
 
 
 class OperationActions:
-    def run_comms_operation(self, title, args, callback=None, *, require_json=False, on_failure=None, channel='regular', accept_result=None, timeout_ms=None, close_on_success=True):
-        dialog = OperationDialog(self, title, args, callback, require_json=require_json, on_failure=on_failure, channel=channel, accept_result=accept_result, timeout_ms=timeout_ms, close_on_success=close_on_success)
+    def run_comms_operation(self, title, args, callback=None, *, require_json=False, on_failure=None, channel='regular', accept_result=None, timeout_ms=None, close_on_success=True, private_input=None):
+        dialog = OperationDialog(self, title, args, callback, require_json=require_json, on_failure=on_failure, channel=channel, accept_result=accept_result, timeout_ms=timeout_ms, close_on_success=close_on_success, private_input=private_input)
         self.operation_dialog = dialog
         if not dialog.auto_closed:
             dialog.show()

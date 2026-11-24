@@ -779,13 +779,37 @@ the selected batch, or lets you confirm that no package sync is needed. A verifi
 publish (or a dry run confirming no changes) is recorded before continuing.
 Config closure and migration retain explicit confirmation and shared lockout
 checks. Before checking a migration batch, the guide refreshes both the target
-and source sessions. **Refresh Migration Sessions** also lets you renew them
+and source sessions when using their normal logins. **Refresh Migration Sessions** also lets you renew them
 without initiating movement. Migration commands are never automatically replayed
 after authentication errors; a failed batch check can be retried, while a failed
 initiation requires checking Comms for the outcome first. The migration dry run must show exactly the selected Config batch:
 the OCCS movement API moves **all eligible Configs**, and `--config-id` only
 verifies membership. Keep other migration activity paused during review and
 initiation, since eligibility can change between those requests.
+
+For an SSO source, select **Use a separate source login for migration** at
+**Review and migrate**. Enter the temporary non-prod username and password,
+then choose **Test Login**. ATool obtains the source access token with this
+account and uses your normal preprod session to submit movement. Config
+preparation, smoke tests and other ATool work keep using your normal sessions;
+no terminal sign-in is needed for the migration account.
+
+**Config → Migrate** opens the same migration login controls before confirmation.
+Both entry points share remembered logins and credentials entered during the
+current ATool session. When a separate source login is selected, only the target
+session is refreshed; the normal source SSO session remains available.
+
+Select **Remember migration login** to save it using the OCCS CLI's existing
+encrypted credential mechanism. The login is stored separately in
+`~/.occs-cli/atool-migration-logins.json`, keyed by the source environment,
+using the CLI's existing credential key. It does not replace an SSO session in
+`.occs-session.json`. Credentials are remembered after a successful login test
+or migration source authentication. Leave Remember unchecked to keep an entered
+password only until ATool closes. **Forget Saved Login** removes the saved
+migration login and clears its in-memory entry. You can replace the login by
+entering new credentials and testing again. Passwords and tokens are excluded
+from ATool settings, settings backups, activity logs and migration reports;
+the migration report records the separate source username used.
 
 The CLI reports migration initiation rather than waiting for completion.
 Verify successful completion in Comms before the guide runs the post-migration

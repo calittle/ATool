@@ -14,6 +14,12 @@ from tools.archive_native import archive_bundle
 
 
 class NativePackagingTests(unittest.TestCase):
+    def test_migration_login_bridge_is_collected_for_native_apps(self):
+        from PyInstaller.utils.hooks import collect_data_files
+        data=collect_data_files('atool_qt')
+        self.assertTrue(any(Path(source).name=='migration_login.mjs' and destination=='atool_qt'
+                            for source,destination in data))
+
     def test_docx_footer_template_is_accessible_through_frozen_parts_directory(self):
         # Exercise the actual spec and PyInstaller data collector without
         # installing python-docx (or downloading wheels). Its file layout is the

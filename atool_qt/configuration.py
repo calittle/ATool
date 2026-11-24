@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QDialogButtonBox, 
     QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTimeEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 from .storage import write_files
 from .comms_login import login_args
+from .migration_login import MigrationLoginDialog
 
 
 def normalize_configs(value):
@@ -497,17 +498,24 @@ class ConfigurationActions:
         settings = self.comms.settings
         source, target = settings.get('config_source_session_alias', 'np'), settings.get('config_target_session_alias', 'pp')
         identity = settings.get('last_config_protection_id') or settings.get('last_config_id') or ''
-        if '--sso' in login_args(source):
-            self.report_error('Migrate Config', 'The migration source uses SSO. Select a password-authenticated source session, or run OCCS CLI migrate with an explicit --source-token. The target can use SSO.')
-            return
         if not self.config_lifecycle_allowed(identity):
             return
-        if confirm and QMessageBox.question(self, 'Confirm Migrate Config', f'Run OCCS migrate?\n\nSource: {source}\nTarget: {target}') != QMessageBox.StandardButton.Yes:
+        dialog=MigrationLoginDialog(self,source,target,source_uses_sso='--sso' in login_args(source))
+        if dialog.exec()!=QDialog.DialogCode.Accepted:
             return
-        aliases = list(dict.fromkeys(alias for alias in (target, source, settings.get('session_alias')) if alias))
+        credentials=dialog.credentials
+        if confirm and QMessageBox.question(self, 'Confirm Migrate Config', f'Migrate all eligible Configs?\n\nSource: {source}\nTarget: {target}') != QMessageBox.StandardButton.Yes:
+            return
+        refresh_aliases=(target,) if credentials is not None else (target,source,settings.get('session_alias'))
+        aliases = list(dict.fromkeys(alias for alias in refresh_aliases if alias))
         def refresh(remaining):
             if remaining:
                 return self.run_comms_operation('Refresh Comms Session ' + remaining[0], login_args(remaining[0]), lambda result: refresh(remaining[1:]))
             if self.config_lifecycle_allowed(identity):
-                self.run_comms_operation('Migrate Config', ['migrate', '--source-session', source, '--target-session', target])
+                args=['migrate','--source-session',source,'--target-session',target]
+                private_options={}
+                if credentials is not None:
+                    args+=['--atool-migration-login','--timeout',str(settings.timeout_ms)]
+                    private_options={'private_input':credentials,'require_json':True}
+                self.run_comms_operation('Migrate Config',args,**private_options)
         refresh(aliases)

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QProcess
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow
 
 from atool_qt.activity import ActivityLog
 from atool_qt.comms_login import CommsLoginDialog, login_args, saved_login_targets
@@ -327,15 +327,41 @@ print(json.dumps({{'ok': True, 'args': args}}))
         self.assertEqual(command.count('--session'), 1)
         self.assertEqual(self.settings.get('session_alias'), 'browser')
 
-    def test_sso_source_migration_stops_before_refreshing_sessions(self):
+    def test_canceling_sso_migration_login_stops_before_refreshing_sessions(self):
         from atool_qt.configuration import ConfigurationActions
         self.workspace.report_error = Mock()
         self.workspace.run_comms_operation = Mock()
-        with patch('atool_qt.configuration.login_args', return_value=['login', '--sso', '--session', 'sso']):
+        self.workspace.config_lifecycle_allowed=Mock(return_value=True)
+        with patch('atool_qt.configuration.login_args', return_value=['login', '--sso', '--session', 'sso']), \
+                patch('atool_qt.configuration.MigrationLoginDialog') as login:
+            login.return_value.exec.return_value=QDialog.DialogCode.Rejected
             ConfigurationActions.migrate_config(self.workspace, confirm=False)
-        self.workspace.report_error.assert_called_once()
-        self.assertIn('source uses SSO', self.workspace.report_error.call_args.args[1])
+            self.assertTrue(login.call_args.kwargs['source_uses_sso'])
+        self.workspace.report_error.assert_not_called()
         self.workspace.run_comms_operation.assert_not_called()
+
+    def test_config_migration_uses_separate_login_and_refreshes_target_only(self):
+        from atool_qt.configuration import ConfigurationActions
+        self.settings.payload['occs'].update(config_source_session_alias='sso',config_target_session_alias='pp')
+        self.workspace.config_lifecycle_allowed=Mock(return_value=True)
+        calls=[]
+        def run(title,args,callback=None,**options):
+            calls.append((args,options))
+            if callback:
+                callback(None)
+        self.workspace.run_comms_operation=run
+        credentials={'username':'migration-user','password':'temporary-secret','remember':True}
+        with patch('atool_qt.configuration.login_args',side_effect=lambda alias:['login','--sso','--session',alias]), \
+                patch('atool_qt.configuration.MigrationLoginDialog') as login:
+            login.return_value.exec.return_value=QDialog.DialogCode.Accepted
+            login.return_value.credentials=credentials
+            ConfigurationActions.migrate_config(self.workspace,confirm=False)
+        self.assertEqual(['login','--sso','--session','pp'],calls[0][0])
+        self.assertEqual(2,len(calls))
+        self.assertIn('--atool-migration-login',calls[1][0])
+        self.assertNotIn('temporary-secret',calls[1][0])
+        self.assertEqual(credentials,calls[1][1]['private_input'])
+        self.assertTrue(calls[1][1]['require_json'])
 
     def test_old_cli_shows_update_guidance(self):
         self.mode.write_text('unsupported')

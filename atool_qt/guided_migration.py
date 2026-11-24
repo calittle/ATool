@@ -14,6 +14,7 @@ from .comms_login import login_args, saved_login_targets
 from .configuration import config_label, normalize_configs
 from .migration_record import MigrationRecord, eligible_batch, operator_identity, timestamp
 from .migration_report import identity
+from .migration_login import MigrationLoginActions
 from .occs import unauthorized_error
 from .shared_actions import SharedPicker
 from .shared_packages import names
@@ -74,7 +75,7 @@ class TargetVerificationDialog(QDialog):
         self.accept()
 
 
-class GuidedMigrationDialog(QDialog):
+class GuidedMigrationDialog(MigrationLoginActions, QDialog):
     def __init__(self,workspace):
         super().__init__(workspace)
         self.workspace=workspace
@@ -292,7 +293,7 @@ class GuidedMigrationDialog(QDialog):
         if getattr(self,'targets_ack',None) is not None:
             self.targets_ack.setChecked(False)
 
-    def operation(self,title,args,callback,*,require_json=True,remote_write=False):
+    def operation(self,title,args,callback,*,require_json=True,remote_write=False,private_input=None):
         token=object()
         self.operation_token=token
         self.set_busy(True,lifecycle=True)
@@ -315,7 +316,8 @@ class GuidedMigrationDialog(QDialog):
             if self.record and self.record.data.get('pending'):
                 self.render()
             if authentication_failed:
-                message='Authentication was rejected (401/Unauthorized). Refresh the source and target sessions before retrying.'
+                message=('Authentication was rejected (401/Unauthorized). Test the migration source login and refresh the target SSO session before retrying.'
+                         if private_input is not None else 'Authentication was rejected (401/Unauthorized). Refresh the source and target sessions before retrying.')
             if self.record and title=='Review Migration Batch' and not_eligible:
                 message+=' The Configs may already be migrated. Verify them in target '+self.record.data['target']+' and use I Verified Migration in Target to continue.'
             suffix=(' Check Comms before retrying this remote write.' if remote_write else
@@ -330,7 +332,8 @@ class GuidedMigrationDialog(QDialog):
                     callback(result.value)
                 except (OSError,ValueError,KeyError,TypeError) as error:
                     show_error(str(error))
-        job=self.workspace.run_comms_operation(title,args,success,require_json=require_json,on_failure=failed)
+        private_options={'private_input':private_input} if private_input is not None else {}
+        job=self.workspace.run_comms_operation(title,args,success,require_json=require_json,on_failure=failed,**private_options)
         job.completed.connect(lambda result:failed('Operation canceled or did not return valid evidence.') if self.operation_token is token else None)
         return job
 
@@ -566,12 +569,18 @@ class GuidedMigrationDialog(QDialog):
             self.button('I Verified Movement Did Not Start…',self.clear_uncertain_migration)
             self.button('I Verified Migration in Target…',self.external_completion)
         else:
+            self.render_migration_login()
             self.button('Refresh Migration Sessions',self.refresh_migration_sessions)
             self.button('Check Batch and Migrate…',self.migrate)
             self.button('I Verified Migration in Target…',self.external_completion)
         self.note('If the Configs are already migrated, verify successful completion in the target environment and choose I Verified Migration in Target. '
                   'This records your confirmation and continues to comparison testing without submitting another migration. '
-                  'A password-authenticated source session is required for CLI migration.')
+                  'CLI migration needs a password-authenticated source login. You can use a separate migration login while keeping normal source and target sessions on SSO.')
+
+    @property
+    def migration_source(self):
+        self.require_stage('migrate')
+        return self.record.data['source']
 
     def clear_uncertain_migration(self):
         self.require_stage('migrate')
@@ -585,9 +594,10 @@ class GuidedMigrationDialog(QDialog):
     def refresh_migration_sessions(self,callback=None):
         self.require_stage('migrate')
         data=self.record.data
-        if '--sso' in login_args(data['source']):
-            raise ValueError('The migration source uses SSO. Use a password-authenticated source, or migrate externally and record completion here.')
-        aliases=list(dict.fromkeys((data['target'],data['source'])))
+        separate=self.migration_login_input() is not None
+        if not separate and '--sso' in login_args(data['source']):
+            raise ValueError('The migration source uses SSO. Select Use a separate source login for migration and enter the password login.')
+        aliases=list(dict.fromkeys((data['target'],) if separate else (data['target'],data['source'])))
         def refresh(remaining):
             if remaining:
                 alias=remaining[0]
@@ -598,7 +608,7 @@ class GuidedMigrationDialog(QDialog):
             if callback:
                 callback()
             else:
-                self.status.setText('Source and target sessions refreshed. You can check the migration batch now.')
+                self.status.setText('Target session refreshed. Test the separate migration source login before migration.' if separate else 'Source and target sessions refreshed. You can check the migration batch now.')
         refresh(aliases)
 
     def migrate(self):
@@ -608,10 +618,13 @@ class GuidedMigrationDialog(QDialog):
         if self.protected():
             return
         data=self.record.data
-        if '--sso' in login_args(data['source']):
-            raise ValueError('The migration source uses SSO. Use a password-authenticated source, or migrate externally and record completion here.')
+        credentials=self.migration_login_input()
+        if credentials is None and '--sso' in login_args(data['source']):
+            raise ValueError('The migration source uses SSO. Select Use a separate source login for migration and enter the password login.')
         args=['migrate','--source-session',data['source'],'--target-session',data['target'],
               '--config-id',data['configs'][0]['id'],'--timeout',str(self.workspace.comms.settings.timeout_ms)]
+        if credentials is not None:
+            args.append('--atool-migration-login')
         def reviewed(value):
             if value.get('ok') is not True or value.get('dryRun') is not True:
                 raise ValueError('The CLI did not confirm a migration dry run.')
@@ -635,10 +648,12 @@ class GuidedMigrationDialog(QDialog):
                 except ValueError:
                     self.record.event('movement_batch_changed',eligible=actual)
                     self.status.setText('The movement batch changed after review. Check every moved Config in Comms before confirming completion.')
-            self.operation('Initiate Guided Migration',args,initiated,remote_write=True)
+            self.operation('Initiate Guided Migration',args,initiated,remote_write=True,private_input=credentials)
         def check_batch():
             self.record.event('migration_batch_check_started',dry_run=True,source=data['source'],target=data['target'])
-            self.operation('Review Migration Batch',args+['--dry-run'],reviewed)
+            if credentials is not None:
+                self.record.event('migration_source_login_selected',username=credentials['username'])
+            self.operation('Review Migration Batch',args+['--dry-run'],reviewed,private_input=credentials)
         self.refresh_migration_sessions(check_batch)
 
     def render_awaiting_completion(self):

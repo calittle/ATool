@@ -10,6 +10,14 @@ from atool_qt.migration_report import migration_report, write_migration_report
 
 
 class MigrationReportTests(unittest.TestCase):
+    def test_separate_migration_account_is_reported_without_credentials(self):
+        record=self.record()
+        record['events'].append(dict(at='2026-11-19T04:05:00Z',kind='migration_source_login_selected',
+                                     username='migration-user',password='DO_NOT_EXPORT',token='DO_NOT_EXPORT'))
+        report=migration_report(record,Path('/migration'))
+        self.assertIn('Separate migration source login: migration-user',report)
+        self.assertNotIn('DO_NOT_EXPORT',report)
+
     def record(self):
         actor=dict(displayName='Jane Operator',user='joperator')
         return dict(version=1,stage='complete',created_at='2026-11-19T04:00:00+00:00',

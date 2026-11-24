@@ -5,6 +5,7 @@ import codecs
 import json
 import logging
 import os
+import shutil
 import signal
 import time
 from dataclasses import dataclass
@@ -64,6 +65,10 @@ class CommsSettings:
             args = [args[0], '--session', alias, *args[1:]]
         runtime = bundled_runtime()
         node = str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'
+        if args[:1] == ['migration-login'] or '--atool-migration-login' in args:
+            cli = Path(shutil.which(self.cli) or self.cli).expanduser().resolve()
+            bridge = Path(__file__).with_name('migration_login.mjs')
+            return [node, str(bridge), str(cli), *args]
         return [node, self.cli, *args] if self.cli.endswith('.js') else [self.cli, *args]
 
     @property
@@ -118,9 +123,10 @@ class CommandJob(QObject):
     output = Signal(str)
     http_trace = Signal(str)
 
-    def __init__(self, settings, args, parent=None, timeout_ms=None):
+    def __init__(self, settings, args, parent=None, timeout_ms=None, *, private_input=None):
         super().__init__(parent)
         self.settings, self.args = settings, args
+        self.private_input = private_input
         self.process = QProcess(self)
         if os.name != 'nt':
             parameters = QProcess.UnixProcessParameters()
@@ -194,11 +200,14 @@ class CommandJob(QObject):
                 expanded=os.pathsep.join(str(Path(folder.strip()).expanduser()) for folder in folders.split(os.pathsep) if folder.strip())
                 environment.insert('PATH',expanded+os.pathsep+environment.value('PATH'))
         debug = bool(self.settings.payload.get('diagnostics', {}).get('debug_logging'))
-        environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] != ['login'] else '0')
+        environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] not in (['login'], ['migration-login']) and '--atool-migration-login' not in args else '0')
         self.process.setProcessEnvironment(environment)
         if self.settings.cwd:
             self.process.setWorkingDirectory(self.settings.cwd)
         self.process.start(command[0], command[1:])
+        if self.private_input is not None:
+            self.process.write(json.dumps(self.private_input).encode('utf-8'))
+            self.private_input = None
         self.process.closeWriteChannel()
         if args[:1] == ['login'] and '--sso' in args and timeout_ms is None:
             timeout_ms = self.settings.sso_timeout_ms + 30000
@@ -304,7 +313,7 @@ class CommandJob(QObject):
                 result = CommandResult(-1, '', self.original_failure.message + '\n\nAutomatic login failed: ' + result.message, None)
         # Migration uses two sessions and may already have initiated movement.
         # Its caller refreshes both explicitly; never guess an alias or replay it.
-        elif not result.successful and not self.cancelled and not self.timed_out and self.args[:1] != ['migrate']:
+        elif not result.successful and not self.cancelled and not self.timed_out and self.args[:1] not in (['migrate'], ['migration-login']):
             from .comms_login import login_args, sso_expired_error
             try:
                 alias = str(self.args[self.args.index('--session') + 1])
@@ -340,6 +349,7 @@ class CommandJob(QObject):
             finally:
                 self.resource_download.cleanup()
         self.done = True
+        self.private_input = None
         self.duration = self.elapsed_seconds
         self.completed.emit(result)
 
@@ -375,11 +385,12 @@ class CommsService(QObject):
         self.active, self.pending = [], []
         self.logins = {}
         self.login_waiters = {}
+        self.migration_logins = {}
 
-    def submit(self, args, callback=None, timeout_ms=None, *, channel='regular', exclusive_key=None):
+    def submit(self, args, callback=None, timeout_ms=None, *, channel='regular', exclusive_key=None, private_input=None):
         if channel not in self.channel_limits:
             raise ValueError('Unknown Comms operation channel.')
-        job = CommandJob(self.settings, args, self, timeout_ms)
+        job = CommandJob(self.settings, args, self, timeout_ms, private_input=private_input)
         job.channel = channel
         job.exclusive_key = exclusive_key or self.operation_key(args)
         if callback:

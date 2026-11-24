@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from atool_qt.configuration import ConfigLockouts, ConfigPicker, filtered_configs, lockout_window, login_args, normalize_configs
 from atool_qt.occs import CommandResult
 from atool_qt.session import demo_session
@@ -361,7 +361,8 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
             with patch('atool_qt.configuration.QMessageBox.question', side_effect=[QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]):
                 dialog.submit()
             self.assertEqual(['close-config', '--session', 'np', '--config-id', 'Alpha'], calls[-1])
-            window.migrate_config(confirm=False)
+            with patch('atool_qt.configuration.MigrationLoginDialog.exec',return_value=QDialog.DialogCode.Accepted):
+                window.migrate_config(confirm=False)
             self.assertEqual(['pp', 'np', 'default'], [args[args.index('--session') + 1] for args in calls[-4:-1]])
             self.assertEqual(['migrate', '--source-session', 'np', '--target-session', 'pp'], calls[-1])
         window.create_config()

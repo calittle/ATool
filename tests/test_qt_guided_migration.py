@@ -24,6 +24,9 @@ class GuidedMigrationTests(unittest.TestCase):
 
     def setUp(self):
         from atool_qt.window import WorkspaceWindow
+        remembered=patch('atool_qt.migration_login.remembered_migration_login',return_value='')
+        remembered.start()
+        self.addCleanup(remembered.stop)
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
@@ -54,6 +57,10 @@ elif args[0]=='login':
         sys.exit(2)
     print('Session refreshed')
 elif args[0]=='migrate':
+    if control.get('expect_migration_login'):
+        credentials=json.load(sys.stdin)
+        if (credentials.get('username')!='migration-user' or credentials.get('password')!='temporary-secret'
+                or '--atool-migration-login' not in args):sys.exit(3)
     if control.get('already_migrated'):
         print('ConfigId 10 was not returned in the eligible movement list. eligible: []',file=sys.stderr)
         sys.exit(1)
@@ -310,6 +317,96 @@ elif args[0]=='smoke':
         self.assertIn('--dry-run',movement[2])
         self.assertNotIn('--dry-run',movement[3])
         self.assertEqual(record.data['stage'],'awaiting_completion')
+
+    def test_separate_login_migrates_with_sso_and_keeps_secrets_out_of_evidence(self):
+        record=self.start_record()
+        self.smoke()
+        self.skip_sync()
+        self.close_configs()
+        self.configure(expect_migration_login=True)
+        self.dialog.separate_migration_login.setChecked(True)
+        self.dialog.migration_username.setText('migration-user')
+        self.dialog.migration_password.setText('temporary-secret')
+        self.dialog.remember_migration_login.setChecked(True)
+        original_command=self.settings.command
+        def command(args):
+            if '--atool-migration-login' in args:
+                return [str(self.cli),*args]
+            return original_command(args)
+        with patch.object(self.settings,'command',side_effect=command), \
+                patch('atool_qt.guided_migration.login_args',side_effect=lambda alias:['login','--sso','--session',alias]), \
+                patch('atool_qt.guided_migration.QMessageBox.question',return_value=QMessageBox.StandardButton.Yes):
+            self.dialog.migrate()
+            self.until(lambda:not self.dialog.busy)
+        self.assertEqual('awaiting_completion',record.data['stage'])
+        calls=[json.loads(line) for line in self.control.with_suffix('.calls.jsonl').read_text().splitlines()]
+        logins=[call for call in calls if call[0]=='login']
+        self.assertEqual([['login','--sso','--session','pp','--sso-timeout','300000']],logins)
+        migrations=[call for call in calls if call[0]=='migrate']
+        self.assertEqual(2,len(migrations))
+        self.assertIn('--dry-run',migrations[0])
+        self.assertNotIn('--dry-run',migrations[1])
+        for evidence in (record.path.read_text(),self.control.with_suffix('.calls.jsonl').read_text(),self.window.activity.toPlainText()):
+            self.assertNotIn('temporary-secret',evidence)
+        self.assertEqual('unrelated-default',self.settings.get('session_alias'))
+        self.assertTrue(any(event['kind']=='migration_source_login_selected' and event['username']=='migration-user'
+                            for event in record.data['events']))
+
+    def test_remembered_migration_login_reappears_and_forget_clears_memory(self):
+        self.start_record()
+        self.smoke()
+        self.skip_sync()
+        self.close_configs()
+        with patch('atool_qt.migration_login.remembered_migration_login',return_value='saved-user'):
+            self.dialog.render()
+            self.assertTrue(self.dialog.separate_migration_login.isChecked())
+            self.assertTrue(self.dialog.remember_migration_login.isChecked())
+            self.assertEqual({'username':'saved-user','password':'','remember':True},self.dialog.migration_login_input())
+        self.dialog.migration_password.setText('temporary-secret')
+        self.dialog.remember_migration_login.setChecked(False)
+        self.dialog.render()
+        self.assertEqual('temporary-secret',self.dialog.migration_password.text())
+        self.assertFalse(self.dialog.remember_migration_login.isChecked())
+        from unittest.mock import Mock
+        operation=Mock()
+        with patch.object(self.dialog,'operation',operation):
+            self.dialog.forget_migration_login()
+        operation.call_args.args[2]({'ok':True})
+        self.assertEqual('',self.dialog.migration_username.text())
+        self.assertEqual('',self.dialog.migration_password.text())
+        self.assertFalse(self.dialog.remember_migration_login.isChecked())
+
+    def test_separate_login_required_fields_block_before_refresh(self):
+        self.start_record()
+        self.smoke()
+        self.skip_sync()
+        self.close_configs()
+        self.dialog.separate_migration_login.setChecked(True)
+        with patch.object(self.dialog,'operation') as operation:
+            with self.assertRaisesRegex(ValueError,'username and password'):
+                self.dialog.migrate()
+        operation.assert_not_called()
+
+    def test_login_button_passes_credentials_privately_and_does_not_save_user_settings(self):
+        self.start_record()
+        self.smoke()
+        self.skip_sync()
+        self.close_configs()
+        self.dialog.separate_migration_login.setChecked(True)
+        self.dialog.migration_username.setText('migration-user')
+        self.dialog.migration_password.setText('temporary-secret')
+        self.dialog.remember_migration_login.setChecked(True)
+        with patch.object(self.dialog,'operation') as operation:
+            self.dialog.test_migration_login_button.click()
+        title,args,callback=operation.call_args.args
+        self.assertEqual('Test Migration Source Login',title)
+        self.assertNotIn('temporary-secret',args)
+        self.assertEqual({'username':'migration-user','password':'temporary-secret','remember':True},
+                         operation.call_args.kwargs['private_input'])
+        callback({'ok':True})
+        self.assertIn('Login remembered',self.dialog.status.text())
+        self.settings.save()
+        self.assertNotIn('temporary-secret',self.settings.path.read_text())
 
     def test_failed_target_refresh_does_not_check_or_initiate_movement(self):
         record=self.start_record()

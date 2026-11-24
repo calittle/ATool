@@ -101,6 +101,8 @@ def event_description(event):
         return 'Sessions refreshed: '+', '.join(event.get('aliases',[]))
     if kind=='migration_batch_check_started':
         return 'Read-only migration batch check started'
+    if kind=='migration_source_login_selected':
+        return 'Separate migration source login: '+str(event.get('username','Not recorded'))
     if kind in ('migration_batch_review','migration_started','movement_batch_changed'):
         action={'migration_batch_review':'Eligible batch reviewed','migration_started':'Migration initiation attempted',
                 'movement_batch_changed':'Movement batch changed after review'}[kind]
