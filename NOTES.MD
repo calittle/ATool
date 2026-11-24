@@ -1,5 +1,28 @@
 # ATool Release Notes
 
+## v2.7.0
+
+- Use a separate non-prod username/password login for migration while keeping
+  normal ATool work on SSO. Guided Migration and Config → Migrate share login
+  controls, Test Login, Remember migration login, and Forget Saved Login; no
+  terminal setup is needed for the migration account. Remembered credentials
+  use the OCCS CLI's encryption mechanism in a separate file, without replacing
+  normal SSO sessions. Migration refreshes the target session and obtains the
+  source token with the separate login. Keep passwords and tokens out of ATool
+  settings, backups, activity logs, and migration reports; record the separate
+  source username in guided migration reports.
+- Keep only the latest settings backup and remove older settings backups after
+  a successful save, including when settings are unchanged. Leave package
+  backups alone and retain existing recovery copies when a settings save fails.
+- Merge independent routine settings updates from multiple ATool windows,
+  avoiding unnecessary external-change errors while preserving conflicting-edit
+  checks. Skip rewriting settings that have not changed.
+- Keep each package window's mapped input file associated with its previews,
+  including after editing or publishing, instead of picking up another window's
+  last-used file. Reuse an open preview dialog for the same package and reject
+  stale dialogs after switching packages. Make preview controls scrollable and
+  arrange render choices to fit smaller screens.
+
 ## v2.6.0
 
 - Add Package → Guided Migration… to run the migration SOP as a saved,
