@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTimeEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 from .storage import write_files
-from .comms_login import login_args
+from .comms_login import login_args, saved_login_targets
 from .migration_login import MigrationLoginDialog
 
 
@@ -239,6 +239,9 @@ class ConfigPicker(QDialog):
         row.addStretch()
         self.lock_button = None
         if mode == 'list':
+            self.objects_button = QPushButton('View Objects')
+            self.objects_button.clicked.connect(self.view_objects)
+            row.addWidget(self.objects_button)
             self.lock_button = QPushButton('Lock Configuration')
             self.lock_button.clicked.connect(self.toggle_lock)
             row.addWidget(self.lock_button)
@@ -289,6 +292,7 @@ class ConfigPicker(QDialog):
         config = self.current()
         self.submit_button.setEnabled(bool(config))
         if self.lock_button:
+            self.objects_button.setEnabled(bool(config))
             self.lock_button.setEnabled(bool(config))
             if config:
                 try:
@@ -297,6 +301,21 @@ class ConfigPicker(QDialog):
                 except (ValueError, OSError) as error:
                     self.status.setText(str(error))
                     self.lock_button.setEnabled(False)
+
+    def view_objects(self):
+        config = self.current()
+        if config:
+            from .config_objects import ConfigObjectsDialog
+            dialog = ConfigObjectsDialog(self.workspace, config, self.session_alias, parent=self)
+            self.workspace.config_objects_dialog = dialog
+            dialog.finished.connect(self.return_from_objects)
+            dialog.show()
+
+    def return_from_objects(self, *_):
+        if self.isVisible():
+            self.raise_()
+            self.activateWindow()
+            self.tree.setFocus()
 
     def toggle_lock(self):
         config = self.current()
@@ -412,8 +431,9 @@ class ConfigurationActions:
 
     def load_configs(self, mode):
         alias = self.comms.settings.get('config_source_session_alias', 'np') if mode == 'close' else self.comms.settings.get('session_alias') or ''
+        alias = alias or saved_login_targets()[1]
         args = ['list-configs', '--timeout', str(self.comms.settings.timeout_ms)]
-        if mode == 'close':
+        if alias:
             args += ['--session', alias]
         def complete(result):
             configs = normalize_configs(result.value)

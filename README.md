@@ -960,6 +960,18 @@ Rare recovery and maintenance actions remain available under `Package ->
 Advanced`: `Open Local Package...`, `Open Raw AT...`, and `Clean Local
 Packages...`.
 
+## Config Objects
+
+In `Config -> List`, select a configuration and click **View Objects** for a
+read-only preflight scan in that list's Comms environment. Search the attached
+objects, registry changes (including standalone fonts and styles), and
+package/document/layout dependencies with their owning configurations.
+Large scans can take several minutes; cancel the operation or close the viewer
+to stop it. **Refresh** runs a new scan. Viewing objects is also available for
+locked configurations.
+
+This requires OCCS CLI preflight support for `--session` and `--json`.
+
 ## Config Locks And Lockouts
 
 ATool can protect configurations from being closed or migrated. This protection

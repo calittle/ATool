@@ -349,7 +349,7 @@ class SettingsConfigInterfaceTests(unittest.TestCase):
                 callback(result)
         with patch.object(window, 'run_comms_operation', side_effect=command):
             window.load_configs('set')
-            self.assertEqual(['list-configs', '--timeout', '360000'], calls[-1])
+            self.assertEqual(['list-configs', '--timeout', '360000', '--session', 'default'], calls[-1])
             window.config_dialog.picker.setCurrentIndex(1)
             window.config_dialog.submit()
             self.assertEqual('20', window.comms.settings.get('last_config_id'))
