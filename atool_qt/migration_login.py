@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLayout,
                               QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .comms_login import saved_login_targets
@@ -60,6 +60,8 @@ class MigrationLoginActions:
         self.body_layout.addWidget(self.separate_migration_login)
         self.migration_login_fields=QWidget()
         form=QFormLayout(self.migration_login_fields)
+        form.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.migration_username=QLineEdit(state['username'])
         self.migration_password=QLineEdit(state['password'])
         self.migration_password.setEchoMode(QLineEdit.EchoMode.Password)
@@ -139,7 +141,6 @@ class MigrationLoginDialog(MigrationLoginActions, QDialog):
         self.busy=False
         self.login_operation=None
         self.setWindowTitle('Password Login')
-        self.resize(700,360)
         layout=QVBoxLayout(self)
         label=QLabel(f'Environment: {source}' if purpose=='conversion' else f'Source: {source}\nTarget: {target}')
         label.setTextFormat(Qt.TextFormat.PlainText)
@@ -159,6 +160,8 @@ class MigrationLoginDialog(MigrationLoginActions, QDialog):
         self.buttons.accepted.connect(self.guard(self.submit))
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+        self.ensurePolished()
+        self.resize(700, max(self.sizeHint().height(), layout.totalHeightForWidth(700)))
 
     def note(self, text):
         label=QLabel(text)
