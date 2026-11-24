@@ -2,6 +2,19 @@
 
 ## v2.7.0
 
+### Package publishing fix
+
+- Bundle OCCS CLI v1.4.3 (previously v1.4.2). Package listing, retrieval and
+  publishing now honor the selected Comms session instead of falling back to
+  the current CLI session. This fixes publishing reporting an open ConfigId as
+  missing when it exists in the selected environment; both the dry run and the
+  upload retain the selected session.
+- The CLI update also preserves literal HTML entities in content parsing and
+  model previews, removes nested markup consistently from conditional text and
+  Oracle error messages, and uses fixed password-source labels in diagnostics.
+  Locked dependencies include axios 1.13.6 → 1.20.0, jsonpath-plus 10.2.0 →
+  10.3.0, and source-map-js 1.2.1 → 1.2.4.
+
 ### Updated build
 
 - Store independent SSO and Password pathways for the same environment. Enter
