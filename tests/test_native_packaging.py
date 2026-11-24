@@ -19,6 +19,8 @@ class NativePackagingTests(unittest.TestCase):
         data=collect_data_files('atool_qt')
         self.assertTrue(any(Path(source).name=='migration_login.mjs' and destination=='atool_qt'
                             for source,destination in data))
+        self.assertTrue(any(Path(source).name=='password_conversion.mjs' and destination=='atool_qt'
+                            for source,destination in data))
 
     def test_docx_footer_template_is_accessible_through_frozen_parts_directory(self):
         # Exercise the actual spec and PyInstaller data collector without

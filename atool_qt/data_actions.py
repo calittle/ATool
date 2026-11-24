@@ -18,6 +18,7 @@ from .sample_data import SampleBuilder
 from .grids import configure_grid
 from .resource_actions import RESOURCE_TYPES
 from .comms_login import saved_login_targets
+from .migration_login import MigrationLoginDialog, selected_password_login
 
 
 def xml_bill_ids(path):
@@ -107,8 +108,14 @@ class XmlConversionDialog(QDialog):
         self.session_alias.setEditable(True)
         self.session_alias.addItems(sorted(self.login_targets))
         self.session_alias.setCurrentText(str(workspace.comms.settings.get('session_alias') or current or ''))
-        form.addRow('Comms session', self.session_alias)
+        login_row=QHBoxLayout()
+        login_row.addWidget(self.session_alias,1)
+        self.password_login_button=QPushButton('Password Login…')
+        self.password_login_button.clicked.connect(self.configure_password_login)
+        login_row.addWidget(self.password_login_button)
+        form.addRow('Comms session', login_row)
         self.login_info = QLabel()
+        self.login_info.setTextFormat(Qt.TextFormat.PlainText)
         self.login_info.setWordWrap(True)
         form.addRow(self.login_info)
         self.session_alias.currentTextChanged.connect(self.update_login_info)
@@ -134,15 +141,38 @@ class XmlConversionDialog(QDialog):
 
     def update_login_info(self):
         target = self.login_targets.get(self.session_alias.currentText().strip(), {})
+        self.password_login_button.setEnabled(not self.workspace.comms.settings.get('use_static_xsd_conversion', False))
         if self.workspace.comms.settings.get('use_static_xsd_conversion', False):
             text = 'Local XSD conversion does not require a Comms login.'
+            self.password_login_button.setEnabled(False)
         elif target.get('authType') == 'sso':
-            text = 'This session uses SSO. Select a password session for Oracle-hosted conversion, or enable local XSD conversion in User Settings.'
+            text = 'This session uses SSO. Oracle-hosted conversion uses a separate Password Login shared with migration, without replacing SSO.'
+            self.password_login_button.setEnabled(True)
         elif target:
             text = 'This session uses password login for Oracle-hosted conversion.'
         else:
-            text = 'Oracle-hosted conversion requires a password session. Select its alias; login details are managed under Settings → Sign In to Comms.'
+            text = 'Select a Comms environment. Password Login lets you enter or reuse separate credentials for Oracle-hosted conversion.'
+        if self.password_login_button.isEnabled():
+            try:
+                login=selected_password_login(self.workspace.comms,self.session_alias.currentText().strip())
+                if login is not None:
+                    text=f"Separate password login: {login['username']}. Shared with migration; normal Comms sessions stay unchanged."
+            except ValueError:
+                text='Use Password Login to enter or repair the separate password credentials for this environment.'
         self.login_info.setText(text)
+
+    def configure_password_login(self):
+        alias=self.session_alias.currentText().strip()
+        if not alias:
+            self.status.setText('Select a Comms environment before configuring its password login.')
+            return False
+        target=self.login_targets.get(alias,{})
+        dialog=MigrationLoginDialog(self.workspace,alias,source_uses_sso=target.get('authType')=='sso',purpose='conversion')
+        accepted=dialog.exec()==QDialog.DialogCode.Accepted
+        self.update_login_info()
+        if accepted:
+            self.status.setText('Password login selected for XML conversion.' if dialog.credentials is not None else 'Using the normal password session for XML conversion.')
+        return accepted
 
     def browse(self, *, initial=False):
         settings = self.workspace.settings
@@ -171,11 +201,31 @@ class XmlConversionDialog(QDialog):
             self.bill.setCurrentIndex(1)
 
     def run_conversion(self):
+        private_input=None
         try:
             args = conversion_args(self.workspace.comms.settings, self.xml.text(), self.reroot.text(), self.bill.currentText())
             alias = self.session_alias.currentText().strip()
             if alias:
                 args += ['--session', alias]
+            if '--xsd' not in args:
+                try:
+                    private_input=selected_password_login(self.workspace.comms,alias)
+                except ValueError:
+                    if not self.configure_password_login():
+                        return
+                    private_input=selected_password_login(self.workspace.comms,alias)
+                if private_input is None and self.login_targets.get(alias,{}).get('authType')=='sso':
+                    if not self.configure_password_login():
+                        return
+                    private_input=selected_password_login(self.workspace.comms,alias)
+                    if private_input is None:
+                        raise ValueError('Oracle-hosted conversion requires a separate password login for this SSO environment.')
+                if private_input is None and self.login_targets.get(alias,{}).get('authType')=='password':
+                    # Let the private bridge import a legacy encrypted CLI login;
+                    # the converter must never select unrelated environment credentials.
+                    private_input={}
+                if private_input is not None:
+                    args.append('--atool-password-login')
         except ValueError as error:
             self.status.setText(str(error))
             return
@@ -187,14 +237,19 @@ class XmlConversionDialog(QDialog):
             return
         self.workspace.settings.setValue('lastConversionDirectory', str(Path(self.xml.text()).expanduser().resolve().parent))
         self.run_button.setEnabled(False)
+        self.password_login_button.setEnabled(False)
+        self.session_alias.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.status.setText('Converting XML…')
         self.log.clear()
-        self.job = self.workspace.comms.submit(args, lambda result: self.conversion_finished(result, output))
+        private_options={'private_input':private_input} if private_input is not None else {}
+        self.job = self.workspace.comms.submit(args, lambda result: self.conversion_finished(result, output),**private_options)
         self.job.output.connect(self.log.insertPlainText)
 
     def conversion_finished(self, result, output):
         self.run_button.setEnabled(True)
+        self.password_login_button.setEnabled(not self.workspace.comms.settings.get('use_static_xsd_conversion',False))
+        self.session_alias.setEnabled(True)
         self.cancel_button.setEnabled(False)
         if not result.successful:
             self.status.setText(result.message)

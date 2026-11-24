@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import signal
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +66,7 @@ class CommsSettings:
             args = [args[0], '--session', alias, *args[1:]]
         runtime = bundled_runtime()
         node = str(runtime / 'node' / ('node.exe' if os.name == 'nt' else 'node')) if runtime else 'node'
-        if args[:1] == ['migration-login'] or '--atool-migration-login' in args:
+        if args[:1] == ['migration-login'] or '--atool-migration-login' in args or '--atool-password-login' in args:
             cli = Path(shutil.which(self.cli) or self.cli).expanduser().resolve()
             bridge = Path(__file__).with_name('migration_login.mjs')
             return [node, str(bridge), str(cli), *args]
@@ -127,6 +128,7 @@ class CommandJob(QObject):
         super().__init__(parent)
         self.settings, self.args = settings, args
         self.private_input = private_input
+        self.conversion_home = None
         self.process = QProcess(self)
         if os.name != 'nt':
             parameters = QProcess.UnixProcessParameters()
@@ -200,14 +202,27 @@ class CommandJob(QObject):
                 expanded=os.pathsep.join(str(Path(folder.strip()).expanduser()) for folder in folders.split(os.pathsep) if folder.strip())
                 environment.insert('PATH',expanded+os.pathsep+environment.value('PATH'))
         debug = bool(self.settings.payload.get('diagnostics', {}).get('debug_logging'))
-        environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] not in (['login'], ['migration-login']) and '--atool-migration-login' not in args else '0')
+        private_login = args[:1] == ['migration-login'] or '--atool-migration-login' in args or '--atool-password-login' in args
+        environment.insert('OCCS_HTTP_DEBUG', '1' if debug and self.phase == 'original' and args[:1] != ['login'] and not private_login else '0')
         self.process.setProcessEnvironment(environment)
         if self.settings.cwd:
             self.process.setWorkingDirectory(self.settings.cwd)
-        self.process.start(command[0], command[1:])
+        encoded_input = None
         if self.private_input is not None:
-            self.process.write(json.dumps(self.private_input).encode('utf-8'))
+            private_input = dict(self.private_input)
+            if args[:1] == ['convertxml'] and '--atool-password-login' in args:
+                try:
+                    self.conversion_home = tempfile.TemporaryDirectory(prefix='atool-conversion-', ignore_cleanup_errors=True)
+                except OSError as error:
+                    self.stderr.extend(str(error).encode('utf-8'))
+                    self.finish(-1)
+                    return
+                private_input['conversion_home'] = self.conversion_home.name
+            encoded_input = json.dumps(private_input).encode('utf-8')
             self.private_input = None
+        self.process.start(command[0], command[1:])
+        if encoded_input is not None:
+            self.process.write(encoded_input)
         self.process.closeWriteChannel()
         if args[:1] == ['login'] and '--sso' in args and timeout_ms is None:
             timeout_ms = self.settings.sso_timeout_ms + 30000
@@ -313,7 +328,7 @@ class CommandJob(QObject):
                 result = CommandResult(-1, '', self.original_failure.message + '\n\nAutomatic login failed: ' + result.message, None)
         # Migration uses two sessions and may already have initiated movement.
         # Its caller refreshes both explicitly; never guess an alias or replay it.
-        elif not result.successful and not self.cancelled and not self.timed_out and self.args[:1] not in (['migrate'], ['migration-login']):
+        elif not result.successful and not self.cancelled and not self.timed_out and self.args[:1] not in (['migrate'], ['migration-login']) and '--atool-password-login' not in self.args:
             from .comms_login import login_args, sso_expired_error
             try:
                 alias = str(self.args[self.args.index('--session') + 1])
@@ -350,6 +365,9 @@ class CommandJob(QObject):
                 self.resource_download.cleanup()
         self.done = True
         self.private_input = None
+        if self.conversion_home is not None:
+            self.conversion_home.cleanup()
+            self.conversion_home = None
         self.duration = self.elapsed_seconds
         self.completed.emit(result)
 
@@ -357,6 +375,15 @@ class CommandJob(QObject):
         from .comms_login import login_args
         self.phase = 'login'
         args = login_args(self.login_alias)
+        if '--sso' not in args:
+            from .migration_login import selected_password_login
+            try:
+                credentials=selected_password_login(self.service,self.login_alias)
+            except ValueError:
+                credentials=None
+            if credentials is not None:
+                self.private_input=credentials
+                args=['migration-login','signin',*args[1:]]
         self.start_command(args, None if '--sso' in args else self.settings.timeout_ms)
 
 

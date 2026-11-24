@@ -47,11 +47,28 @@ export function decryptStoredCredentialValue(value) {
 ''')
         (self.cli / 'lib' / 'session.js').write_text('''
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-export function loadSession({sessionName}) {
+import {encryptStoredCredentialValue,decryptStoredCredentialValue} from './credentials.js';
+export function loadSession({sessionName,includeCredentials=false}) {
   const store = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.occs-session.json'), 'utf8'));
   const key = store.aliases[sessionName] || sessionName;
   if (!store.sessions[key]) throw new Error('Session not found.');
-  return {...store.sessions[key], sessionKey:key};
+  const value={...store.sessions[key], sessionKey:key};
+  if (includeCredentials && value.credentials) {
+    value.username=value.credentials.username;
+    value.password=decryptStoredCredentialValue(value.credentials.passwordEnc);
+  }
+  return value;
+}
+export function saveSession(value,{sessionName,makeCurrent=true}={}) {
+  const file=path.join(os.homedir(),'.occs-session.json');
+  const store=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{sessions:{},aliases:{}};
+  const session={...store.sessions[value.sessionKey],...value};
+  if (session.password) session.credentials={username:session.username,passwordEnc:encryptStoredCredentialValue(session.password)};
+  delete session.username; delete session.password;
+  store.sessions[value.sessionKey]=session;
+  if (sessionName) store.aliases[sessionName]=value.sessionKey;
+  if (makeCurrent) store.currentSessionKey=value.sessionKey;
+  fs.writeFileSync(file,JSON.stringify(store),{mode:0o600});
 }
 ''')
         (self.cli / 'lib' / 'migration.js').write_text('''
@@ -65,16 +82,35 @@ export async function migrateCommand(id, opts) {
     accessToken:opts.sourceToken, initiationResponse:{detail:'MIGRATION_TOKEN'}}));
 }
 ''')
+        (self.cli / 'lib' / 'preview.js').write_text('''
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import axios from '../node_modules/axios/index.js'; import {loadSession} from './session.js';
+export async function convertXmlCommand(opts) {
+  const source=loadSession({sessionName:opts.session});
+  if (source.authType !== 'password' || source.token || source.cookieJar) throw new Error('SSO credentials leaked into conversion');
+  if (opts.username !== 'migration-user' || opts.password !== 'temporary-secret') throw new Error('Wrong password profile');
+  const response=await axios.post(source.baseUrl+'/api/oauth2/v1/access',{User:opts.username,Password:opts.password});
+  if (opts.extract === 'cancel') { await new Promise(resolve=>setTimeout(resolve,30000)); }
+  if (opts.extract === 'fail') throw new Error('Rejected '+opts.password+' '+response.data.AccessToken);
+  if (opts.reroot !== 'customRoot' || opts.extract !== 'billId=one') throw new Error('Lost conversion options');
+  fs.writeFileSync(opts.output,JSON.stringify({customRoot:{billId:'one'}}));
+  console.log('Converted XML to JSON: '+opts.output);
+  console.warn('Token diagnostic: '+response.data.AccessToken);
+  // Simulate the CLI's final token refresh. This must reach only the disposable store.
+  fs.writeFileSync(path.join(os.homedir(),'.occs-session.json'),JSON.stringify({token:response.data.AccessToken}));
+}
+''')
         axios = self.cli / 'node_modules' / 'axios'
         axios.mkdir(parents=True)
         (axios / 'package.json').write_text('{"type":"module"}')
         (axios / 'index.js').write_text('''
-export default {async post(url, body, options) {
+let onResponse=value=>value;
+export default {interceptors:{response:{use(success){onResponse=success;}}}, async post(url, body, options) {
   if (url !== 'https://customer.region.oraclecloud.com/non-prod/api/oauth2/v1/access') throw new Error('Wrong source environment');
   if (body.User !== 'migration-user' || body.Password !== 'temporary-secret') {
     const error=new Error('Leaked password: '+body.Password); error.response={status:401,data:body}; throw error;
   }
-  return {data:{AccessToken:'MIGRATION_TOKEN'}};
+  return onResponse({data:{AccessToken:'MIGRATION_TOKEN'}});
 }};
 ''')
         self.session = self.home / '.occs-session.json'
@@ -93,7 +129,7 @@ export default {async post(url, body, options) {
         self.bridge = Path(__file__).resolve().parents[1] / 'atool_qt' / 'migration_login.mjs'
         self.store = self.home / '.occs-cli' / 'atool-migration-logins.json'
 
-    def invoke(self, args, credentials=None):
+    def invoke(self, args, credentials=None, *, unchanged=True):
         environment = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home))
         result = subprocess.run(['node', str(self.bridge), str(self.cli / 'bin' / 'occs.js'), *args],
                                 input=json.dumps(credentials or {}), text=True, capture_output=True,
@@ -101,8 +137,82 @@ export default {async post(url, body, options) {
         self.assertEqual('', result.stderr)
         self.assertNotIn('temporary-secret', result.stdout)
         self.assertNotIn('MIGRATION_TOKEN', result.stdout)
-        self.assertEqual(self.original_session, self.session.read_bytes())
+        if unchanged:
+            self.assertEqual(self.original_session, self.session.read_bytes())
         return result, json.loads(result.stdout)
+
+    def test_password_pathway_first_login_and_coexisting_sso_are_independent(self):
+        credentials=dict(username='migration-user',password='temporary-secret',remember=True)
+        args=['migration-login','signin','--session','np','--customer','customer','--region','region','--tenancy','non-prod']
+        self.session.unlink()
+        result,value=self.invoke(args,credentials,unchanged=False)
+        self.assertEqual(0,result.returncode,result.stdout)
+        self.assertEqual('password',value['normalAuthType'])
+        native=json.loads(self.session.read_text())['sessions']['customer.region/non-prod']
+        self.assertEqual('password',native['authType'])
+        self.assertNotIn('temporary-secret',self.session.read_text()+self.store.read_text())
+        self.assertTrue(native['credentials']['passwordEnc'].startswith('v2:'))
+        cli=self.cli/'bin'/'occs.js'
+        cli.write_text("import {loadSession} from '../lib/session.js'; console.log(JSON.stringify({authType:loadSession({sessionName:'np'}).authType}));")
+        def normal_operation_auth():
+            from atool_qt.occs import CommsSettings
+            settings=CommsSettings(self.root/'settings.json')
+            settings.payload={'occs':{'cli_path':str(cli),'session_alias':'np'}}
+            result=subprocess.run(settings.command(['package','list','--json']),text=True,capture_output=True,
+                                  env=dict(os.environ,HOME=str(self.home),USERPROFILE=str(self.home)),timeout=10)
+            self.assertEqual(0,result.returncode,result.stderr)
+            return json.loads(result.stdout)['authType']
+        self.assertEqual('password',normal_operation_auth())
+        # Simulate browser sign-in replacing the primary CLI record. The independent
+        # Password pathway must survive, and adding Password again must preserve SSO.
+        store=json.loads(self.session.read_text())
+        store['sessions']['customer.region/non-prod']={
+            key:value for key,value in native.items() if key not in ('credentials','token')}
+        store['sessions']['customer.region/non-prod'].update(authType='sso',token='NP_SSO_TOKEN')
+        self.session.write_text(json.dumps(store))
+        self.original_session=self.session.read_bytes()
+        result,value=self.invoke(args,dict(username='migration-user',remember=True))
+        self.assertEqual(0,result.returncode)
+        self.assertEqual('sso',value['normalAuthType'])
+        self.assertEqual('sso',normal_operation_auth())
+        self.assertEqual('migration-user',json.loads(self.store.read_text())['logins']['customer.region/non-prod']['username'])
+        self.invoke(['migration-login','forget','--session','np'])
+        self.assertEqual({},json.loads(self.store.read_text())['logins'])
+
+    def test_preserve_legacy_password_before_sso_and_forget_removes_saved_passwords(self):
+        credentials=dict(username='migration-user',password='temporary-secret',remember=True)
+        args=['migration-login','signin','--session','np','--customer','customer','--region','region','--tenancy','non-prod']
+        self.session.unlink()
+        self.invoke(args,credentials,unchanged=False)
+        self.original_session=self.session.read_bytes()
+        self.store.unlink()
+        result,_=self.invoke(['migration-login','preserve','--session','np'])
+        self.assertEqual(0,result.returncode)
+        self.assertTrue(self.store.exists())
+        self.invoke(['migration-login','forget','--session','np'],unchanged=False)
+        native=json.loads(self.session.read_text())['sessions']['customer.region/non-prod']
+        self.assertNotIn('credentials',native)
+        self.assertNotIn('password',native)
+        self.assertEqual({},json.loads(self.store.read_text())['logins'])
+
+    def test_password_only_updates_apply_to_normal_operations_and_can_be_session_only(self):
+        credentials=dict(username='migration-user',password='temporary-secret',remember=True)
+        args=['migration-login','signin','--session','np','--customer','customer','--region','region','--tenancy','non-prod']
+        self.session.unlink()
+        self.invoke(args,credentials,unchanged=False)
+        store=json.loads(self.session.read_text())
+        store['sessions']['customer.region/non-prod']['credentials']['username']='old-user'
+        self.session.write_text(json.dumps(store))
+        result,_=self.invoke(['migration-login','test','--session','np'],credentials,unchanged=False)
+        self.assertEqual(0,result.returncode)
+        native=json.loads(self.session.read_text())['sessions']['customer.region/non-prod']
+        self.assertEqual('migration-user',native['credentials']['username'])
+        self.invoke(args,dict(credentials,remember=False),unchanged=False)
+        native=json.loads(self.session.read_text())['sessions']['customer.region/non-prod']
+        self.assertEqual('password',native['authType'])
+        self.assertNotIn('credentials',native)
+        self.assertNotIn('password',native)
+        self.assertEqual({},json.loads(self.store.read_text())['logins'])
 
     def test_remember_reuse_and_forget_leave_sso_sessions_unchanged(self):
         result, value = self.invoke(['migration-login', 'test', '--session', 'np'],
@@ -323,3 +433,153 @@ await import(BRIDGE_URL);
             self.assertEqual({},json.loads(self.store.read_text())['logins'])
             reopened.close()
         self.assertEqual(self.original_session,self.session.read_bytes())
+
+    def test_conversion_uses_shared_login_isolates_sso_and_removes_temporary_home(self):
+        import time
+        from PySide6.QtWidgets import QApplication
+        from atool_qt.occs import CommsService, CommsSettings
+        app=QApplication.instance() or QApplication([])
+        self.invoke(['migration-login','test','--session','np'],
+                    dict(username='migration-user',password='temporary-secret',remember=True))
+        settings=CommsSettings(self.root/'settings.json')
+        settings.payload={'occs':{'cli_path':str(self.cli/'bin'/'occs.js')},'diagnostics':{'debug_logging':True}}
+        service=CommsService(settings)
+        self.addCleanup(service.shutdown)
+        xml=self.root/'input.xml'
+        xml.write_text('<root><billId>one</billId></root>')
+        output=self.root/'converted.json'
+        args=['convertxml','--session','np','--input',str(xml),'--output',str(output),
+              '--reroot','customRoot','--extract','billId=one','--atool-password-login']
+        results=[]
+        homes=[]
+        def started(job):
+            if job.conversion_home is not None:
+                homes.append(Path(job.conversion_home.name))
+        with patch.dict(os.environ,HOME=str(self.home),USERPROFILE=str(self.home)):
+            for extract in ('billId=one','fail','cancel'):
+                invocation=list(args)
+                invocation[invocation.index('--extract')+1]=extract
+                job=service.submit(invocation,results.append,private_input=dict(username='migration-user',remember=True))
+                deadline=time.monotonic()+10
+                while not job.done and time.monotonic()<deadline:
+                    app.processEvents()
+                    if job.conversion_home is not None and not homes[-1:] == [Path(job.conversion_home.name)]:
+                        started(job)
+                        if extract=='cancel':
+                            # Cancel after the child has started and received its private session.
+                            time.sleep(.2)
+                            job.cancel()
+                    time.sleep(.005)
+                self.assertTrue(job.done)
+                self.assertIsNone(job.conversion_home)
+                self.assertNotIn('temporary-secret',results[-1].stdout+results[-1].stderr)
+                self.assertNotIn('MIGRATION_TOKEN',results[-1].stdout+results[-1].stderr)
+                self.assertFalse(job.login_attempted)
+        self.assertTrue(results[0].successful,results[0].message)
+        self.assertEqual({'customRoot':{'billId':'one'}},json.loads(output.read_text()))
+        self.assertIn('Converted XML to JSON',results[0].stdout)
+        self.assertFalse(results[1].successful)
+        self.assertTrue(results[2].cancelled)
+        self.assertEqual(3,len(homes))
+        for home in homes:
+            self.assertFalse(home.exists())
+        self.assertEqual(self.original_session,self.session.read_bytes())
+
+    def test_existing_cli_xml_conversion_preserves_extract_reroot_and_sso(self):
+        import time
+        from PySide6.QtWidgets import QApplication
+        from atool_qt.occs import CommsService, CommsSettings
+        project=Path(__file__).resolve().parents[1]
+        candidates=[project.parent/'ccs-tools'/'OCCS-CLI',project/'build'/'native'/'stage'/'occs-cli']
+        available=[root for root in candidates if (root/'lib'/'preview.js').exists()
+                   and (root/'node_modules'/'axios'/'index.js').exists()]
+        if not available:
+            self.skipTest('A local OCCS CLI installation is needed for the compatibility check')
+        for actual in available:
+            with self.subTest(cli=str(actual)):
+                mock=self.root/'mock-http.mjs'
+                mock.write_text('import axios from '+json.dumps((actual/'node_modules'/'axios'/'index.js').as_uri())+''';
+        axios.defaults.adapter=async config=>{
+          const body=typeof config.data==='string'?JSON.parse(config.data):config.data;
+          let data;
+          if (config.url.endsWith('/api/oauth2/v1/access')) {
+            if (body.User!=='migration-user'||body.Password!=='temporary-secret') throw Object.assign(new Error('Unauthorized'),{response:{status:401,data:{message:'Unauthorized'}},config});
+            data={AccessToken:'REAL_CONVERSION_TOKEN'};
+          } else if (config.url.endsWith('/api/CommunicationFileTransfer/v1/XmlToJsonConverter')) {
+            if (process.env.TEST_DENY_CONVERTER==='1') throw Object.assign(new Error('Unauthorized'),{response:{status:401,data:{message:'Unauthorized'}},config});
+            if (config.headers.Authorization!=='Bearer REAL_CONVERSION_TOKEN') throw new Error('Wrong converter token');
+            if (!body.XmlData.includes('<billId>one</billId>')||body.XmlData.includes('<billId>two</billId>')) throw new Error('Wrong Bill ID extraction');
+            data={root:{billId:'one',message:'first\\nsecond'}};
+          } else if (config.url.endsWith('/api/ConfigurationId/v1/ConfigurationRec') && config.method==='get') {
+            data={Items:[{ConfigurationId:'10',ConfigurationInfo:{ShortName:'Example'}}],HasMore:false};
+          } else throw new Error('Unexpected HTTP request');
+          return {data,status:200,statusText:'OK',headers:{},config};
+        };
+        ''')
+                xml=self.root/'batch.xml'
+                xml.write_text('<batch><C1-BillPrintRecord><billId>one</billId></C1-BillPrintRecord><C1-BillPrintRecord><billId>two</billId></C1-BillPrintRecord></batch>')
+                output=self.root/'selected.json'
+                app=QApplication.instance() or QApplication([])
+                settings=CommsSettings(self.root/'settings.json')
+                settings.payload={'occs':{'cli_path':str(actual/'bin'/'occs.js')}}
+                service=CommsService(settings)
+                self.addCleanup(service.shutdown)
+                results=[]
+                environment=dict(HOME=str(self.home),USERPROFILE=str(self.home),NODE_OPTIONS='--import='+mock.as_uri(),
+                                 OCCS_USERNAME='stale-env-user',OCCS_PASSWORD='stale-env-password')
+                with patch.dict(os.environ,**environment):
+                    job=service.submit(['convertxml','--session','np','--input',str(xml),'--output',str(output),
+                                        '--reroot','customRoot','--extract','billId=one','--atool-password-login'],results.append,
+                                       private_input=dict(username='migration-user',password='temporary-secret',remember=True))
+                    deadline=time.monotonic()+15
+                    while not job.done and time.monotonic()<deadline:
+                        app.processEvents()
+                        time.sleep(.005)
+                self.assertTrue(job.done)
+                self.assertTrue(results[0].successful,results[0].message)
+                self.assertEqual('one',json.loads(output.read_text())['customRoot']['billId'])
+                self.assertIsNone(job.conversion_home)
+                self.assertEqual(self.original_session,self.session.read_bytes())
+                for secret in ('temporary-secret','REAL_CONVERSION_TOKEN'):
+                    self.assertNotIn(secret,results[0].stdout+results[0].stderr)
+                # Reproduce the old path: config listing succeeds using its saved
+                # token, while fresh XML authentication selects stale env credentials.
+                original=self.session.read_bytes()
+                native=json.loads(self.session.read_text())
+                native['sessions']['customer.region/non-prod'].update(
+                    authType='password',credentials=json.loads(self.store.read_text())['logins']['customer.region/non-prod'])
+                self.session.write_text(json.dumps(native))
+                self.store.unlink()
+                options=dict(session='np',input=str(xml),output=str(output),reroot='customRoot',extract='billId=one')
+                wrapper=(f"const {{listConfigsCommand}}=await import({json.dumps((actual/'lib'/'configs.js').as_uri())}); "
+                         f"await listConfigsCommand({json.dumps(dict(session='np',json=True,output=str(self.root/'config-output')))}); "
+                         "console.log('CONFIG_LIST_SUCCEEDED'); "
+                         f"const {{convertXmlCommand}}=await import({json.dumps((actual/'lib'/'preview.js').as_uri())}); "
+                         f"await convertXmlCommand({json.dumps(options)});")
+                reproduced=subprocess.run(['node','--input-type=module','-e',wrapper],text=True,capture_output=True,
+                                          env=dict(os.environ,**environment),timeout=15)
+                self.assertNotEqual(0,reproduced.returncode)
+                self.assertIn('CONFIG_LIST_SUCCEEDED',reproduced.stdout)
+                self.assertIn('401',reproduced.stderr)
+                # The corrected path imports the encrypted legacy password and
+                # supplies it explicitly, so those same env values cannot replace it.
+                for deny_converter in (False,True):
+                    fixed=[]
+                    with patch.dict(os.environ,**environment,TEST_DENY_CONVERTER='1' if deny_converter else '0'):
+                        job=service.submit(['convertxml','--session','np','--input',str(xml),'--output',str(output),
+                                            '--reroot','customRoot','--extract','billId=one','--atool-password-login'],fixed.append,
+                                           private_input={})
+                        deadline=time.monotonic()+15
+                        while not job.done and time.monotonic()<deadline:
+                            app.processEvents()
+                            time.sleep(.005)
+                    self.assertTrue(job.done)
+                    if deny_converter:
+                        self.assertFalse(fixed[0].successful)
+                        self.assertIn('Oracle XML converter failed (HTTP 401)',fixed[0].message)
+                        self.assertIn('Password authentication succeeded',fixed[0].message)
+                    else:
+                        self.assertTrue(fixed[0].successful,fixed[0].message)
+                    for secret in ('temporary-secret','REAL_CONVERSION_TOKEN','stale-env-password'):
+                        self.assertNotIn(secret,fixed[0].stdout+fixed[0].stderr)
+                self.session.write_bytes(original)

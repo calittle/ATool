@@ -399,7 +399,7 @@ elif args[0]=='smoke':
         with patch.object(self.dialog,'operation') as operation:
             self.dialog.test_migration_login_button.click()
         title,args,callback=operation.call_args.args
-        self.assertEqual('Test Migration Source Login',title)
+        self.assertEqual('Test Password Login',title)
         self.assertNotIn('temporary-secret',args)
         self.assertEqual({'username':'migration-user','password':'temporary-secret','remember':True},
                          operation.call_args.kwargs['private_input'])

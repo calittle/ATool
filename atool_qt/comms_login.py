@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout,
                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout)
 
 from atool_core.activity_output import activity_text
@@ -67,7 +67,7 @@ class CommsLoginDialog(QDialog):
         self.job = None
         self.targets, current = saved_login_targets(session_path)
         self.setWindowTitle('Sign In to Comms')
-        self.resize(550, 350)
+        self.resize(580, 430)
         layout = QVBoxLayout(self)
         self.help_text = QLabel()
         self.help_text.setWordWrap(True)
@@ -79,9 +79,9 @@ class CommsLoginDialog(QDialog):
         self.alias.setCurrentText(str(workspace.comms.settings.get('session_alias') or current or 'comms'))
         form.addRow('Session alias', self.alias)
         self.method = QComboBox()
-        self.method.addItem('Password (saved CLI credentials)', 'password')
+        self.method.addItem('Password', 'password')
         self.method.addItem('Browser SSO', 'sso')
-        form.addRow('Login method', self.method)
+        form.addRow('Credential pathway', self.method)
         self.fields = {}
         for key, title, hint in [('customer', 'Customer', 'Customer short name'),
                                  ('region', 'Region / environment', 'For example: sin-fscloud'),
@@ -90,8 +90,20 @@ class CommsLoginDialog(QDialog):
             field.setPlaceholderText(hint)
             self.fields[key] = field
             form.addRow(title, field)
+        self.username=QLineEdit()
+        self.password=QLineEdit()
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.remember_password=QCheckBox('Remember password login')
+        self.remember_password.setChecked(True)
+        self.password_form=QFormLayout()
+        self.password_form.addRow('Username',self.username)
+        self.password_form.addRow('Password',self.password)
+        self.password_form.addRow(self.remember_password)
+        form.addRow(self.password_form)
         layout.addLayout(form)
-        layout.addWidget(QLabel('After sign-in, ATool uses this session for Comms operations.'))
+        routing_info=QLabel('Both pathways can be remembered for the same environment.')
+        routing_info.setWordWrap(True)
+        layout.addWidget(routing_info)
         self.status = QLabel('Requires OCCS CLI 1.4.0 or later and Chrome, Edge or Chromium. '
                              'Browser and sign-in timeout options are in User Settings → Comms.')
         self.status.setWordWrap(True)
@@ -140,19 +152,31 @@ class CommsLoginDialog(QDialog):
         self.update_method_help()
         for key, field in self.fields.items():
             field.setText(target.get(key, ''))
+        from .migration_login import migration_login_key, remembered_migration_login
+        try:
+            key=migration_login_key(alias)
+            state=self.workspace.comms.migration_logins.get(key,{})
+            saved=remembered_migration_login(key)
+            self.username.setText(state.get('username') or saved)
+            self.password.setText(state.get('password',''))
+            self.remember_password.setChecked(state.get('remember',True))
+        except ValueError:
+            self.username.clear()
+            self.password.clear()
 
     def update_method_help(self):
+        password_mode=self.method.currentData()=='password'
+        for row in range(self.password_form.rowCount()):
+            self.password_form.setRowVisible(row,password_mode)
         if self.method.currentData() == 'sso':
             self.status.setText('Requires OCCS CLI 1.4.0 or later and Chrome, Edge or Chromium. '
                                 'Browser and sign-in timeout options are in User Settings → Comms.')
-            self.help_text.setText('Complete browser and phone/passkey approval. SSO replaces saved password '
-                                   'credentials for all aliases of this customer/region/tenancy. Oracle-hosted '
-                                   'XML conversion requires password login; local XSD conversion supports SSO.')
+            self.help_text.setText('Complete browser and phone/passkey approval. SSO is used for normal operations; '
+                                   'the separate Password pathway is preserved for XML conversion and migration source tokens.')
         else:
-            self.status.setText('Uses saved password credentials. For first-time setup, run occs login in a terminal.')
-            self.help_text.setText('Sign in using credentials already saved by OCCS CLI or configured in its '
-                                   'environment. For first-time password setup, run occs login in a terminal. '
-                                   'No browser SSO is used. Oracle-hosted XML conversion supports password sessions.')
+            self.status.setText('Enter a username and password, or reuse a remembered password login.')
+            self.help_text.setText('The password pathway is used for all operations when SSO is not configured. When both pathways '
+                                   'are available, SSO handles normal operations and Password handles XML conversion and migration source tokens.')
 
     def set_running(self, running):
         self.alias.setEnabled(not running)
@@ -160,6 +184,9 @@ class CommsLoginDialog(QDialog):
         for field in self.fields.values():
             field.setEnabled(not running)
         self.sign_in.setEnabled(not running)
+        self.username.setEnabled(not running)
+        self.password.setEnabled(not running)
+        self.remember_password.setEnabled(not running)
         self.close_button.setText('Cancel Sign-In' if running else 'Close')
 
     def start_login(self):
@@ -179,11 +206,43 @@ class CommsLoginDialog(QDialog):
         args = ['login'] + (['--sso'] if self.login_method == 'sso' else []) + ['--session', alias]
         for key, value in target.items():
             args += [f'--{key}', value]
+        private_input=None
+        self.pending_password=None
+        if self.login_method=='password':
+            from .migration_login import migration_login_key, remembered_migration_login
+            username=self.username.text().strip()
+            password=self.password.text()
+            try:
+                saved=remembered_migration_login(f"{target['customer']}.{target['region']}/{target['tenancy']}")
+            except ValueError as error:
+                self.status.setText(str(error))
+                return
+            if username and (password or saved==username):
+                if not password and not self.remember_password.isChecked():
+                    self.status.setText('Enter the password to keep it only until ATool closes, or leave Remember enabled to reuse the saved login.')
+                    return
+                private_input={'username':username,'password':password,'remember':self.remember_password.isChecked()}
+                args=['migration-login','signin',*args[1:]]
+            elif self.targets.get(alias,{}).get('authType')!='password':
+                self.status.setText('Enter a username and password for the Password pathway.')
+                return
         self.set_running(True)
         self.status.setText('Complete sign-in in the browser, including phone/passkey approval. '
                             'You can cancel here or close the sign-in browser.' if self.login_method == 'sso'
-                            else 'Signing in using saved CLI password credentials…')
-        self.job = self.workspace.comms.submit(args, self.login_finished)
+                            else 'Signing in using the Password pathway…')
+        if self.login_method=='sso' and self.targets.get(alias,{}).get('authType')=='password':
+            def preserved(result):
+                if not result.successful:
+                    self.login_finished(result)
+                    return
+                self.job=self.workspace.comms.submit(args,self.login_finished)
+            self.job=self.workspace.comms.submit(['migration-login','preserve','--session',alias],preserved)
+        else:
+            if private_input is not None:
+                key=f"{target['customer']}.{target['region']}/{target['tenancy']}"
+                self.pending_password=(key,{**private_input,'enabled':True})
+            options={'private_input':private_input} if private_input is not None else {}
+            self.job = self.workspace.comms.submit(args, self.login_finished,**options)
 
     def login_finished(self, result):
         self.set_running(False)
@@ -197,8 +256,7 @@ class CommsLoginDialog(QDialog):
             details = message
             lowered = message.casefold()
             if self.method.currentData() != 'sso':
-                message = ('Password sign-in failed. Check the saved CLI credentials or run occs login in a terminal '
-                           'to set them up, then retry. Expand diagnostics for details.')
+                message = ('Password sign-in failed. Check the username, password and environment here, then retry. Expand diagnostics for details.')
             elif ('target page, context or browser has been closed' in lowered
                     or 'browser closed or disconnected' in lowered
                     or 'browser was closed' in lowered):
@@ -216,6 +274,9 @@ class CommsLoginDialog(QDialog):
             self.diagnostics.setPlainText(details)
             self.diagnostics_toggle.show()
         else:
+            if getattr(self,'pending_password',None) is not None:
+                key,value=self.pending_password
+                self.workspace.comms.migration_logins[key]=value
             self.targets, _ = saved_login_targets(self.session_path)
             settings = self.workspace.comms.settings
             payload = copy.deepcopy(settings.payload)
@@ -225,7 +286,9 @@ class CommsLoginDialog(QDialog):
             except (ValueError, OSError) as error:
                 self.status.setText(f'Signed in, but the default session setting could not be saved: {error}')
                 return
-            self.status.setText('Signed in. Your Comms session is ready.')
+            self.status.setText('Password pathway ready. SSO remains in use for normal operations.'
+                                if self.login_method=='password' and result.value and result.value.get('normalAuthType')=='sso'
+                                else 'Signed in. Your Comms session is ready.')
             self.sign_in.setText('Sign In Again')
 
     def reject(self):

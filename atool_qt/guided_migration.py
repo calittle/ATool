@@ -596,7 +596,7 @@ class GuidedMigrationDialog(MigrationLoginActions, QDialog):
         data=self.record.data
         separate=self.migration_login_input() is not None
         if not separate and '--sso' in login_args(data['source']):
-            raise ValueError('The migration source uses SSO. Select Use a separate source login for migration and enter the password login.')
+            raise ValueError('The migration source uses SSO. Configure the Password pathway by entering a username and password.')
         aliases=list(dict.fromkeys((data['target'],) if separate else (data['target'],data['source'])))
         def refresh(remaining):
             if remaining:
@@ -620,7 +620,7 @@ class GuidedMigrationDialog(MigrationLoginActions, QDialog):
         data=self.record.data
         credentials=self.migration_login_input()
         if credentials is None and '--sso' in login_args(data['source']):
-            raise ValueError('The migration source uses SSO. Select Use a separate source login for migration and enter the password login.')
+            raise ValueError('The migration source uses SSO. Configure the Password pathway by entering a username and password.')
         args=['migrate','--source-session',data['source'],'--target-session',data['target'],
               '--config-id',data['configs'][0]['id'],'--timeout',str(self.workspace.comms.settings.timeout_ms)]
         if credentials is not None:

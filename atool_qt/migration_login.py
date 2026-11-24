@@ -1,4 +1,4 @@
-"""Shared migration login controls; encryption stays in the CLI runtime."""
+"""Shared password login controls for migration and XML conversion."""
 import json
 from pathlib import Path
 
@@ -25,12 +25,26 @@ def remembered_migration_login(key):
     except FileNotFoundError:
         return ''
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        raise ValueError('The saved migration login file could not be read. Restore it before using saved migration credentials.') from error
+        raise ValueError('The saved password login file could not be read. Restore it before using saved password credentials.') from error
+
+
+def selected_password_login(comms, alias):
+    """Return a shared remembered/in-memory login, or None for the normal session."""
+    key=migration_login_key(alias)
+    saved=remembered_migration_login(key)
+    state=comms.migration_logins.get(key,{'enabled':bool(saved),'username':saved,'password':'','remember':bool(saved)})
+    if not state['username'] and not state['password'] and not saved:
+        return None
+    username,password=state['username'],state['password']
+    if not username or (not password and (saved!=username or not state['remember'])):
+        raise ValueError('Enter the separate username and password, then test the login.')
+    return {'username':username,'password':password,'remember':state['remember']}
 
 
 class MigrationLoginActions:
-    """Shared migration login form for guided and Config menu migrations."""
+    """Shared password login form for migrations and XML conversion."""
     def render_migration_login(self):
+        self.note('Password pathway for this environment')
         key=migration_login_key(self.migration_source)
         cache=self.workspace.comms.migration_logins
         try:
@@ -40,20 +54,21 @@ class MigrationLoginActions:
             self.note(str(error))
         state=cache.get(key,{'enabled':bool(saved),'username':saved,'password':'','remember':bool(saved)})
         self.migration_login_key=key
-        self.separate_migration_login=QCheckBox('Use a separate source login for migration')
+        self.separate_migration_login=QCheckBox('Use a separate password login for migration and XML conversion')
         self.separate_migration_login.setChecked(state['enabled'])
+        self.separate_migration_login.hide()
         self.body_layout.addWidget(self.separate_migration_login)
         self.migration_login_fields=QWidget()
         form=QFormLayout(self.migration_login_fields)
         self.migration_username=QLineEdit(state['username'])
         self.migration_password=QLineEdit(state['password'])
         self.migration_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.migration_password.setPlaceholderText('Saved password available' if saved else 'Migration account password')
-        self.remember_migration_login=QCheckBox('Remember migration login')
+        self.migration_password.setPlaceholderText('Saved password available' if saved else 'Password for the separate account')
+        self.remember_migration_login=QCheckBox('Remember password login')
         self.remember_migration_login.setChecked(state['remember'])
         self.remember_migration_login.setToolTip('Save this login separately using the OCCS CLI encrypted credential mechanism. Normal SSO sessions are unchanged.')
-        form.addRow('Migration source username',self.migration_username)
-        form.addRow('Migration source password',self.migration_password)
+        form.addRow('Username',self.migration_username)
+        form.addRow('Password',self.migration_password)
         form.addRow('',self.remember_migration_login)
         buttons=QHBoxLayout()
         self.test_migration_login_button=QPushButton('Test Login')
@@ -64,17 +79,18 @@ class MigrationLoginActions:
         buttons.addWidget(self.forget_migration_login_button)
         form.addRow(buttons)
         self.body_layout.addWidget(self.migration_login_fields)
-        self.migration_login_fields.setEnabled(state['enabled'])
-        self.separate_migration_login.toggled.connect(self.migration_login_fields.setEnabled)
+        self.migration_login_fields.setEnabled(True)
         def changed(*_):
+            if self.migration_username.text().strip() or self.migration_password.text():
+                self.separate_migration_login.setChecked(True)
             cache[key]={'enabled':self.separate_migration_login.isChecked(),'username':self.migration_username.text().strip(),
                         'password':self.migration_password.text(),'remember':self.remember_migration_login.isChecked()}
         self.separate_migration_login.toggled.connect(changed)
         self.migration_username.textChanged.connect(changed)
         self.migration_password.textChanged.connect(changed)
         self.remember_migration_login.toggled.connect(changed)
-        self.note('This login gets the non-prod token used for movement only. Config preparation, testing, and normal ATool work keep using your usual sessions. '
-                  'Remembered credentials are saved when Test Login or the migration login succeeds. Without Remember, they remain available until ATool closes.')
+        self.note('This login supplies tokens for migration and Oracle-hosted XML conversion in this environment. Normal ATool work keeps using your usual sessions. '
+                  'Remembered credentials are saved after successful password authentication. Without Remember, they remain available until ATool closes.')
 
     def migration_login_input(self):
         if not self.separate_migration_login.isChecked():
@@ -82,7 +98,7 @@ class MigrationLoginActions:
         username=self.migration_username.text().strip()
         password=self.migration_password.text()
         if not username or (not password and remembered_migration_login(self.migration_login_key)!=username):
-            raise ValueError('Enter the migration source username and password, then test the login.')
+            raise ValueError('Enter the separate username and password, then test the login.')
         if not password and not self.remember_migration_login.isChecked():
             raise ValueError('Enter the password to keep this login only until ATool closes, or use Forget Saved Login to remove it.')
         return {'username':username,'password':password,'remember':self.remember_migration_login.isChecked()}
@@ -90,30 +106,30 @@ class MigrationLoginActions:
     def test_migration_login(self):
         credentials=self.migration_login_input()
         if credentials is None:
-            raise ValueError('Select Use a separate source login for migration first.')
+            raise ValueError('Enter the username and password for the Password pathway first.')
         def tested(value):
             if value.get('ok') is not True:
-                raise ValueError('The migration source login was not confirmed.')
-            self.status.setText('Migration source login succeeded. '+('Login remembered.' if credentials['remember'] else 'Login available until ATool closes.'))
-        self.operation('Test Migration Source Login',['migration-login','test','--session',self.migration_source,
+                raise ValueError('The password login was not confirmed.')
+            self.status.setText('Password login succeeded. '+('Login remembered.' if credentials['remember'] else 'Login available until ATool closes.'))
+        self.operation('Test Password Login',['migration-login','test','--session',self.migration_source,
                        '--timeout',str(self.workspace.comms.settings.timeout_ms)],tested,private_input=credentials)
 
     def forget_migration_login(self):
         def forgotten(value):
             if value.get('ok') is not True:
-                raise ValueError('The saved migration login was not removed.')
+                raise ValueError('The saved password login was not removed.')
             self.workspace.comms.migration_logins.pop(self.migration_login_key,None)
             self.migration_username.clear()
             self.migration_password.clear()
             self.remember_migration_login.setChecked(False)
-            self.migration_password.setPlaceholderText('Migration account password')
-            self.status.setText('Saved migration login forgotten. Normal SSO sessions are unchanged.')
-        self.operation('Forget Migration Source Login',['migration-login','forget','--session',self.migration_source],forgotten)
+            self.migration_password.setPlaceholderText('Password for the separate account')
+            self.status.setText('Saved password login forgotten. Normal SSO sessions are unchanged.')
+        self.operation('Forget Password Login',['migration-login','forget','--session',self.migration_source],forgotten)
 
 
 class MigrationLoginDialog(MigrationLoginActions, QDialog):
     """Select and manage the source login before a Config menu migration."""
-    def __init__(self, workspace, source, target, *, source_uses_sso=False):
+    def __init__(self, workspace, source, target='', *, source_uses_sso=False, purpose='migration'):
         super().__init__(workspace)
         self.workspace=workspace
         self.comms=workspace.comms
@@ -122,10 +138,10 @@ class MigrationLoginDialog(MigrationLoginActions, QDialog):
         self.credentials=None
         self.busy=False
         self.login_operation=None
-        self.setWindowTitle('Migration Source Login')
+        self.setWindowTitle('Password Login')
         self.resize(700,360)
         layout=QVBoxLayout(self)
-        label=QLabel(f'Source: {source}\nTarget: {target}')
+        label=QLabel(f'Environment: {source}' if purpose=='conversion' else f'Source: {source}\nTarget: {target}')
         label.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(label)
         self.body=QWidget()
@@ -163,7 +179,7 @@ class MigrationLoginDialog(MigrationLoginActions, QDialog):
     def submit(self):
         credentials=self.migration_login_input()
         if credentials is None and self.source_uses_sso:
-            raise ValueError('Select Use a separate source login for migration and enter the password login. Your normal source session uses SSO.')
+            raise ValueError('Enter the username and password for the Password pathway. Your normal session uses SSO.')
         self.credentials=credentials
         self.accept()
 

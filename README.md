@@ -241,17 +241,35 @@ operation; ATool does not automatically reopen the browser or replay a write.
 Saved password sessions retain their existing automatic login recovery.
 
 JSON previews and previews with local XSD conversion can use SSO. Oracle-hosted
-XML conversion still requires a password session. ATool migration requires a
-password-authenticated source alias; an SSO target is supported. Advanced CLI
-migration can instead accept an explicit source bearer token.
+XML conversion and migration source tokens require username/password
+authentication. ATool stores independent **SSO** and **Password** pathways per
+environment. **Settings → Sign In to Comms…** lets you configure either pathway,
+enter a password directly and remember it, without terminal setup. Adding SSO
+preserves existing remembered password credentials; adding Password preserves
+existing SSO sessions.
 
-The XML conversion dialog shows the session's saved login method and lets you
-select a password alias for that conversion without changing the default session.
-OCCS CLI stores one login record per customer/region/tenancy: aliases for the
-same target share that record. Signing in through SSO replaces that target's
-password session, including its stored password credentials. A second alias for
-the same target does not preserve a separate password session; use password
-login again when Oracle-hosted XML conversion is needed, or use local XSD conversion.
+| Saved pathways | Normal Comms operations | Migration source token and Oracle XML conversion |
+| --- | --- | --- |
+| Password only | Password | Password |
+| SSO only | SSO | Configure Password to enable these operations |
+| SSO and Password | SSO | Password |
+
+An expired SSO session prompts for SSO sign-in instead of silently switching
+normal operations to Password. The migration target can use SSO or Password;
+only its source access token requires Password. Local XSD conversion needs
+neither pathway.
+
+ATool provides **Password Login** controls for password-required operations,
+with **Test Login**, **Remember password login**, and **Forget Saved Login**.
+Configure it from the XML conversion dialog or either migration entry point;
+the same environment's saved login is shared between them. An SSO migration
+target is supported.
+
+OCCS CLI stores one normal login record per customer/region/tenancy, so a second
+alias for the same environment shares that record. ATool stores its separate
+password login independently and isolates Oracle-hosted conversion from the
+normal session store. Enter credentials through ATool without switching the
+environment away from SSO or using a terminal.
 
 ## Moving an older ATool installation to the native app
 
@@ -787,8 +805,8 @@ the OCCS movement API moves **all eligible Configs**, and `--config-id` only
 verifies membership. Keep other migration activity paused during review and
 initiation, since eligibility can change between those requests.
 
-For an SSO source, select **Use a separate source login for migration** at
-**Review and migrate**. Enter the temporary non-prod username and password,
+For an SSO source, configure the **Password pathway** at **Review and migrate**.
+Enter the temporary non-prod username and password,
 then choose **Test Login**. ATool obtains the source access token with this
 account and uses your normal preprod session to submit movement. Config
 preparation, smoke tests and other ATool work keep using your normal sessions;
@@ -796,20 +814,35 @@ no terminal sign-in is needed for the migration account.
 
 **Config → Migrate** opens the same migration login controls before confirmation.
 Both entry points share remembered logins and credentials entered during the
-current ATool session. When a separate source login is selected, only the target
+current ATool session. When the separate Password pathway is available, only the target
 session is refreshed; the normal source SSO session remains available.
 
-Select **Remember migration login** to save it using the OCCS CLI's existing
+Select **Remember password login** to save it using the OCCS CLI's existing
 encrypted credential mechanism. The login is stored separately in
 `~/.occs-cli/atool-migration-logins.json`, keyed by the source environment,
 using the CLI's existing credential key. It does not replace an SSO session in
 `.occs-session.json`. Credentials are remembered after a successful login test
 or migration source authentication. Leave Remember unchecked to keep an entered
-password only until ATool closes. **Forget Saved Login** removes the saved
-migration login and clears its in-memory entry. You can replace the login by
+password only until ATool closes. **Forget Saved Login** removes the remembered
+Password credentials, including any saved native password credentials for that
+environment, and clears their in-memory entry. You can replace the login by
 entering new credentials and testing again. Passwords and tokens are excluded
 from ATool settings, settings backups, activity logs and migration reports;
 the migration report records the separate source username used.
+
+The same password login is available from **Password Login…** in **Convert XML**
+and **Convert and Map**, for the environment selected in the conversion dialog.
+Remembered logins are reused automatically; SSO users without a configured
+password login are prompted to enter one in ATool. The existing credential file
+name is retained so saved migration logins continue to work. Oracle-hosted
+conversion runs in a disposable private session, preserving normal SSO sessions
+and retaining the CLI's Bill ID extraction, rerooting and output behavior.
+Older encrypted CLI password logins are imported into this pathway automatically;
+other CLI environment credentials do not override the selected Password login.
+Conversion errors distinguish a failed password login from a converter request
+rejected after successful authentication.
+The private session is removed after success, failure or cancellation. Local
+XSD conversion continues to work without a password login.
 
 The CLI reports migration initiation rather than waiting for completion.
 Verify successful completion in Comms before the guide runs the post-migration

@@ -21,6 +21,90 @@ class DataActionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        targets=patch('atool_qt.data_actions.saved_login_targets',return_value=({},''))
+        targets.start()
+        self.addCleanup(targets.stop)
+        remembered=patch('atool_qt.migration_login.remembered_migration_login',return_value='')
+        remembered.start()
+        self.addCleanup(remembered.stop)
+
+    def test_sso_conversion_reuses_remembered_password_login_without_terminal_setup(self):
+        from unittest.mock import Mock
+        from atool_qt.window import WorkspaceWindow
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            window=WorkspaceWindow(QSettings(str(root/'qt.ini'),QSettings.Format.IniFormat))
+            self.addCleanup(window.close)
+            window.comms.settings=UserSettings(root/'settings.json')
+            window.comms.settings.payload['application']['confirm_on_quit']=False
+            window.comms.settings.payload['occs']['session_alias']='np'
+            xml=root/'input.xml'
+            xml.write_text('<root><billId>one</billId></root>')
+            with patch('atool_qt.data_actions.saved_login_targets',return_value=({'np':{'authType':'sso'}},'np')), \
+                    patch('atool_qt.migration_login.migration_login_key',return_value='customer.region/non-prod'), \
+                    patch('atool_qt.migration_login.remembered_migration_login',return_value='migration-user'):
+                dialog=XmlConversionDialog(window)
+                self.addCleanup(dialog.close)
+                dialog.xml.setText(str(xml))
+                with patch.object(window.comms,'submit',return_value=Mock(done=True)) as submit, \
+                        patch.object(dialog,'configure_password_login') as configure:
+                    dialog.run_conversion()
+                configure.assert_not_called()
+                args=submit.call_args.args[0]
+                self.assertIn('--atool-password-login',args)
+                self.assertEqual('np',args[args.index('--session')+1])
+                self.assertEqual({'username':'migration-user','password':'','remember':True},submit.call_args.kwargs['private_input'])
+                self.assertEqual('np',window.comms.settings.get('session_alias'))
+                self.assertFalse(dialog.password_login_button.isEnabled())
+                self.assertFalse(dialog.session_alias.isEnabled())
+
+    def test_cancelled_sso_password_setup_does_not_submit_conversion(self):
+        from atool_qt.window import WorkspaceWindow
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            window=WorkspaceWindow(QSettings(str(root/'qt.ini'),QSettings.Format.IniFormat))
+            self.addCleanup(window.close)
+            window.comms.settings=UserSettings(root/'settings.json')
+            window.comms.settings.payload['application']['confirm_on_quit']=False
+            window.comms.settings.payload['occs']['session_alias']='np'
+            xml=root/'input.xml'
+            xml.write_text('<root/>')
+            with patch('atool_qt.data_actions.saved_login_targets',return_value=({'np':{'authType':'sso'}},'np')), \
+                    patch('atool_qt.migration_login.remembered_migration_login',return_value=''):
+                dialog=XmlConversionDialog(window)
+                self.addCleanup(dialog.close)
+                dialog.xml.setText(str(xml))
+                with patch.object(dialog,'configure_password_login',return_value=False) as configure, \
+                        patch.object(window.comms,'submit') as submit:
+                    dialog.run_conversion()
+                configure.assert_called_once()
+                submit.assert_not_called()
+
+    def test_local_xsd_conversion_bypasses_shared_password_login(self):
+        from unittest.mock import Mock
+        from atool_qt.window import WorkspaceWindow
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            window=WorkspaceWindow(QSettings(str(root/'qt.ini'),QSettings.Format.IniFormat))
+            self.addCleanup(window.close)
+            window.comms.settings=UserSettings(root/'settings.json')
+            window.comms.settings.payload['application']['confirm_on_quit']=False
+            xml,xsd=root/'input.xml',root/'schema.xsd'
+            xml.write_text('<root/>')
+            xsd.write_text('<schema/>')
+            window.comms.settings.payload['occs'].update(use_static_xsd_conversion=True,static_xsd_path=str(xsd))
+            dialog=XmlConversionDialog(window)
+            self.addCleanup(dialog.close)
+            dialog.xml.setText(str(xml))
+            self.assertFalse(dialog.password_login_button.isEnabled())
+            with patch.object(window.comms,'submit',return_value=Mock(done=True)) as submit, \
+                    patch('atool_qt.data_actions.selected_password_login') as login:
+                dialog.run_conversion()
+            login.assert_not_called()
+            self.assertNotIn('--atool-password-login',submit.call_args.args[0])
+            self.assertNotIn('private_input',submit.call_args.kwargs)
+
     def test_synthesis_satisfies_document_condition_and_materializes_fields(self):
         builder = SampleBuilder()
         payload, report = builder._generate_sample_input_payload('@.enabled == true && @.amount > 10 && @.name empty false', [

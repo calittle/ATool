@@ -26,6 +26,9 @@ class SsoLoginTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        remembered=patch('atool_qt.migration_login.remembered_migration_login',return_value='')
+        remembered.start()
+        self.addCleanup(remembered.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -209,6 +212,8 @@ print(json.dumps({{'ok': True, 'args': args}}))
 
     def test_sso_expiry_never_opens_browser_or_replays_operation(self):
         self.mode.write_text('expired')
+        self.workspace.comms.migration_logins['example.region/non-prod']={
+            'enabled':True,'username':'password-user','password':'temporary-secret','remember':True}
         results = []
         requested = []
         self.workspace.comms.sign_in_required.connect(requested.append)
@@ -298,10 +303,43 @@ print(json.dumps({{'ok': True, 'args': args}}))
         dialog = self.dialog()
         dialog.method.setCurrentIndex(0)
         self.mode.write_text('failure')
-        dialog.sign_in.click()
-        self.until(lambda: dialog.job.done)
+        dialog.username.setText('password-user')
+        dialog.password.setText('temporary-secret')
+        with patch.object(self.settings,'command',return_value=[str(self.cli),'login','--session','sso']):
+            dialog.sign_in.click()
+            self.until(lambda: dialog.job.done)
         self.assertIn('Password sign-in failed', dialog.status.text())
         self.assertNotIn('--sso', self.recorded()[0])
+
+    def test_password_pathway_can_be_added_in_ui_without_overwriting_sso(self):
+        from atool_qt.occs import CommandResult
+        dialog=self.dialog()
+        dialog.method.setCurrentIndex(0)
+        dialog.username.setText('password-user')
+        dialog.password.setText('temporary-secret')
+        with patch.object(self.workspace.comms,'submit',return_value=Mock(done=True)) as submit:
+            dialog.start_login()
+        args=submit.call_args.args[0]
+        self.assertEqual(['migration-login','signin'],args[:2])
+        self.assertNotIn('temporary-secret',args)
+        self.assertEqual({'username':'password-user','password':'temporary-secret','remember':True},submit.call_args.kwargs['private_input'])
+        self.assertEqual({},self.workspace.comms.migration_logins)
+        submit.call_args.args[1](CommandResult(0,'','',{'ok':True,'normalAuthType':'sso'}))
+        self.assertIn('SSO remains',dialog.status.text())
+        self.assertEqual('password-user',self.workspace.comms.migration_logins['example.region/non-prod']['username'])
+
+    def test_adding_sso_preserves_legacy_saved_password_pathway_first(self):
+        from atool_qt.occs import CommandResult
+        store=json.loads(self.sessions.read_text())
+        store['sessions']['example.region/non-prod']['authType']='password'
+        self.sessions.write_text(json.dumps(store))
+        dialog=self.dialog()
+        dialog.method.setCurrentIndex(1)
+        with patch.object(self.workspace.comms,'submit',return_value=Mock(done=True)) as submit:
+            dialog.start_login()
+            self.assertEqual(['migration-login','preserve','--session','sso'],submit.call_args.args[0])
+            submit.call_args.args[1](CommandResult(0,'','',{'ok':True}))
+            self.assertIn('--sso',submit.call_args.args[0])
 
     def test_xml_conversion_can_select_password_without_changing_default(self):
         from atool_qt.data_actions import XmlConversionDialog
@@ -323,6 +361,8 @@ print(json.dumps({{'ok': True, 'args': args}}))
         args = submit.call_args.args[0]
         self.assertEqual(args[args.index('--session') + 1], 'password')
         self.assertNotIn('--sso', args)
+        self.assertIn('--atool-password-login',args)
+        self.assertEqual({},submit.call_args.kwargs['private_input'])
         command = self.settings.command(args)
         self.assertEqual(command.count('--session'), 1)
         self.assertEqual(self.settings.get('session_alias'), 'browser')
