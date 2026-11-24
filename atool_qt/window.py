@@ -512,18 +512,44 @@ class LayoutPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         form_widget = QWidget()
-        self.property_form = QFormLayout(form_widget)
-        self.property_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.property_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.property_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.property_form.setVerticalSpacing(8)
+        form_layout = QVBoxLayout(form_widget)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        heading_form = QFormLayout()
+        form_layout.addLayout(heading_form)
         self.name, self.kind = line_box(), line_box()
         self.condition, self.path = text_box(), text_box()
-        self.condition.setMinimumHeight(90)
-        self.path.setFixedHeight(self.path.fontMetrics().lineSpacing() * 3 + 14)
         self.path.setTabChangesFocus(True)
-        for label, box in (("Name", self.name), ("Item kind", self.kind), ("Condition", self.condition), ("Path", self.path)):
-            self.property_form.addRow(label, box)
+        heading_form.addRow("Name", self.name)
+        heading_form.addRow("Item kind", self.kind)
+        self.condition_path_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.condition_path_splitter.setChildrenCollapsible(False)
+        self.condition_path_splitter.setHandleWidth(7)
+        self.condition_path_splitter.setAccessibleName("Condition and Path sizes")
+        forms = [heading_form]
+        label_width = max(self.fontMetrics().horizontalAdvance(text)
+                          for text in ("Name", "Item kind", "Condition", "Path"))
+        for title, box in (("Condition", self.condition), ("Path", self.path)):
+            pane = QWidget()
+            pane_form = QFormLayout(pane)
+            pane_form.setContentsMargins(0, 0, 0, 0)
+            pane_form.addRow(title, box)
+            self.condition_path_splitter.addWidget(pane)
+            forms.append(pane_form)
+        self.condition_path_splitter.handle(1).setToolTip("Drag to resize Condition and Path")
+        self.condition_path_splitter.setStretchFactor(0, 1)
+        self.condition_path_splitter.setStretchFactor(1, 1)
+        self.condition_path_splitter.setSizes([200, 100])
+        form_layout.addWidget(self.condition_path_splitter, 1)
+        self.property_form = QFormLayout()
+        form_layout.addLayout(self.property_form)
+        forms.append(self.property_form)
+        for form in forms:
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            form.setVerticalSpacing(8)
+            for row in range(form.rowCount()):
+                form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget().setMinimumWidth(label_width)
         self.property_controls = {}
         scroll.setWidget(form_widget)
         property_layout.addWidget(scroll, 1)
@@ -1162,6 +1188,9 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         clause_sizes = self.settings.value('clauses/stackedSplitter')
         if clause_sizes is not None:
             self.clauses.splitter.restoreState(clause_sizes)
+        condition_path_sizes = self.settings.value('layouts/conditionPathSplitter')
+        if condition_path_sizes is not None:
+            self.layouts.condition_path_splitter.restoreState(condition_path_sizes)
         self.log("Drag a panel title to move or detach it. Drop onto another panel to tab them.\n"
                  "Use View → Panels to reopen hidden panels, or View → Reset Layout to start over.")
         self.update_actions()
@@ -1241,6 +1270,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         for key in ("documents", "layouts", "fields"):
             self.docks[key].show()
             getattr(self, key).splitter.setSizes([360, 300])
+        self.layouts.condition_path_splitter.setSizes([200, 100])
         self.resizeDocks([self.docks[key] for key in ("documents", "layouts", "fields")],
                          [310, 580, 540], Qt.Orientation.Horizontal)
         self.show_panel("fields")
@@ -1492,6 +1522,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         for key in ("documents", "layouts", "fields", "data", "content"):
             self.settings.setValue(f"{key}/splitter", getattr(self, key).splitter.saveState())
         self.settings.setValue('clauses/stackedSplitter', self.clauses.splitter.saveState())
+        self.settings.setValue('layouts/conditionPathSplitter', self.layouts.condition_path_splitter.saveState())
         self.settings.sync()
         self.package_guard.release()
         event.accept()
