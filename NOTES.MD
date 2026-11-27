@@ -1,6 +1,6 @@
 # ATool Release Notes
 
-## v2.8.0
+## v2.7.1
 
 Changes since the published v2.7.0 artifacts (source snapshot `19fb321`).
 
