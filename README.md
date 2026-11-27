@@ -1186,6 +1186,22 @@ conditions in the report. The text is a content facsimile; page layout, fonts,
 and barcode drawing still require a Comms render.
 ## JSONPath preflight
 
+ATool supports `[0:]` (all array elements from index zero to the end) in field,
+iterator, and condition paths, including local mapping and Data Manager searches.
+`[*]` remains valid. Both selectors return every array element, but `[*]` also
+selects object property values; `[0:]` returns no matches for objects. Field paths
+using either selector retain the existing `concat` or `length` requirement.
+
+The field and document properties show advisory selector warnings. With a mapped
+data file, ATool inspects each selector's target: it recommends `[0:]` for arrays
+to avoid the intermittent preview omissions reported by Product, recommends
+keeping `[*]` for objects, and flags mixed or unresolved targets for review.
+Layout details also show guidance in iterator row scope. Recommendations apply
+only to the mapped sample; other input files may have different structures.
+Without mapped data, the warning explains the distinction without assuming a
+target type. ATool never automatically replaces selectors or blocks an edit
+because of this advice.
+
 Bare filtered paths and wildcard paths in conditions use Comms existence
 semantics: a defined empty result can pass. For example,
 `@.accountChars[?(@.acctCharacteristicType == 'CM-RSEXP' && @.acctCharacteristicValue == 'Y')]`
@@ -1206,7 +1222,8 @@ filter remain allowed, for example `$.items[?(@.active == true)].length()`.
 In installed releases, use **Package → Audit JSONPaths…** to review the open
 template, including unsaved edits and the current clause library. The report
 shows owner names, JSON locations, and expressions, with Copy Report and Save
-Report controls. This manual audit works even with automatic preflight off and
+Report controls. It also includes data-aware selector recommendations for paths,
+conditions, and saved clauses. This manual audit works even with automatic preflight off and
 in read-only package sessions. Findings are review candidates while PD's
 restriction is being clarified.
 

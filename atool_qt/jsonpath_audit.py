@@ -1,4 +1,4 @@
-"""Manual, offline JSONPath length audit available in native releases."""
+"""Manual, offline JSONPath audit and sample-based selector guidance."""
 import copy
 from pathlib import Path
 
@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDia
                               QLabel, QPlainTextEdit, QPushButton, QVBoxLayout)
 
 from atool_core.jsonpath_preflight import audit_length_paths
+from atool_core.jsonpath_recommendations import audit_selector_paths
 
 
 class JSONPathAuditDialog(QDialog):
@@ -17,19 +18,25 @@ class JSONPathAuditDialog(QDialog):
         self.resize(860, 580)
         layout = QVBoxLayout(self)
         count = len(findings)
-        self.summary = QLabel(f'{count} expression{"s" if count != 1 else ""} to review.' if findings else 'No matching length/path expressions found.')
+        self.summary = QLabel(f'{count} expression{"s" if count != 1 else ""} to review.' if findings else 'No matching JSONPath issues found.')
         layout.addWidget(self.summary)
-        lines = ['JSONPath length audit', f'Package: {workspace.session.name}',
+        lines = ['JSONPath length audit and selector recommendations', f'Package: {workspace.session.name}',
                  f'Source: {workspace.session.source or "Unsaved template"}', '',
                  'Scope: the open template, including unsaved edits and the current clause library.',
                  'Experimental check: length() with relative or recursive paths.',
                  "PD's restriction is still being clarified; findings are review candidates, not confirmed defects.",
                  'This manual audit runs independently of the automatic preflight setting.', '']
+        lines.extend([f'Selector recommendations use: {workspace.session.data_name}',
+                      ('Recommendations apply to this mapped sample only. Other files may differ.'
+                       if workspace.session.mapped else 'No mapped data: target types cannot be verified.'),
+                      'No expressions are automatically replaced. Existing [*] selectors remain valid.', ''])
         if not findings:
-            lines.append('No matching length/path expressions found.')
+            lines.append('No matching JSONPath issues found.')
         for index, finding in enumerate(findings, 1):
             lines.extend([f'{index}. {" / ".join(finding["owners"]) or "Unnamed owner"}',
                           f'Location: {finding["path"]}', f'Expression: {finding["expression"]}', ''])
+            lines.extend(f'  {issue}' for issue in finding.get('issues', []))
+            lines.append('')
         self.report = QPlainTextEdit('\n'.join(lines))
         self.report.setReadOnly(True)
         layout.addWidget(self.report, 1)
@@ -84,5 +91,13 @@ class JSONPathAuditActions:
                 meta['ATool'].pop('clause_library', None)
         findings = audit_length_paths(payload)
         findings.extend(audit_length_paths(self.session.clauses, '$.clause_library'))
+        for finding in (audit_selector_paths(payload, self.session.data, mapped=self.session.mapped)
+                        + audit_selector_paths(self.session.clauses, self.session.data,
+                                               mapped=self.session.mapped, path='$.clause_library')):
+            existing = next((item for item in findings if item['path'] == finding['path']), None)
+            if existing:
+                existing['issues'].extend(finding['issues'])
+            else:
+                findings.append(finding)
         self.jsonpath_audit_dialog = JSONPathAuditDialog(self, findings)
         self.jsonpath_audit_dialog.show()

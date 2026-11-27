@@ -74,7 +74,7 @@ def separator_error(expression: str) -> str:
 
 
 def wildcard_concat_error(expression: str) -> str:
-    """Every array wildcard must be inside a concat or length call for Comms fields."""
+    """Every array wildcard or full slice must be inside a concat or length call for Comms fields."""
     quote = ''
     escaped = False
     calls = []
@@ -94,7 +94,7 @@ def wildcard_concat_error(expression: str) -> str:
         elif char == ')':
             if calls:
                 calls.pop()
-        elif char == '[' and re.match(r'\[\s*\*\s*\]', expression[index:]) and not any(calls):
-            return ("Comms field paths containing [*] must use concat or length. "
-                    "For example: $.concat($.rows[*].amount, '') or $.length($.rows[*])")
+        elif char == '[' and re.match(r'\[\s*(?:\*|0\s*:)\s*\]', expression[index:]) and not any(calls):
+            return ("Comms field paths containing [*] or [0:] must use concat or length. "
+                    "For example: $.concat($.rows[0:].amount, '') or $.length($.rows[0:])")
     return ''

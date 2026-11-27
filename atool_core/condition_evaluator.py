@@ -198,7 +198,9 @@ class ConditionEvaluator:
         for segment in self._path_to_segments(path)[1:]:
             base, brackets = self._split_path_segment(segment)
             if base == '*' or any(
-                bracket[1:-1].strip() == '*' or bracket[1:-1].strip().startswith('?(')
+                bracket[1:-1].strip() == '*'
+                or re.fullmatch(r'0\s*:', bracket[1:-1].strip())
+                or bracket[1:-1].strip().startswith('?(')
                 for bracket in brackets
             ):
                 return True
@@ -234,7 +236,7 @@ class ConditionEvaluator:
                 next_nodes = []
                 for node in nodes:
                     resolved = self._apply_segment_brackets([node], [bracket])
-                    if not resolved and content != '*' and not is_filter:
+                    if not resolved and content != '*' and not re.fullmatch(r'0\s*:', content) and not is_filter:
                         return False
                     next_nodes.extend(resolved)
                 nodes = next_nodes
@@ -968,6 +970,10 @@ class ConditionEvaluator:
                             next_nodes.extend(current)
                         elif isinstance(current, dict):
                             next_nodes.extend(current.values())
+                elif re.fullmatch(r"0\s*:", content):
+                    for current in nodes:
+                        if isinstance(current, list):
+                            next_nodes.extend(current)
                 elif (content.startswith("'") and content.endswith("'")) or (
                     content.startswith('"') and content.endswith('"')
                 ):

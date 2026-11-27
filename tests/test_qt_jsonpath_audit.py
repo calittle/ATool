@@ -80,6 +80,37 @@ class JSONPathAuditTests(unittest.TestCase):
         self.window.jsonpath_audit_action.trigger()
         self.assertIn('No matching', self.window.jsonpath_audit_dialog.summary.text())
 
+    def test_selector_advice_tracks_mapped_data_without_replacing_paths(self):
+        path = "$.concat($.rows[*].amount, '')"
+        self.open_template(path)
+        window = self.window
+        self.assertIn('Map a data file', window.fields.path_advice.text())
+        window.session.map_data({'rows': [{'amount': 10}]}, 'arrays.json')
+        window.refresh_edit()
+        self.assertIn('Prefer [0:]', window.fields.path_advice.text())
+        before = window.editor.snapshot()
+        window.audit_jsonpaths()
+        report = window.jsonpath_audit_dialog.report.toPlainText()
+        self.assertIn('arrays.json', report)
+        self.assertIn('Prefer [0:]', report)
+        self.assertEqual(before, window.editor.snapshot())
+        window.session.map_data({'rows': {'first': {'amount': 10}}}, 'objects.json')
+        window.refresh_edit()
+        self.assertIn('Keep [*]', window.fields.path_advice.text())
+        self.assertEqual(path, window.fields.expression.toPlainText())
+        # Editing the expression refreshes the warning before applying it.
+        window.fields.expression.setPlainText("$.concat($.rows[0:].amount, '')")
+        self.assertIn('returns no matches', window.fields.path_advice.text())
+        window.fields.expression.setPlainText(path)
+        window.data.mode.setCurrentText('JSONPath')
+        window.data.search.setText('$.rows[*].amount')
+        window.data.run_search()
+        self.assertIn('Keep [*]', window.data.path_advice.text())
+        window.data.search.setText('$.rows[0:].amount')
+        window.data.run_search()
+        self.assertIn('returns no matches', window.data.path_advice.text())
+        self.assertEqual(0, window.data.tree.topLevelItemCount())
+
     def test_audit_includes_pending_field_edit_and_cannot_export_over_template(self):
         source = self.open_template('$.rows.length()')
         self.window.select_name(self.window.fields, 'Count')

@@ -94,7 +94,7 @@ class DataQueries(ConditionEvaluator, PathNormalizer):
             content = bracket[1:-1].strip()
             if not content:
                 return False
-            if content == "*":
+            if content == "*" or re.fullmatch(r"0\s*:", content):
                 continue
             if content.startswith("?(") and content.endswith(")"):
                 continue
@@ -180,6 +180,10 @@ class DataQueries(ConditionEvaluator, PathNormalizer):
                     if isinstance(value, dict):
                         next_nodes.extend((self._data_browser_child_path(path, key), child) for key, child in value.items())
                     elif isinstance(value, list):
+                        next_nodes.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
+            elif re.fullmatch(r"0\s*:", content):
+                for path, value in nodes:
+                    if isinstance(value, list):
                         next_nodes.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
             elif (content.startswith("'") and content.endswith("'")) or (
                 content.startswith('"') and content.endswith('"')

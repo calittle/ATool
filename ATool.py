@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from atool_core.email_input import email_recipients, prepare_email_input
 from atool_core.condition_evaluator import ConditionEvaluator
 from atool_core.field_path_validation import separator_error, wildcard_concat_error
+from atool_core.jsonpath_recommendations import selector_recommendations
 from atool_core.jsonpath_preflight import length_path_issues, require_valid_length_paths
 from atool_core.layout_resolver import LayoutResolver, format_report
 
@@ -1808,6 +1809,12 @@ class AToolApp:
         )
         hierarchy_value.grid(row=16, column=0, sticky="w")
         self._field_details_wrapped_labels.append(hierarchy_value)
+
+        self.field_path_advice_text = tk.StringVar(value="")
+        path_advice = ttk.Label(content, textvariable=self.field_path_advice_text,
+                                wraplength=280, justify=tk.LEFT)
+        path_advice.grid(row=17, column=0, sticky="w", pady=(8, 0))
+        self._field_details_wrapped_labels.append(path_advice)
 
         self.root.after(0, self._update_field_details_wraplength)
         return panel
@@ -12513,6 +12520,10 @@ class AToolApp:
         self._update_field_context_buttons()
 
     def _set_field_details(self, field: dict[str, object]) -> None:
+        if hasattr(self, 'field_path_advice_text'):
+            self.field_path_advice_text.set('\n'.join(selector_recommendations(
+                str(field.get('path', '')), self.current_data_payload,
+                mapped=self.current_data_payload is not None)))
         self._field_edit_undo_before = None
         self._capture_field_undo_baseline()
         self._updating_field_form = True
@@ -12547,6 +12558,8 @@ class AToolApp:
         self._updating_field_form = False
 
     def _clear_field_details(self) -> None:
+        if hasattr(self, 'field_path_advice_text'):
+            self.field_path_advice_text.set('')
         self._field_edit_undo_before = None
         self._updating_field_form = True
         self.field_name_text.set("(no field selected)")
@@ -13231,7 +13244,7 @@ class AToolApp:
             content = bracket[1:-1].strip()
             if not content:
                 return False
-            if content == "*":
+            if content == "*" or re.fullmatch(r"0\s*:", content):
                 continue
             if content.startswith("?(") and content.endswith(")"):
                 continue
@@ -24039,6 +24052,10 @@ class AToolApp:
                         next_nodes.extend((self._data_browser_child_path(path, key), child) for key, child in value.items())
                     elif isinstance(value, list):
                         next_nodes.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
+            elif re.fullmatch(r"0\s*:", content):
+                for path, value in nodes:
+                    if isinstance(value, list):
+                        next_nodes.extend((f"{path}[{index}]", child) for index, child in enumerate(value))
             elif (content.startswith("'") and content.endswith("'")) or (
                 content.startswith('"') and content.endswith('"')
             ):
@@ -24146,6 +24163,10 @@ class AToolApp:
                         next_nodes.extend(current)
                     elif isinstance(current, dict):
                         next_nodes.extend(current.values())
+            elif re.fullmatch(r"0\s*:", content):
+                for current in nodes:
+                    if isinstance(current, list):
+                        next_nodes.extend(current)
             elif (content.startswith("'") and content.endswith("'")) or (
                 content.startswith('"') and content.endswith('"')
             ):

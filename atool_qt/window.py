@@ -24,6 +24,7 @@ from .diagnostics import ConditionDiagnostics
 from .clauses import ClauseComposer
 from .authoring import AuthoringActions
 from .data_queries import DataQueries
+from atool_core.jsonpath_recommendations import selector_recommendations
 from .data_editing import DataEditing, display_path, display_paths
 from .package_responses import PackageResponses
 from .package_documents import PackageDocumentTree
@@ -221,6 +222,11 @@ class ManagerPanel(QWidget):
             self.tabs.addTab(self.result, "Match Details")
         else:
             form.addRow("Field path", self.expression)
+        self.path_advice = QLabel()
+        self.path_advice.setWordWrap(True)
+        self.path_advice.setStyleSheet('color: #996000')
+        form.addRow(self.path_advice)
+        self.expression.textChanged.connect(self.update_path_advice)
         if kind == "fields":
             self.true_path = line_box()
             form.addRow("Mapping path", self.true_path)
@@ -233,6 +239,14 @@ class ManagerPanel(QWidget):
         layout.addWidget(self.splitter, 1)
         self.count = QLabel("Open a package to begin")
         layout.addWidget(self.count)
+
+    def update_path_advice(self):
+        session = self.session
+        messages = selector_recommendations(self.expression.toPlainText(),
+                                           session.data if session else None,
+                                           mapped=bool(session and session.mapped))
+        self.path_advice.setText('\n'.join(messages))
+        self.path_advice.setVisible(bool(messages))
 
     def records(self) -> list[dict]:
         if self.session is None:
@@ -556,6 +570,10 @@ class LayoutPanel(QWidget):
         self.mapping_status = QLabel("Map JSON data to inspect trigger state")
         self.mapping_status.setWordWrap(True)
         property_layout.addWidget(self.mapping_status)
+        self.path_advice = QLabel()
+        self.path_advice.setWordWrap(True)
+        self.path_advice.setStyleSheet('color: #996000')
+        property_layout.addWidget(self.path_advice)
         self.mapped_values = table(["Row", "Mapped values", "Match"])
         self.mapped_values.setMinimumHeight(80)
         self.mapped_values.setMaximumHeight(110)
@@ -700,6 +718,7 @@ class LayoutPanel(QWidget):
         self.cache_source.clear()
         self.cached_content.clear()
         if current is None:
+            self.path_advice.clear()
             for box in (self.name, self.kind, self.condition, self.path, self.source):
                 box.clear()
             self.mapping_status.setText("No layout item selected")
@@ -708,6 +727,7 @@ class LayoutPanel(QWidget):
             return
         record = current.data(0, ROLE)
         source = record["source"]
+        self.path_advice.setText('\n'.join(record.get('path_advice', [])))
         self.mapped_values.setVisible(record["kind"] in {"Iteration", "Field"})
         self.name.setText(current.data(0, ROLE + 4))
         self.kind.setText(record["kind"])
@@ -955,6 +975,10 @@ class DataPanel(DataEditing, QWidget):
             search_row.addWidget(button)
         self.search.returnPressed.connect(self.run_search)
         layout.addLayout(search_row)
+        self.path_advice = QLabel()
+        self.path_advice.setWordWrap(True)
+        self.path_advice.setStyleSheet('color: #996000')
+        layout.addWidget(self.path_advice)
         path_row = QHBoxLayout()
         self.path = line_box()
         self.path.setPlaceholderText("Select a node to inspect its JSON path")
@@ -980,6 +1004,7 @@ class DataPanel(DataEditing, QWidget):
         self.message.emit(f"Data Manager: {message}")
 
     def set_data(self, value: object, *, mapped=True, fields=None):
+        self.path_advice.clear()
         if value is not self.payload or not mapped:
             self.undo_stack.clear()
             self.redo_stack.clear()
@@ -1012,6 +1037,9 @@ class DataPanel(DataEditing, QWidget):
             return
         evaluator = DataQueries(self.fields)
         mode = self.mode.currentText()
+        messages = selector_recommendations(query, self.payload, mapped=True) if (
+            mode in {'JSONPath', 'Condition'} or (mode == 'Auto' and query.startswith('$'))) else []
+        self.path_advice.setText('\n'.join(messages))
         self.tree.clear()
         self.values.clear()
         self.path.clear()
