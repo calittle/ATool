@@ -1192,11 +1192,13 @@ iterator, and condition paths, including local mapping and Data Manager searches
 selects object property values; `[0:]` returns no matches for objects. Field paths
 using either selector retain the existing `concat` or `length` requirement.
 
-The field and document properties show advisory selector warnings. With a mapped
+The Activity panel records advisory selector warnings. A red exclamation mark
+beside the status icons indicates current validation issues; click it to open
+Activity. With a mapped
 data file, ATool inspects each selector's target: it recommends `[0:]` for arrays
 to avoid the intermittent preview omissions reported by Product, recommends
 keeping `[*]` for objects, and flags mixed or unresolved targets for review.
-Layout details also show guidance in iterator row scope. Recommendations apply
+The guidance also covers paths in iterator row scope. Recommendations apply
 only to the mapped sample; other input files may have different structures.
 Without mapped data, the warning explains the distinction without assuming a
 target type. ATool never automatically replaces selectors or blocks an edit

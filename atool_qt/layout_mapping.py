@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from .diagnostics import ConditionDiagnostics
 from .paths import PathNormalizer
-from atool_core.jsonpath_recommendations import selector_recommendations
 
 
 def layout_nodes(document: dict, data: object, mapped: bool, fields: list[dict], clauses: list[dict]) -> list[dict]:
@@ -32,10 +31,6 @@ def layout_nodes(document: dict, data: object, mapped: bool, fields: list[dict],
                 detail["label"] = f"Row {row}: {detail['label']}" if parent_path else detail["label"]
                 node["details"].append(detail)
         path = str(source.get("Path", "")).strip()
-        node['path_advice'] = [message for expression in (condition, path)
-                               for message in selector_recommendations(
-                                   expression, data, mapped=mapped,
-                                   contexts=[context for _, context, _ in contexts], parent_path=parent_path)]
         child_contexts, child_path = active, parent_path
         if kind == "Iteration":
             child_contexts = []

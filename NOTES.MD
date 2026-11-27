@@ -14,8 +14,16 @@ Changes since the published v2.7.0 artifacts (source snapshot `19fb321`).
   Warn when `[0:]` targets objects and returns no matches. Inspect selectors
   separately, including within functions, filters, and iterator row scopes.
   Recommendations apply only to the mapped sample; ATool never automatically
-  replaces selectors. Show advice in properties and Data Manager searches,
-  and include it in Package → Audit JSONPaths reports alongside length checks.
+  replaces selectors. Record advice from properties and Data Manager searches
+  in Activity, and include it in Package → Audit JSONPaths reports alongside
+  length checks.
+- Move inline validation messages out of the manager panels and into Activity.
+  Show a red exclamation mark beside the status icons while current issues
+  remain, with a tooltip directing users to Activity. Click the mark to open
+  Activity and show the current issues, even after clearing its history.
+  Suppress repeated messages during refreshes and clear the mark when issues
+  are resolved. Rejected edits retain their validation checks and report their
+  details in Activity instead of a validation popup.
 - Add Config → List → View Objects to inspect attached objects, registry
   changes (including standalone fonts and styles), and package/document/layout
   dependencies with their owning configurations. Search, refresh, and cancel

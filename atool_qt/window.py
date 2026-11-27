@@ -24,6 +24,7 @@ from .diagnostics import ConditionDiagnostics
 from .clauses import ClauseComposer
 from .authoring import AuthoringActions
 from .data_queries import DataQueries
+from .validation_activity import ValidationActivity
 from atool_core.jsonpath_recommendations import selector_recommendations
 from .data_editing import DataEditing, display_path, display_paths
 from .package_responses import PackageResponses
@@ -138,6 +139,7 @@ def condition_details(session, expression):
 
 class ManagerPanel(QWidget):
     selected = Signal(object)
+    validation_changed = Signal(str, object)
 
     def __init__(self, kind: str):
         super().__init__()
@@ -222,10 +224,6 @@ class ManagerPanel(QWidget):
             self.tabs.addTab(self.result, "Match Details")
         else:
             form.addRow("Field path", self.expression)
-        self.path_advice = QLabel()
-        self.path_advice.setWordWrap(True)
-        self.path_advice.setStyleSheet('color: #996000')
-        form.addRow(self.path_advice)
         self.expression.textChanged.connect(self.update_path_advice)
         if kind == "fields":
             self.true_path = line_box()
@@ -245,8 +243,10 @@ class ManagerPanel(QWidget):
         messages = selector_recommendations(self.expression.toPlainText(),
                                            session.data if session else None,
                                            mapped=bool(session and session.mapped))
-        self.path_advice.setText('\n'.join(messages))
-        self.path_advice.setVisible(bool(messages))
+        current = self.tree.currentItem()
+        if current and isinstance(current.data(0, ROLE), int):
+            collection, key = ('Fields', 'Path') if self.kind == 'fields' else ('Documents', 'Condition')
+            self.validation_changed.emit(f'$.{collection}[{current.data(0, ROLE)}].{key}', messages)
 
     def records(self) -> list[dict]:
         if self.session is None:
@@ -570,10 +570,6 @@ class LayoutPanel(QWidget):
         self.mapping_status = QLabel("Map JSON data to inspect trigger state")
         self.mapping_status.setWordWrap(True)
         property_layout.addWidget(self.mapping_status)
-        self.path_advice = QLabel()
-        self.path_advice.setWordWrap(True)
-        self.path_advice.setStyleSheet('color: #996000')
-        property_layout.addWidget(self.path_advice)
         self.mapped_values = table(["Row", "Mapped values", "Match"])
         self.mapped_values.setMinimumHeight(80)
         self.mapped_values.setMaximumHeight(110)
@@ -718,7 +714,6 @@ class LayoutPanel(QWidget):
         self.cache_source.clear()
         self.cached_content.clear()
         if current is None:
-            self.path_advice.clear()
             for box in (self.name, self.kind, self.condition, self.path, self.source):
                 box.clear()
             self.mapping_status.setText("No layout item selected")
@@ -727,7 +722,6 @@ class LayoutPanel(QWidget):
             return
         record = current.data(0, ROLE)
         source = record["source"]
-        self.path_advice.setText('\n'.join(record.get('path_advice', [])))
         self.mapped_values.setVisible(record["kind"] in {"Iteration", "Field"})
         self.name.setText(current.data(0, ROLE + 4))
         self.kind.setText(record["kind"])
@@ -953,6 +947,7 @@ class ClausePanel(QWidget):
 
 
 class DataPanel(DataEditing, QWidget):
+    validation_changed = Signal(str, object)
     message = Signal(str)
 
     def __init__(self):
@@ -975,10 +970,6 @@ class DataPanel(DataEditing, QWidget):
             search_row.addWidget(button)
         self.search.returnPressed.connect(self.run_search)
         layout.addLayout(search_row)
-        self.path_advice = QLabel()
-        self.path_advice.setWordWrap(True)
-        self.path_advice.setStyleSheet('color: #996000')
-        layout.addWidget(self.path_advice)
         path_row = QHBoxLayout()
         self.path = line_box()
         self.path.setPlaceholderText("Select a node to inspect its JSON path")
@@ -1004,7 +995,7 @@ class DataPanel(DataEditing, QWidget):
         self.message.emit(f"Data Manager: {message}")
 
     def set_data(self, value: object, *, mapped=True, fields=None):
-        self.path_advice.clear()
+        self.validation_changed.emit('Data Manager search', [])
         if value is not self.payload or not mapped:
             self.undo_stack.clear()
             self.redo_stack.clear()
@@ -1039,7 +1030,7 @@ class DataPanel(DataEditing, QWidget):
         mode = self.mode.currentText()
         messages = selector_recommendations(query, self.payload, mapped=True) if (
             mode in {'JSONPath', 'Condition'} or (mode == 'Auto' and query.startswith('$'))) else []
-        self.path_advice.setText('\n'.join(messages))
+        self.validation_changed.emit('Data Manager search', messages)
         self.tree.clear()
         self.values.clear()
         self.path.clear()
@@ -1056,6 +1047,7 @@ class DataPanel(DataEditing, QWidget):
         if mode == "JSONPath" or (mode == "Auto" and query.startswith("$")):
             valid, reason = evaluator._validate_field_path(query, require_concat=False)
             if not valid:
+                self.validation_changed.emit('Data Manager search', [f'Invalid JSONPath: {reason}'])
                 self.report_message("Invalid JSONPath: " + reason)
                 return
             results = evaluator._extract_values_and_paths_by_path(self.payload, query)
@@ -1133,7 +1125,7 @@ class MappingJob(QThread):
         self.completed.emit(self.result, self.error)
 
 
-class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
+class WorkspaceWindow(ValidationActivity, FavoritesActions, AuthoringActions, QMainWindow):
     # The three-manager layout replaces the initial two-column prototype.
     LAYOUT_VERSION = 4
 
@@ -1171,6 +1163,8 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.favorites = FavoritesPanel()
         self.activity = ActivityLog()
         self.data.message.connect(self.log)
+        for panel in (self.documents, self.fields, self.data):
+            panel.validation_changed.connect(self.panel_validation_changed)
         self.add_panel("documents", "Document Manager", self.documents, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.add_panel("fields", "Field Manager", self.fields, Qt.DockWidgetArea.RightDockWidgetArea)
         self.add_panel("layouts", "Layout Manager", self.layouts, Qt.DockWidgetArea.LeftDockWidgetArea)
@@ -1189,6 +1183,17 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.statusBar().addWidget(self.package_label, 1)
         self.editable_label = QLabel("Mode: (none)")
         self.statusBar().addWidget(self.editable_label)
+        self.validation_messages = {}
+        self.validation_session = None
+        self.validation_indicator = QPushButton('!')
+        self.validation_indicator.setFlat(True)
+        self.validation_indicator.setFixedWidth(22)
+        self.validation_indicator.setStyleSheet('color: #c52323; font-weight: bold; font-size: 18px')
+        self.validation_indicator.setToolTip('Validation issues, see Activity panel')
+        self.validation_indicator.setAccessibleName('Validation issues, see Activity panel')
+        self.validation_indicator.clicked.connect(self.show_validation_activity)
+        self.validation_indicator.hide()
+        self.statusBar().addWidget(self.validation_indicator)
         self.data_label = QLabel("Data: (none)")
         self.data_label.setMargin(5)
         self.statusBar().addWidget(self.data_label, 1)
@@ -1358,6 +1363,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
         self.fields.set_session(session, preserve_selection=preserve_selection)
         self.refresh_favorites()
         self.data.set_data(session.data, mapped=session.mapped, fields=session.fields)
+        self.refresh_validation_messages()
         if hasattr(self, 'content'):
             self.content.refresh_fields()
         self.update_package_status()
@@ -1383,6 +1389,7 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
             self.clauses.set_session(self.session)
             self.documents.set_session(self.session, preserve_selection=True)
             self.fields.set_session(self.session, preserve_selection=True)
+            self.refresh_validation_messages()
             self.update_package_status()
             self.update_actions()
         finally:
@@ -1504,6 +1511,11 @@ class WorkspaceWindow(FavoritesActions, AuthoringActions, QMainWindow):
             self.close()
 
     def report_error(self, title, message):
+        if (title in {'Could not apply change', 'Invalid Condition', 'Invalid property'}
+                or 'JSONPath preflight failed' in message
+                or 'Invalid Conditions or JSONPaths' in message):
+            self.set_validation_messages(title, [message])
+            return
         self.log(f"{title}: {message}")
         QMessageBox.warning(self, title, message)
 

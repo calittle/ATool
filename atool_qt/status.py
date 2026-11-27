@@ -17,6 +17,9 @@ class WorkspaceStatus:
             return
         session = self.session
         if session is None:
+            if hasattr(self, 'validation_indicator'):
+                self.validation_messages.clear()
+                self.validation_indicator.hide()
             self.package_label.setText('Package: (none)')
             self.package_label.setToolTip('')
             self.data_label.setText('Data: (none)')

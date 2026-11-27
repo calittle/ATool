@@ -100,4 +100,7 @@ class JSONPathAuditActions:
             else:
                 findings.append(finding)
         self.jsonpath_audit_dialog = JSONPathAuditDialog(self, findings)
+        self.log(self.jsonpath_audit_dialog.report.toPlainText())
+        for finding in findings:
+            self.set_validation_messages(finding['path'], finding.get('issues', []))
         self.jsonpath_audit_dialog.show()
