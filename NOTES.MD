@@ -1,5 +1,33 @@
 # ATool Release Notes
 
+## v2.8.0
+
+Changes since the published v2.7.0 artifacts (source snapshot `19fb321`).
+
+- Support `[0:]` in JSONPath validation and local evaluation, including field
+  mappings, iterator paths, conditions, and Data Manager searches, in both the
+  current and legacy interfaces. Existing `[*]` paths remain valid, and field
+  paths using either selector retain the existing `concat` or `length` rule.
+- Add selector guidance based on the mapped data file. Recommend `[0:]` for
+  arrays as Product's workaround for intermittent missing preview values; keep
+  `[*]` for objects, and flag mixed or unresolved target types for review.
+  Warn when `[0:]` targets objects and returns no matches. Inspect selectors
+  separately, including within functions, filters, and iterator row scopes.
+  Recommendations apply only to the mapped sample; ATool never automatically
+  replaces selectors. Show advice in properties and Data Manager searches,
+  and include it in Package → Audit JSONPaths reports alongside length checks.
+- Add Config → List → View Objects to inspect attached objects, registry
+  changes (including standalone fonts and styles), and package/document/layout
+  dependencies with their owning configurations. Search, refresh, and cancel
+  the read-only scan without leaving the configuration list; locked configs
+  can also be inspected. Config listing and object scans use the selected
+  Comms environment.
+- Let users resize the Layout Manager's Condition and Path panes separately
+  and preserve their sizes between sessions, making long expressions easier
+  to inspect and edit.
+- Size the Password Login dialog to its contents so login fields and controls
+  remain visible instead of being clipped.
+
 ## v2.7.0
 
 ### Package publishing fix
